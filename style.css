@@ -37,7 +37,10 @@
     box-shadow: 0 28px 80px rgba(4, 13, 30, 0.44);
     font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.cache-memory-config-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); }
+.cache-memory-config-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); max-width: calc(100dvw - 36px); box-sizing: border-box; }
+.cache-memory-dialog-header { cursor: grab; touch-action: none; user-select: none; }
+.cache-memory-dialog-header.is-dragging { cursor: grabbing; }
+.cache-memory-dialog-header button { cursor: pointer; touch-action: auto; }
 .cache-memory-manager-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
 .cache-memory-dialog-header, .cache-memory-manager-panel > header {
     display: flex;
@@ -69,8 +72,10 @@
 .cache-memory-tab { display: flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; min-height: 43px; padding: 8px 11px; border: 1px solid transparent; border-bottom: 3px solid transparent; border-radius: 10px 10px 0 0; color: var(--cm-muted); background: transparent; cursor: pointer; font: inherit; font-size: 13px; font-weight: 650; }
 .cache-memory-tab:hover { color: var(--cm-ink); background: #f3f7fb; }
 .cache-memory-tab.is-active { border-color: #cce5e1; border-bottom-color: var(--cm-teal); color: var(--cm-teal-dark); background: #eaf8f5; }
-.cache-memory-config-content { overflow-y: auto; padding: 22px 22px 30px; background: #f8fafc; }
+.cache-memory-config-content { min-height: 0; overflow-y: auto; padding: 22px 22px 30px; background: #f8fafc; }
 .cache-memory-tab-panel[hidden] { display: none !important; }
+.cache-memory-grid [hidden] { display: none !important; }
+.cache-memory-continuity { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #fff; border: 1px solid var(--cm-line); border-radius: 8px; font: inherit; }
 .cache-memory-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
 .cache-memory-section-heading h4, .cache-memory-manager-section h4 { margin: 0; color: var(--cm-ink); font-size: 16px; font-weight: 750; letter-spacing: 0; }
 .cache-memory-section-heading p { margin: 5px 0 0; color: var(--cm-muted); font-size: 12px; line-height: 1.55; }
@@ -82,7 +87,7 @@
 .cache-memory-toggle small { color: var(--cm-muted); font-size: 11px; line-height: 1.4; }
 .cache-memory-toggle input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; margin: 0; accent-color: var(--cm-teal); }
 .cache-memory-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.cache-memory-grid label, .cache-memory-field { display: grid; gap: 7px; min-width: 0; color: #344258; font-size: 12px; font-weight: 650; }
+.cache-memory-grid label, .cache-memory-field { display: grid; align-content: start; gap: 7px; min-width: 0; color: #344258; font-size: 12px; font-weight: 650; }
 .cache-memory-config-panel input:not([type="checkbox"]):not([type="file"]), .cache-memory-config-panel select, .cache-memory-config-panel textarea { width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid #bdcada; border-radius: 8px; outline: none; background: #fff; color: var(--cm-ink); box-sizing: border-box; font: inherit; font-weight: 500; opacity: 1; }
 .cache-memory-config-panel input:focus, .cache-memory-config-panel select:focus, .cache-memory-config-panel textarea:focus { border-color: var(--cm-teal); box-shadow: 0 0 0 3px rgba(8, 127, 114, 0.13); }
 .cache-memory-config-panel input::placeholder { color: #8995a7; opacity: 1; }
@@ -96,7 +101,7 @@
 .cache-memory-note { margin-top: 15px; border-color: #bde0d9; border-left-color: var(--cm-teal); background: #eaf8f5; color: #24534d; }
 .cache-memory-api-guide i, .cache-memory-note i { margin-top: 3px; color: var(--cm-blue); }
 .cache-memory-note i { color: var(--cm-teal); }
-.cache-memory-status { min-height: 38px; padding: 9px 11px; border: 1px solid #dbe4ef; border-left: 4px solid #94a3b8; background: #f1f5f9; color: #334155; box-sizing: border-box; font-size: 12px; font-weight: 600; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cache-memory-status { min-height: 38px; max-height: min(160px, 20dvh); overflow-y: auto; overscroll-behavior: contain; padding: 9px 11px; border: 1px solid #dbe4ef; border-left: 4px solid #94a3b8; background: #f1f5f9; color: #334155; box-sizing: border-box; font-size: 12px; font-weight: 600; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cache-memory-status[data-state="success"] { border-color: #a7dbc0; border-left-color: #18864b; background: #ebf9f1; color: #126238; }
 .cache-memory-status[data-state="warning"] { border-color: #f1cc8c; border-left-color: #c87808; background: #fff8e8; color: #7b4705; }
 .cache-memory-status[data-state="error"] { border-color: #edb7bd; border-left-color: #c8384b; background: #fff0f2; color: #8b2030; }
@@ -128,6 +133,7 @@ body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden
 @media (max-width: 650px) {
     .cache-memory-overlay, #cache-memory-manager { padding: 6px; }
     .cache-memory-config-panel, .cache-memory-manager-panel { height: calc(100dvh - 12px); border-radius: 12px; }
+    .cache-memory-config-panel { max-width: calc(100dvw - 12px); }
     .cache-memory-dialog-header, .cache-memory-manager-panel > header { padding: 12px 13px; }
     .cache-memory-dialog-title > i { flex-basis: 36px; width: 36px; height: 36px; border-radius: 10px; }
     .cache-memory-config-status { margin: 9px 12px 0; }

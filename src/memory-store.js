@@ -1,6 +1,7 @@
-import { getAssistantMessages } from './utils.js?v=1.3.3';
+import { getAssistantMessages } from './utils.js?v=1.4.0';
+import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.4.0';
 
-export const STORE_VERSION = 1;
+export const STORE_VERSION = 2;
 
 export function createEmptyStore(chatId = '') {
     return {
@@ -160,10 +161,16 @@ export class MemoryStore {
     }
 
     updateAggregate(type, id, updates) {
-        const list = type === 'long' ? this.current().longMemories : this.current().checkpoints;
+        const store = this.current();
+        const list = type === 'long' ? store.longMemories : store.checkpoints;
         const item = list.find(entry => entry.id === id);
         if (!item) return null;
         Object.assign(item, structuredClone(updates), { id });
+        if (item.memoryKind === 'facts' && Object.hasOwn(updates, 'content')) {
+            const evidence = Object.values(store.summaries).filter(summary => summary.floor >= item.startFloor && summary.floor <= item.endFloor)
+                .map(summaryText).join('\n');
+            item.factUpdates = parseFactUpdates(item.content, projectLongFacts(store, item.startFloor - 1), evidence);
+        }
         this.persist();
         return item;
     }

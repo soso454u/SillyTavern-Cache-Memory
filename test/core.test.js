@@ -169,7 +169,7 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
         message('body four', '4'),
     ];
     const originalBodies = chat.map(item => item.mes);
-    const settings = normalizeSettings({ checkpointInterval: 2, longMemoryInterval: 4 });
+    const settings = normalizeSettings({ memoryStrategy: 'legacy', checkpointInterval: 2, longMemoryInterval: 4 });
     let calls = 0;
     const apiClient = {
         async complete({ userContent }) {
@@ -353,6 +353,7 @@ test('model listing uses a GET with Accept and Bearer auth, then falls back to t
     globalThis.location = { origin: 'https://st.example' };
     globalThis.parent = {
         location: { origin: 'https://st.example' },
+        SillyTavern: { getContext: () => ({ getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'test-csrf' }) }) },
         fetch: async (url, options) => {
             proxyRequest = { url, options };
             return new Response(JSON.stringify({ result: { models: [{ model_name: 'proxy-model' }] } }), { status: 200 });
@@ -374,7 +375,9 @@ test('model listing uses a GET with Accept and Bearer auth, then falls back to t
         assert.equal(directRequest.options.headers.Accept, 'application/json');
         assert.equal(directRequest.options.headers.Authorization, 'Bearer secret-key');
         assert.equal('body' in directRequest.options, false);
-        assert.equal(proxyRequest.url, 'https://st.example/api/backends/chat-completions/status');
+        assert.equal(proxyRequest.url, '/api/backends/chat-completions/status');
+        assert.equal(proxyRequest.options.headers.get('X-CSRF-Token'), 'test-csrf');
+        assert.equal(proxyRequest.options.credentials, 'same-origin');
         assert.equal(proxyRequest.options.method, 'POST');
         const proxyBody = JSON.parse(proxyRequest.options.body);
         assert.equal(proxyBody.chat_completion_source, 'custom');

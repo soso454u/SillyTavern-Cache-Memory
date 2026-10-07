@@ -71,8 +71,9 @@ function safeUrl(value) {
 
 function safeText(value, apiKey, maxLength = 500) {
     let text = String(value ?? '');
-    if (apiKey) {
-        for (const key of new Set([apiKey, encodeURIComponent(apiKey), JSON.stringify(apiKey).slice(1, -1)])) {
+    for (const secret of Array.isArray(apiKey) ? apiKey : [apiKey]) {
+        if (!secret) continue;
+        for (const key of new Set([secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)])) {
             text = text.split(key).join('[REDACTED]');
         }
     }
@@ -87,14 +88,56 @@ function isNetworkFailure(error) {
     return /failed to fetch|load failed|networkerror|network error|cors|cross[- ]origin/i.test(errorText(error));
 }
 
-function sameOriginSillyTavernWindow() {
-    try {
-        const parent = globalThis.parent;
-        if (parent && parent !== globalThis && parent.location.origin === globalThis.location?.origin) return parent;
-    } catch {
-        // Cross-origin parents are not a usable SillyTavern proxy context.
+function sillyTavernWindows() {
+    const windows = [globalThis];
+    let current = globalThis;
+    while (true) {
+        try {
+            const parent = current.parent;
+            if (!parent || windows.includes(parent)) break;
+            // Access checks also work for same-origin srcdoc frames with an opaque URL.
+            void parent.location?.origin;
+            windows.unshift(parent);
+            current = parent;
+        } catch {
+            break;
+        }
     }
-    return globalThis;
+    return windows;
+}
+
+function getStRequestContext() {
+    const windows = sillyTavernWindows();
+    for (const root of windows) {
+        let context;
+        try {
+            context = root.SillyTavern?.getContext?.();
+        } catch {
+            // A legacy root-level getter can still be available.
+        }
+        const owner = typeof context?.getRequestHeaders === 'function' ? context : root;
+        const getter = owner.getRequestHeaders;
+        if (typeof getter !== 'function') continue;
+        console.info('[Cache Memory] SillyTavern getRequestHeaders found:', true);
+        let headerKeys = [];
+        try {
+            const headers = new Headers(getter.call(owner));
+            headerKeys = [...headers.keys()];
+            const token = headers.get('X-CSRF-Token');
+            if (!token || token === 'undefined' || token === 'null') throw new Error();
+            headers.set('Content-Type', 'application/json');
+            console.info('[Cache Memory] SillyTavern CSRF headers available:', true);
+            return { root, headers };
+        } catch {
+            console.info('[Cache Memory] SillyTavern CSRF headers available:', false);
+            throw new Error('无法获取 SillyTavern CSRF 请求头');
+        } finally {
+            console.info('[Cache Memory] SillyTavern header keys:', headerKeys);
+        }
+    }
+    console.info('[Cache Memory] SillyTavern getRequestHeaders found:', false);
+    console.info('[Cache Memory] SillyTavern header keys:', []);
+    throw new Error('无法获取 SillyTavern CSRF 请求头');
 }
 
 function responseError(status, statusText, body) {
@@ -214,13 +257,14 @@ export class SummaryApiClient {
             ?? data?.response
             ?? '';
         if (!String(content).trim()) throw new Error('API 返回成功，但没有可用文本');
-        return { content: String(content).trim(), status: response.status };
+        return { content: String(content).trim(), status: response.status, finishReason: data?.choices?.[0]?.finish_reason };
     }
 
     async listModels(apiKeyOverride = '') {
         const settings = this.getSettings();
         const apiKey = String(apiKeyOverride || this.storage.getItem(this.storageKey) || '').trim();
         const endpoint = normalizeModelsUrl(settings.apiBaseUrl);
+        const diagnosticSecrets = [apiKey];
         const diagnostics = {
             endpoint: safeText(safeUrl(endpoint), apiKey, Infinity),
             direct: '未请求',
@@ -233,7 +277,7 @@ export class SummaryApiClient {
             proxyException: '',
         };
         const recordException = (error, source) => {
-            const message = safeText(errorText(error), apiKey, Infinity);
+            const message = safeText(errorText(error), diagnosticSecrets, Infinity);
             diagnostics[`${source}Exception`] = message;
             if (diagnostics[source] === '未请求') diagnostics[source] = '未收到 HTTP 响应';
             if (source === 'direct') {
@@ -299,30 +343,32 @@ export class SummaryApiClient {
             }
         }
 
-        const stWindow = sameOriginSillyTavernWindow();
-        const proxyUrl = `${stWindow.location?.origin ?? ''}${ST_MODELS_PROXY_PATH}`;
-        diagnostics.proxyEndpoint = safeText(safeUrl(proxyUrl), apiKey, Infinity);
-        console.info('[Cache Memory] proxy fetch URL:', diagnostics.proxyEndpoint);
+        diagnostics.proxyEndpoint = ST_MODELS_PROXY_PATH;
         try {
-            const response = await this.fetchResponse(proxyUrl, {
+            const { root: stWindow, headers } = getStRequestContext();
+            diagnosticSecrets.push(headers.get('X-CSRF-Token'));
+            diagnostics.proxyEndpoint = safeText(safeUrl(new URL(ST_MODELS_PROXY_PATH, stWindow.location?.href || stWindow.location?.origin).toString()), diagnosticSecrets, Infinity);
+            console.info('[Cache Memory] proxy fetch URL:', diagnostics.proxyEndpoint);
+            const response = await this.fetchResponse(ST_MODELS_PROXY_PATH, {
                 method: 'POST',
-                headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                headers,
+                credentials: 'same-origin',
                 body: JSON.stringify({
                     chat_completion_source: 'custom',
                     custom_url: normalizeApiBaseUrl(settings.apiBaseUrl),
                     custom_include_headers: `Authorization: Bearer ${apiKey}`,
                 }),
             }, stWindow);
-            diagnostics.proxyEndpoint = safeText(safeUrl(response.url || proxyUrl), apiKey, Infinity);
+            diagnostics.proxyEndpoint = safeText(safeUrl(response.url || diagnostics.proxyEndpoint), diagnosticSecrets, Infinity);
             diagnostics.proxy = `HTTP ${response.status}`;
             console.info('[Cache Memory] proxy fetch URL:', diagnostics.proxyEndpoint);
             console.info('[Cache Memory] proxy fetch status:', diagnostics.proxy);
             const raw = await response.text();
-            const safeResponse = safeText(raw, apiKey);
+            const safeResponse = safeText(raw, diagnosticSecrets);
             diagnostics.proxyBody = safeResponse;
             console.info('[Cache Memory] proxy fetch response:', safeResponse);
             if (!response.ok) {
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: responseError(response.status, safeText(response.statusText, apiKey), safeResponse).message };
+                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: responseError(response.status, safeText(response.statusText, diagnosticSecrets), safeResponse).message };
             }
             let payload;
             try {

@@ -56,6 +56,7 @@ test('failed direct fetch keeps its exception and CORS hint alongside proxy HTTP
     setGlobal(t, 'location', { origin: 'https://st.example' });
     setGlobal(t, 'parent', {
         location: { origin: 'https://st.example' },
+        getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'test-csrf' }),
         fetch: async () => new Response('permission denied', { status: 403 }),
     });
     t.mock.method(globalThis, 'fetch', async () => { throw new TypeError(`Failed to fetch: ${apiKey}`); });
@@ -77,6 +78,7 @@ test('proxy fetch exceptions are also displayed and redacted', async t => {
     setGlobal(t, 'location', { origin: 'https://st.example' });
     setGlobal(t, 'parent', {
         location: { origin: 'https://st.example' },
+        getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'test-csrf' }),
         fetch: async () => { throw new TypeError(`Load failed: ${apiKey}`); },
     });
     t.mock.method(globalThis, 'fetch', async () => { throw new TypeError('Failed to fetch'); });
@@ -94,6 +96,7 @@ test('proxy response snippets are limited to 500 characters and redact an unsave
     setGlobal(t, 'location', { origin: 'https://st.example' });
     setGlobal(t, 'parent', {
         location: { origin: 'https://st.example' },
+        getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'test-csrf' }),
         fetch: async (_url, options) => {
             assert.match(options.body, /Authorization: Bearer unsaved-key/);
             return new Response(body, { status: 502 });

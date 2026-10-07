@@ -1,5 +1,6 @@
-import { API_PROVIDERS, DEFAULT_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.3.3';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.3.3';
+import { API_PROVIDERS, DEFAULT_PROMPTS, LEGACY_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.4.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.4.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.4.0';
 
 const ROOT_ID = 'cache-memory-settings';
 const CONFIG_ID = 'cache-memory-config';
@@ -29,7 +30,9 @@ export function formatModelListFailure(result) {
     if (diagnostics.proxy && diagnostics.proxy !== '未请求') lines.push(`代理状态: ${diagnostics.proxy}`);
     if (diagnostics.proxyBody) lines.push(`代理响应（前 500 字）: ${diagnostics.proxyBody}`);
     if (diagnostics.proxyException) lines.push(`代理错误: ${diagnostics.proxyException}`);
-    if (result?.error && result.error !== diagnostics.directException && result.error !== diagnostics.proxyException) {
+    const repeatedBody = /^HTTP \d+:/.test(result?.error ?? '')
+        && [diagnostics.directBody, diagnostics.proxyBody].some(body => body && result.error.endsWith(body));
+    if (result?.error && !repeatedBody && result.error !== diagnostics.directException && result.error !== diagnostics.proxyException) {
         lines.push(`错误: ${result.error}`);
     }
     return lines.join('\n');
@@ -67,9 +70,9 @@ function configTemplate() {
         <div id="${CONFIG_ID}" class="cache-memory-overlay" hidden>
             <div class="cache-memory-config-panel" role="dialog" aria-modal="true" aria-labelledby="cache-memory-config-title">
                 <header class="cache-memory-dialog-header">
-                    <div class="cache-memory-dialog-title">
+                    <div class="cache-memory-dialog-title" title="拖动标题栏移动弹窗">
                         <i class="fa-solid fa-brain" aria-hidden="true"></i>
-                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节</small></div>
+                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节 · 可拖动标题栏</small></div>
                     </div>
                     <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button>
                 </header>
@@ -91,15 +94,16 @@ function configTemplate() {
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
                         <div class="cache-memory-grid">
+                            <label>记忆策略<select data-setting="memoryStrategy"><option value="incremental">增量状态 + 长期事实 + KEEP</option><option value="legacy">兼容旧版分段摘要</option></select></label>
                             <label>阶段记忆间隔（层）<input type="number" min="1" max="1000" data-setting="checkpointInterval"></label>
-                            <label>长期记忆间隔（层）<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
-                            <label>小总结最大长度<input type="number" min="50" data-setting="summaryMaxLength"></label>
-                            <label>阶段记忆最大长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
-                            <label>长期记忆最大长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
-                            <label>近期小总结数量<input type="number" min="0" data-setting="recentSummaryCount"></label>
-                            <label>近期阶段记忆数量<input type="number" min="0" data-setting="recentCheckpointCount"></label>
+                            <label data-legacy-setting>旧版长期记忆间隔（层）<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
+                            <label>小总结目标长度<input type="number" min="50" data-setting="summaryMaxLength"></label>
+                            <label>阶段状态目标长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
+                            <label>长期事实目标长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
+                            <label data-legacy-setting>旧版近期小总结数量<input type="number" min="0" data-setting="recentSummaryCount"></label>
+                            <label data-legacy-setting>旧版近期阶段记忆数量<input type="number" min="0" data-setting="recentCheckpointCount"></label>
                         </div>
-                        <small class="cache-memory-help">长期记忆间隔会自动调整为阶段记忆间隔的整数倍。</small>
+                        <small class="cache-memory-help">增量策略在每个新 Checkpoint 后检查长期事实，仅追加新增或有明确证据的变更；长度是软目标，KEEP 不因遗漏而丢弃。旧数据和自定义设置会保留。</small>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
@@ -109,7 +113,7 @@ function configTemplate() {
                             <label>接口类型<input type="text" value="OpenAI 兼容接口" readonly></label>
                             <label>接口地址<input type="url" data-setting="apiBaseUrl" placeholder="例如：https://example.com/v1"></label>
                             <label>API 密钥<input type="password" data-api-key autocomplete="off" placeholder="未配置"></label>
-                            <label>摘要模型<input type="text" data-setting="model" list="cache-memory-model-list" placeholder="可手动填写，或先获取模型列表"><datalist id="cache-memory-model-list" data-model-list></datalist></label>
+                            <label>摘要模型<input type="text" data-setting="model" placeholder="可手动填写模型名称"><select data-model-list data-model-select aria-label="从完整模型列表选择"><option value="">获取列表后可在此选择模型</option></select></label>
                             <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
                             <label>最大输出长度<input type="number" min="32" data-setting="maxTokens"></label>
                             <label>超时时间（毫秒）<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
@@ -128,7 +132,7 @@ function configTemplate() {
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
                         <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择发送请求时附加到上下文的冻结记忆层。</p></div></div>
                         <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">长期记忆 + 阶段记忆 + 近期小总结</option></select></label>
-                        <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>内容使用固定位置和固定楼层顺序，不做语义检索、相关度选择或随机召回。</span></div>
+                        <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>增量策略组合当前长期事实、有效 KEEP、最新阶段状态与该状态之后的全部小总结。内容按固定顺序注入，已有冻结历史仍保留。</span></div>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
@@ -158,6 +162,7 @@ export class CacheMemoryUI {
         this.lastFocusedElement = null;
         this.controller = new AbortController();
         this.destroyed = false;
+        this.modelOptions = [];
     }
 
     mountSettings() {
@@ -179,9 +184,57 @@ export class CacheMemoryUI {
         if (this.config) return;
         document.body.insertAdjacentHTML('beforeend', configTemplate());
         this.config = document.getElementById(CONFIG_ID);
+        this.bindDialogDrag(this.config);
         document.addEventListener('keydown', event => {
             if (event.key === 'Escape' && this.config && !this.config.hidden) this.closeSettings();
         }, { signal: this.controller.signal });
+    }
+
+    bindDialogDrag(overlay) {
+        const panel = overlay.querySelector('.cache-memory-config-panel');
+        const handle = panel.querySelector('.cache-memory-dialog-header');
+        const viewport = overlay.ownerDocument.defaultView;
+        let drag = null;
+        const constrain = (left, top) => {
+            const rect = panel.getBoundingClientRect();
+            const bounds = overlay.getBoundingClientRect();
+            const x = Math.max(bounds.left, Math.min(left, bounds.right - rect.width));
+            const y = Math.max(bounds.top, Math.min(top, bounds.bottom - rect.height));
+            panel.style.width = `${rect.width}px`;
+            panel.style.position = 'absolute';
+            panel.style.left = `${x - bounds.left}px`;
+            panel.style.top = `${y - bounds.top}px`;
+        };
+        const stop = () => {
+            if (!drag) return;
+            const id = drag.id;
+            drag = null;
+            if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+            handle.classList.remove('is-dragging');
+        };
+        this.stopConfigDrag = stop;
+        handle.addEventListener('pointerdown', event => {
+            if (event.button !== 0 || event.target.closest('button, input, select, textarea, a')) return;
+            const rect = panel.getBoundingClientRect();
+            drag = { id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top };
+            handle.setPointerCapture(event.pointerId);
+            handle.classList.add('is-dragging');
+            event.preventDefault();
+        }, { signal: this.controller.signal });
+        handle.addEventListener('pointermove', event => {
+            if (drag?.id !== event.pointerId) return;
+            constrain(event.clientX - drag.x, event.clientY - drag.y);
+        }, { signal: this.controller.signal });
+        for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+            handle.addEventListener(name, stop, { signal: this.controller.signal });
+        }
+        viewport.addEventListener('resize', () => {
+            stop();
+            if (overlay.hidden || !panel.style.left) return;
+            const rect = panel.getBoundingClientRect();
+            constrain(rect.left, rect.top);
+        }, { signal: this.controller.signal });
+        this.controller.signal.addEventListener('abort', stop, { once: true });
     }
 
     settingsScopes() {
@@ -192,6 +245,7 @@ export class CacheMemoryUI {
         const settings = this.getSettings();
         const scopes = root ? [root] : this.settingsScopes();
         for (const scope of scopes) {
+            for (const element of scope.querySelectorAll('[data-legacy-setting]')) element.hidden = settings.memoryStrategy !== 'legacy';
             for (const element of scope.querySelectorAll('[data-setting]')) {
                 const key = element.dataset.setting;
                 if (element.type === 'checkbox') element.checked = Boolean(settings[key]);
@@ -211,6 +265,15 @@ export class CacheMemoryUI {
         if (!root || root.dataset.cacheMemoryBound === 'true') return;
         root.dataset.cacheMemoryBound = 'true';
         root.addEventListener('change', event => {
+            const modelSelect = event.target.closest('[data-model-select]');
+            if (modelSelect) {
+                if (!modelSelect.value) return;
+                const input = root.querySelector('[data-setting="model"]');
+                input.value = modelSelect.value;
+                this.updateSettings({ model: input.value });
+                modelSelect.value = '';
+                return;
+            }
             const element = event.target.closest('[data-setting]');
             if (!element) return;
             const key = element.dataset.setting;
@@ -249,7 +312,8 @@ export class CacheMemoryUI {
             const reset = event.target.closest('[data-reset-prompt]');
             if (reset) {
                 const name = reset.dataset.resetPrompt;
-                this.updateSettings({ prompts: { ...this.getSettings().prompts, [name]: DEFAULT_PROMPTS[name] } });
+                const defaults = this.getSettings().memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
+                this.updateSettings({ prompts: { ...this.getSettings().prompts, [name]: defaults[name] } });
                 this.populateSettings();
                 return;
             }
@@ -279,7 +343,8 @@ export class CacheMemoryUI {
                 try {
                     const inputKey = root.querySelector('[data-api-key]')?.value ?? '';
                     const result = await this.apiClient.listModels(inputKey);
-                    this.renderModelOptions(result.models);
+                    // Preserve a previously fetched list when a later request fails.
+                    if (result.source !== 'unavailable') this.renderModelOptions(result.models);
                     const modelInput = root.querySelector('[data-setting="model"]');
                     if (modelInput && !modelInput.value.trim() && result.models.length) {
                         modelInput.value = result.models[0];
@@ -324,12 +389,18 @@ export class CacheMemoryUI {
     }
 
     renderModelOptions(models) {
+        this.modelOptions = [...models];
         for (const list of document.querySelectorAll('[data-model-list]')) {
-            list.replaceChildren(...models.map(model => {
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = models.length ? `选择模型（共 ${models.length} 个，显示完整列表）` : '获取列表后可在此选择模型';
+            list.replaceChildren(placeholder, ...models.map(model => {
                 const option = document.createElement('option');
                 option.value = model;
+                option.textContent = model;
                 return option;
             }));
+            list.value = '';
         }
     }
 
@@ -337,6 +408,7 @@ export class CacheMemoryUI {
         this.createConfig();
         this.lastFocusedElement = document.activeElement;
         this.populateSettings();
+        this.renderModelOptions(this.modelOptions);
         this.config.hidden = false;
         document.body.classList.add('cache-memory-config-open');
         this.config.querySelector('[data-settings-close]')?.focus();
@@ -344,7 +416,10 @@ export class CacheMemoryUI {
 
     closeSettings() {
         if (!this.config || this.config.hidden) return;
+        this.stopConfigDrag?.();
         this.config.hidden = true;
+        const panel = this.config.querySelector('.cache-memory-config-panel');
+        for (const property of ['position', 'left', 'top', 'width']) panel.style.removeProperty(property);
         document.body.classList.remove('cache-memory-config-open');
         this.lastFocusedElement?.focus?.();
     }
@@ -549,6 +624,20 @@ export class CacheMemoryUI {
         content.append(this.pendingCheckpoint());
         content.append(this.managerSection('阶段记忆', store.checkpoints, 'checkpoint'));
         content.append(this.managerSection('长期记忆', store.longMemories, 'long'));
+        content.append(this.continuitySection('当前长期事实', formatLongFacts(projectLongFacts(store))));
+        content.append(this.continuitySection('有效 KEEP · 不可丢失事项', formatKeepItems(collectKeepItems(store))));
+    }
+
+    continuitySection(title, text) {
+        const section = document.createElement('section');
+        section.className = 'cache-memory-manager-section';
+        const heading = document.createElement('h4');
+        heading.textContent = title;
+        const body = document.createElement('pre');
+        body.className = 'cache-memory-continuity';
+        body.textContent = text;
+        section.append(heading, body);
+        return section;
     }
 
     managerSection(title, items, type) {
