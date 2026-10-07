@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeModelsUrl, SummaryApiClient } from '../src/api-client.js';
+import { normalizeApiBaseUrl, normalizeBaseUrl, normalizeModelsUrl, readModels, SummaryApiClient } from '../src/api-client.js';
 import { API_PROVIDERS, INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
 import { buildInjection } from '../src/injection.js';
 import { MemoryStore } from '../src/memory-store.js';
@@ -54,9 +54,24 @@ test('migrates legacy provider values without changing API settings', () => {
     }
 });
 
-test('builds a model-list endpoint from base or completion URLs', () => {
+test('normalizes origin, versioned, API-path, and complete chat URLs consistently', () => {
+    assert.equal(normalizeApiBaseUrl('https://example.com'), 'https://example.com/v1');
+    assert.equal(normalizeModelsUrl('https://example.com'), 'https://example.com/v1/models');
+    assert.equal(normalizeBaseUrl('https://example.com'), 'https://example.com/v1/chat/completions');
     assert.equal(normalizeModelsUrl('https://example.com/v1/'), 'https://example.com/v1/models');
+    assert.equal(normalizeBaseUrl('https://example.com/v1'), 'https://example.com/v1/chat/completions');
+    assert.equal(normalizeApiBaseUrl('https://example.com/v1/chat/completions'), 'https://example.com/v1');
     assert.equal(normalizeModelsUrl('https://example.com/v1/chat/completions'), 'https://example.com/v1/models');
+    assert.equal(normalizeBaseUrl('https://example.com/v1/chat/completions'), 'https://example.com/v1/chat/completions');
+    assert.equal(normalizeModelsUrl('https://example.com/api/openai/v3'), 'https://example.com/api/openai/v3/models');
+    assert.equal(normalizeBaseUrl('https://ark.cn-beijing.volces.com/api/coding/v3'), 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions');
+    assert.equal(normalizeModelsUrl('https://ark.cn-beijing.volces.com/api/coding/v3'), 'https://ark.cn-beijing.volces.com/api/coding/v3/models');
+});
+
+test('parses supported model response envelopes and item fields', () => {
+    assert.deepEqual(readModels([{ model: 'm3' }, { model_id: 'm2' }, { model_name: 'm1' }]), ['m1', 'm2', 'm3']);
+    assert.deepEqual(readModels({ data: { models: [{ id: 'a' }] } }), ['a']);
+    assert.deepEqual(readModels({ result: { data: { models: [{ name: 'b' }] } } }), ['b']);
 });
 
 test('assistant floor scan excludes user, system, narrator and tool messages', () => {
@@ -300,7 +315,7 @@ test('model listing reads OpenAI responses and never injects provider-specific p
     try {
         const remote = await client.listModels();
         assert.deepEqual(remote.models, ['model-a', 'model-b']);
-        assert.equal(remote.source, 'remote');
+        assert.equal(remote.source, 'direct');
 
         settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'my-custom-model' });
         globalThis.fetch = async () => new Response('not found', { status: 404 });
@@ -308,14 +323,86 @@ test('model listing reads OpenAI responses and never injects provider-specific p
         assert.equal(fallback.source, 'unavailable');
         assert.deepEqual(fallback.models, []);
         assert.equal(fallback.warning, '无法获取模型列表，请手动填写模型名称。');
-        assert.match(fallback.detail, /HTTP 404/);
+        assert.match(fallback.diagnostics.direct, /HTTP 404/);
         assert.equal(settings.model, 'my-custom-model');
 
         globalThis.fetch = async () => new Response(JSON.stringify({ data: { invalid: true } }), { status: 200 });
         const malformed = await client.listModels();
         assert.equal(malformed.source, 'unavailable');
         assert.equal(malformed.warning, '无法获取模型列表，请手动填写模型名称。');
-        assert.match(malformed.detail, /没有可识别的模型数组/);
+        assert.match(malformed.diagnostics.direct, /未识别模型数组/);
+        assert.match(malformed.error, /没有可识别的模型数组/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('model listing uses a GET with Accept and Bearer auth, then falls back to the SillyTavern proxy on network failure', async () => {
+    const values = new Map([['key', 'secret-key']]);
+    const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+    const settings = normalizeSettings({ apiBaseUrl: 'https://provider.example/api/v3', model: '' });
+    const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
+    const originalFetch = globalThis.fetch;
+    const originalParent = globalThis.parent;
+    const originalLocation = globalThis.location;
+    let directRequest;
+    let proxyRequest;
+    globalThis.location = { origin: 'https://st.example' };
+    globalThis.parent = {
+        location: { origin: 'https://st.example' },
+        fetch: async (url, options) => {
+            proxyRequest = { url, options };
+            return new Response(JSON.stringify({ result: { models: [{ model_name: 'proxy-model' }] } }), { status: 200 });
+        },
+    };
+    globalThis.fetch = async (url, options) => {
+        directRequest = { url, options };
+        throw new TypeError('Failed to fetch');
+    };
+    try {
+        const result = await client.listModels();
+        assert.deepEqual(result.models, ['proxy-model']);
+        assert.equal(result.source, 'proxy');
+        assert.equal(directRequest.url, 'https://provider.example/api/v3/models');
+        assert.equal(directRequest.options.method, 'GET');
+        assert.equal(directRequest.options.headers.Accept, 'application/json');
+        assert.equal(directRequest.options.headers.Authorization, 'Bearer secret-key');
+        assert.equal('body' in directRequest.options, false);
+        assert.equal(proxyRequest.url, 'https://st.example/api/backends/chat-completions/status');
+        assert.equal(proxyRequest.options.method, 'POST');
+        const proxyBody = JSON.parse(proxyRequest.options.body);
+        assert.equal(proxyBody.chat_completion_source, 'custom');
+        assert.equal(proxyBody.custom_url, 'https://provider.example/api/v3');
+        assert.equal(proxyBody.custom_include_headers, 'Authorization: Bearer secret-key');
+        assert.doesNotMatch(JSON.stringify(result), /secret-key/);
+    } finally {
+        globalThis.fetch = originalFetch;
+        if (originalParent === undefined) delete globalThis.parent;
+        else globalThis.parent = originalParent;
+        if (originalLocation === undefined) delete globalThis.location;
+        else globalThis.location = originalLocation;
+    }
+});
+
+test('connection test retries without max_tokens when rejected by provider', async () => {
+    const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
+    const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x' });
+    const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    globalThis.fetch = async (url, options) => {
+        requests.push({ url, payload: JSON.parse(options.body) });
+        if (requests.length === 1) return new Response(JSON.stringify({ error: { message: 'Unsupported parameter max_tokens' } }), { status: 400 });
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), { status: 200 });
+    };
+    try {
+        const result = await client.test();
+        assert.equal(result.ok, true);
+        assert.equal(requests[0].url, 'https://example.com/v1/chat/completions');
+        assert.equal(requests[0].payload.max_tokens, 1);
+        assert.deepEqual(requests[0].payload.messages, [{ role: 'user', content: 'Hi' }]);
+        assert.equal('max_tokens' in requests[1].payload, false);
+        assert.equal(requests[1].payload.temperature, undefined);
     } finally {
         globalThis.fetch = originalFetch;
     }

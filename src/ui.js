@@ -1,5 +1,5 @@
-import { API_PROVIDERS, DEFAULT_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.3.1';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.3.1';
+import { API_PROVIDERS, DEFAULT_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.3.2';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.3.2';
 
 const ROOT_ID = 'cache-memory-settings';
 const CONFIG_ID = 'cache-memory-config';
@@ -258,7 +258,14 @@ export class CacheMemoryUI {
                     const inputKey = root.querySelector('[data-api-key]')?.value ?? '';
                     const result = await this.apiClient.listModels(inputKey);
                     this.renderModelOptions(result.models);
-                    const suffix = result.source === 'unavailable' ? result.warning : `已从接口获取 · 共 ${result.models.length} 个`;
+                    const modelInput = root.querySelector('[data-setting="model"]');
+                    if (modelInput && !modelInput.value.trim() && result.models.length) {
+                        modelInput.value = result.models[0];
+                        this.updateSettings({ model: modelInput.value });
+                    }
+                    const suffix = result.source === 'unavailable'
+                        ? `${result.warning}\n请求地址：${result.diagnostics?.endpoint ?? '未知'}\n直连：${result.diagnostics?.direct ?? '未知'}\n代理：${result.diagnostics?.proxy ?? '未尝试'}${result.error ? `\n详情：${result.error}` : ''}`
+                        : `已从${result.source === 'proxy' ? 'SillyTavern 代理' : '接口'}获取 · 共 ${result.models.length} 个`;
                     this.setStatus(result.warning ? 'warning' : 'success', suffix);
                     if (result.detail) {
                         const detail = String(result.detail).slice(0, 300);
@@ -266,6 +273,10 @@ export class CacheMemoryUI {
                         for (const output of document.querySelectorAll('[data-cache-status]')) output.title = `获取模型列表失败：${detail}`;
                     } else {
                         for (const output of document.querySelectorAll('[data-cache-status]')) output.removeAttribute('title');
+                    }
+                    if (result.source === 'unavailable') {
+                        for (const output of document.querySelectorAll('[data-cache-status]')) output.title = '详细诊断也已输出到浏览器开发者控制台';
+                        console.warn('[Cache Memory] model list failed:', suffix);
                     }
                 } catch (error) {
                     this.setStatus('error', `获取模型失败 · ${error.message}`);
