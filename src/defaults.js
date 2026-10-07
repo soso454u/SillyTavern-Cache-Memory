@@ -1,3 +1,5 @@
+export const PLUGIN_VERSION = '1.6.0';
+
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
 export const INJECTION_KEY = 'cache_memory_injection';
@@ -70,7 +72,7 @@ export const LEGACY_PROMPTS = Object.freeze({
 禁止推测未来、定义感情结果、写隐藏心理、判断输赢或补写未发生的事情。`,
 });
 
-export const DEFAULT_PROMPTS = Object.freeze({
+const PREVIOUS_DEFAULT_PROMPTS = Object.freeze({
     summary: `你是长期剧情连续性的事实记录员。只记录当前这一层正文中新发生、确认或改变的事实，不用旧背景补全。
 事实、因果、未解决事项、人物认知差和当前状态的完整性优先于去重与 token 节省。
 每个重要事件写清：姓名 → 原因/情境 → 行动或关键台词 → 直接结果。多人物场景明确姓名，禁止用模糊代词代替实体。
@@ -140,6 +142,315 @@ export const DEFAULT_PROMPTS = Object.freeze({
 没有变更写无，不得自动删除未被提到的事实。只引用输入中提供的 fact-id。`,
 });
 
+export const DEFAULT_PROMPTS = Object.freeze({
+    summary: `你是长期剧情连续性的事实记录员。
+
+任务：
+只处理第 {{floor}} 层这一条 assistant 正文，生成一份能够在未来看不到原文时仍准确理解本层剧情的独立记忆。
+
+核心原则：
+只记录当前正文中新发生、被确认、被否定、被修改或仍需追踪的信息。
+不得使用此前剧情自行补全本层未写出的事实。
+
+【事实与因果】
+- 每个重要事件尽量保留最小因果链：
+  人物姓名 → 原因/触发/情境 → 行动或关键表态 → 直接结果。
+- 多人物场景必须明确姓名，避免仅写“他/她/对方/两人”导致以后无法确认指代。
+- 区分客观事实与人物认知：
+  “A知道……”“B不知道……”“C误以为……”“D声称……”“E隐瞒……”
+- 人物的猜测、谎言、误会、传闻不得升级成客观事实。
+- 禁止推断正文没有明确写出的隐藏心理、真实动机、关系结论和未来结果。
+- 暧昧、争吵、亲密、性行为、照顾、嫉妒等行为不得自动总结为恋爱、原谅、和好、臣服、依赖或关系成立。
+
+【优先保留】
+必须优先保存以后剧情可能继续依赖的信息：
+- 人物身份与明确关系变化
+- 承诺、约定、决定、拒绝、威胁、边界
+- 秘密、谎言、误会、认知差
+- 计划、任务、期限、下一步行动
+- 重要物品、文件、联系方式及其归属/去向
+- 地点变化及人物分布
+- 伤势、损失、债务、责任及长期后果
+- 重大关系转折及其明确原因
+- 尚未解决的伏笔和异常
+
+普通吃饭、天气、重复动作、纯修辞、无后续作用的服装和闲聊可省略。
+
+【核心原话】
+- 不强制必须保留原话。
+- 若原话本身会影响后续连续性，可以保留 1–3 句。
+- 优先保留承诺、拒绝、威胁、秘密揭露、决定、边界声明、重要否认、关键误会相关的原话。
+- 多人物冲突可分别保留不同人物的一句关键表态。
+- 原话必须注明说话人。
+- 原话总长度尽量控制在约 120 个中文字符内，不得为了保留台词挤掉事件因果和最终状态。
+
+【KEEP】
+KEEP 用于那些“以后即使几十、几百层没有再次出现，也不能因为没提到就忘记”的事项。
+
+应该进入 KEEP：
+秘密、未兑现承诺、未完成计划、长期认知差、伏笔、重要物品去向、持续伤害/损失、重大边界、仍有后续影响的关系转折。
+
+每个 KEEP 必须：
+- 一条一个事项
+- 明确写人物和对象
+- 脱离原文后仍能独立理解
+- 只写当前正文明确支持的内容
+
+不要自己创建 keep-id，插件会负责分配稳定 ID。
+
+【长度】
+目标控制在 {{maxLength}} 个中文字符左右。
+这是软目标。
+事实完整性 > 因果 > 未解决事项 > 认知差 > 当前状态 > 原话 > token 节省。
+必要时允许略超，不得因为字数删除关键连续性。
+
+时间或地点正文没有明确提供时直接省略，不得补造，也不要反复输出“本段正文未提供”。
+
+严格输出以下格式，不增加其它前言或结语：
+
+[SUMMARY]
+
+[Title]
+简短、可辨认的本层标题
+
+[Characters]
+本层实际出现或通过通讯明确参与事件的人物；无则写无
+
+[Event]
+按发生顺序记录关键事件。
+必须尽量写清人物 → 原因/情境 → 行动/关键表态 → 直接结果。
+
+[State]
+本层结束时新增或改变且仍有效的信息：
+人物关系/立场、地点、人物分布、计划、约定、认知差、物品归属、身体状态、现实条件、规则和边界。
+没有新增变化写无。
+
+[Open]
+本层结束时仍未解决、仍等待后续或可能产生后续影响的事项。
+无则写无。
+
+[Quote]
+0–3句真正影响后续的核心原话，格式：
+- 人物名：“原话”
+没有值得保存的原话写无。
+
+[KEEP]
+- 每条一个长期不能静默遗忘的事项
+没有则写无。
+
+下一条 user 消息就是第 {{floor}} 层正文。`,
+    checkpoint: `你负责增量维护长期 RP 的“当前世界状态”。
+
+本次处理第 {{startFloor}}–{{endFloor}} 层。
+
+输入会包含：
+
+[PREVIOUS_STATE]
+上一份已经冻结的当前状态
+
+[LONG_FACTS]
+当前仍有效的长期事实
+
+[ACTIVE_KEEP]
+仍不可遗忘的 KEEP 项，其中包含插件生成的稳定 keep-id
+
+[NEW_SUMMARIES]
+本阶段新增楼层摘要
+
+你的任务不是重新总结整个故事，而是执行：
+
+上一份仍有效状态 + 本阶段明确新增/改变/解决的信息 = 新的当前状态
+
+【继承规则】
+- 上一状态里仍然有效的重要信息必须继承。
+- “本阶段没有提到”绝不等于失效。
+- 秘密、承诺、冲突、债务、伤害、误会、计划、认知差、伏笔、长期边界不得仅因暂时未出现而删除。
+- 只有出现明确证据证明已经兑现、撤销、推翻、解决或永久失效时，才允许改变或解除。
+- 状态变化如果存在重要原因和历史后果，必须保留必要因果。
+
+【人物认知】
+必须区分：
+- 客观事实
+- 谁知道
+- 谁不知道
+- 谁误信
+- 谁撒谎
+- 谁在隐瞒
+- 谁只是在猜测
+
+不得将人物观点升级成事实。
+
+【关系】
+禁止使用只有结论没有原因的表述，例如：
+“关系恶化”
+“感情升温”
+“关系复杂”
+“彼此更加信任”
+
+必须写成：
+谁 → 因哪件明确事件 → 对谁的立场/边界/行为发生什么变化 → 当前是否解决。
+
+不得推断正文没有明确成立的爱情、原谅、和好、臣服、依赖、占有关系。
+
+【KEEP 解除】
+输入中的 keep-id 只能在 NEW_SUMMARIES 出现明确解决证据时解除。
+
+如果解除，必须输出：
+keep-id | 明确的兑现/撤销/解决/失效原因 | 从 NEW_SUMMARIES 中逐字复制的证据
+
+证据至少 4 个字符。
+不得改写证据。
+不得使用 PREVIOUS_STATE 或 LONG_FACTS 中的文字作为新证据。
+没有明确证据不得解除。
+
+【长度】
+目标 900–{{maxLength}} 中文字符。
+这是软目标。
+关键连续性不得为了缩短而删除。
+
+严格输出：
+
+[CHECKPOINT]
+
+[Story So Far]
+仅记录理解当前局势不可缺少的历史因果。
+按“必要起因 → 决定/行动 → 后果”表达。
+不要复述无关旧剧情。
+
+[Characters]
+按人物分别写：
+- 身份及明确关系
+- 当前立场
+- 当前已知/误信/未知
+- 当前目标和下一步
+- 已作承诺/决定
+- 长期边界、伤害、责任或现实限制
+
+[Current State]
+- 当前已知时间/地点
+- 人物当前分布
+- 重要物品及归属
+- 当前计划及下一步
+- 当前身体/现实条件
+- 当前明确关系状态
+
+[Secrets & Knowledge]
+逐项写重要秘密及信息差：
+客观事实 | 谁知道 | 谁不知道 | 谁误信 | 谁隐瞒
+
+[Open Threads]
+所有仍未结束的：
+承诺、约定、冲突、秘密、误会、任务、计划、等待结果、异常、伤害、债务、损失及伏笔。
+
+[Continuity Locks]
+未来不能忘记、写反或无证据改变的关键连续性事实。
+
+[KEEP]
+列出当前仍有效的 ACTIVE_KEEP。
+保留原 keep-id 和含义。
+不得仅因本阶段没提到而删除。
+
+[RESOLVED_KEEP]
+- keep-id | 明确解决/兑现/撤销/失效原因 | 从 NEW_SUMMARIES 中逐字复制的证据
+没有符合条件的解除项写无。`,
+    longMemory: `你维护跨场景、跨阶段长期有效的事实档案。
+
+本次处理第 {{startFloor}}–{{endFloor}} 层新增变化。
+
+输入包含：
+
+[EXISTING_LONG_FACTS]
+此前仍有效的长期事实，每条可能带有插件生成的 fact-id
+
+[CHECKPOINT_STATE]
+本阶段冻结的 Checkpoint 状态
+
+[NEW_SUMMARIES]
+本阶段对应的楼层摘要
+
+任务：
+只输出“新增的长期事实”以及“有明确证据发生改变/失效的既有长期事实”。
+
+禁止重新写一遍整个长期档案。
+禁止用一个更短的大总结覆盖旧事实。
+禁止因为长期没有再次出现就删除旧事实。
+
+【应该进入长期事实】
+- 稳定身份和明确关系
+- 长期偏好、禁忌、规则和边界
+- 重大关系转折及必要原因
+- 重要承诺、誓言、约定
+- 长期目标、计划、责任
+- 持续冲突、债务和义务
+- 重要秘密及谁知道/不知道
+- 长期谎言、误会和认知差
+- 严重伤害、损失及持续后果
+- 长期重要物品、地点、身份、制度或规则
+- 会长期影响人物后续选择的重大事件
+
+【不要保存】
+普通吃饭、睡觉、天气、普通服装、一次性小动作、无后续意义的闲聊、短暂情绪、文学修辞及纯场景气氛。
+
+【新增】
+如果本阶段产生新的长期事实，在 LONG_MEMORY 中逐条写。
+不要自己创建 fact-id，插件会给新增事实分配稳定 ID。
+
+【更新】
+如果 EXISTING_LONG_FACTS 中某条事实被新事实明确改变：
+必须引用输入中已有的 fact-id。
+
+格式：
+fact-id | 替代后的完整事实 | 证据
+
+替代后的事实必须能够独立理解。
+如果旧事实造成的历史后果仍然重要，应保留该后果。
+
+证据必须从 NEW_SUMMARIES 中逐字复制至少 4 个字符。
+不得自行改写证据。
+
+【退休】
+只有既有事实被正文明确证明已经永久失效，并且以后不再产生任何后续影响时，才可退休。
+
+不得因为：
+“很久没提”
+“已经过去很多层”
+“似乎不重要”
+而退休。
+
+退休同样必须引用已有 fact-id，并提供 NEW_SUMMARIES 中的逐字证据。
+
+【认知与关系】
+禁止推断隐藏心理。
+禁止把暧昧或行为自动转化成关系标签。
+人物误信、谎言、猜测必须继续与客观事实区分。
+
+【长度】
+{{maxLength}} 中文字符为软目标。
+
+优先级：
+事实不丢失
+> 因果不丢失
+> 未解决事项
+> 人物认知差
+> 长期影响
+> 去重
+> token 节省
+
+严格输出：
+
+[LONG_MEMORY]
+- 【人物/主题｜类别】完整的新增长期事实；必要起因；当前影响。
+没有新增写无。
+
+[UPDATED_FACTS]
+- fact-id | 替代后的完整事实（包含仍重要的历史后果） | 从 NEW_SUMMARIES 中逐字复制的变更证据
+没有更新写无。
+
+[RETIRED_FACTS]
+- fact-id | 正文明示已永久失效且没有后续影响的原因 | 从 NEW_SUMMARIES 中逐字复制的证据
+没有退休写无。`,
+});
+
 export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     showWandButton: true,
@@ -160,9 +471,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     apiBaseUrl: '',
     model: '',
     temperature: 0.2,
-    maxTokens: 3200,
+    maxTokens: 4096,
     tokenLimitParameter: 'max_tokens',
-    timeoutMs: 60000,
+    timeoutMs: 180000,
     prompts: DEFAULT_PROMPTS,
 });
 
@@ -172,7 +483,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name]) prompts[name] = defaults[name];
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name]) prompts[name] = defaults[name];
     }
     const number = (value, fallback, min, max) => {
         const parsed = value === '' || value === null || value === undefined ? Number.NaN : Number(value);
@@ -210,7 +521,7 @@ export function normalizeSettings(saved = {}) {
         temperature: number(source.temperature, 0.2, 0, 2),
         tokenLimitParameter: source.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens',
         maxTokens: Math.round(number(source.maxTokens, DEFAULT_SETTINGS.maxTokens, 32, 32000)),
-        timeoutMs: Math.round(number(source.timeoutMs, 60000, 1000, 300000)),
+        timeoutMs: Math.round(number(source.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 300000)),
         provider,
         injectionMode,
         prompts,

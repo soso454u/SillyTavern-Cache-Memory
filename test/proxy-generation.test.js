@@ -184,3 +184,34 @@ test('an upstream-style JSON404 is not a missing-route fallback; unreadable404 e
         return true;
     });
 });
+
+test('per-request cancellation aborts one response body without cancelling a separate request', async t => {
+    const { client, root } = fixture(t);
+    let started;
+    const reading = new Promise(resolve => { started = resolve; });
+    root.fetch = async (_url, options) => {
+        const body = JSON.parse(options.body);
+        if (body.messages[1].content === 'independent') return new Response('{"choices":[{"message":{"content":"ok"}}]}');
+        return { status: 200, ok: true, text: () => new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            started();
+        }) };
+    };
+    const controller = new AbortController();
+    const pending = client.complete({ userContent: 'cancel me', signal: controller.signal });
+    await reading;
+    assert.equal((await client.complete({ userContent: 'independent' })).content, 'ok');
+    controller.abort();
+    await assert.rejects(pending, error => error.code === 'REQUEST_ABORTED');
+    assert.equal(client.activeControllers.size, 0);
+});
+
+test('proxy gateway504 and confirmed upstream504 keep distinct diagnostics and retryable status', async t => {
+    const { client, root } = fixture(t);
+    root.fetch = async () => new Response('<html>504 Gateway Time-out / openresty</html>', { status: 504 });
+    await assert.rejects(client.test(), error => error.status === 504 && error.category === 'proxy_error'
+        && error.diagnostics.proxy === 'HTTP 504' && error.diagnostics.upstream.startsWith('未提供'));
+    root.fetch = async () => new Response('{"error":{"status":504,"message":"Gateway timeout"}}');
+    await assert.rejects(client.test(), error => error.status === 504 && error.category === 'upstream_error'
+        && error.diagnostics.proxy === 'HTTP 200' && error.diagnostics.upstream === 'HTTP 504');
+});

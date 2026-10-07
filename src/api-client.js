@@ -210,11 +210,16 @@ export class SummaryApiClient {
         const settings = this.getSettings();
         const controller = new AbortController();
         this.activeControllers.add(controller);
-        const timeout = setTimeout(() => controller.abort(), Number(settings.timeoutMs) || 60000);
-        const cleanup = () => { clearTimeout(timeout); this.activeControllers.delete(controller); };
+        const externalSignal = options.signal;
+        const cancel = () => { this.cancelledControllers.add(controller); controller.abort(); };
+        externalSignal?.addEventListener('abort', cancel, { once: true });
+        if (externalSignal?.aborted) cancel();
+        const timeoutMs = Number(settings.timeoutMs) || 180000;
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const cleanup = () => { clearTimeout(timeout); externalSignal?.removeEventListener('abort', cancel); this.activeControllers.delete(controller); };
         const translate = error => {
             if (error?.name !== 'AbortError') return error;
-            const aborted = new Error(this.cancelledControllers.has(controller) ? '请求已取消' : `请求超时（${settings.timeoutMs} 毫秒）`);
+            const aborted = new Error(this.cancelledControllers.has(controller) ? '请求已取消' : `请求超时（${timeoutMs} 毫秒）`);
             aborted.code = this.cancelledControllers.has(controller) ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT';
             return aborted;
         };
@@ -260,7 +265,7 @@ export class SummaryApiClient {
     }
 
     // Models, test and every generation share live ST headers, URL normalization and diagnostics.
-    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '' } = {}) {
+    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '', signal } = {}) {
         const settings = this.getSettings();
         const apiKey = String(apiKeyOverride || this.storage.getItem(this.storageKey) || '').trim();
         const endpoint = kind === 'models' ? normalizeModelsUrl(settings.apiBaseUrl) : normalizeBaseUrl(settings.apiBaseUrl);
@@ -274,6 +279,7 @@ export class SummaryApiClient {
         const fail = (message, code, status, proxyRouteMissing = false) => {
             const error = new Error(safeText(message, secrets, 1000));
             error.code = code;
+            error.status = Number(status) || undefined;
             error.category = classifyFailure(status, error.message, code, proxyRouteMissing);
             error.diagnostics = { ...diagnostics };
             console.warn('[Cache Memory] AI request failed:', error.diagnostics, error.message);
@@ -320,7 +326,7 @@ export class SummaryApiClient {
             if (!response.ok || data?.error) {
                 const detail = typeof data?.error === 'string' ? data.error : data?.error?.message ?? data?.message;
                 const code = !response.ok && !upstreamStatus ? 'ST_PROXY_HTTP_ERROR' : undefined;
-                throw fail(detail || `HTTP ${response.status}: ${diagnostics.proxyBody || response.statusText}`, code, upstreamStatus);
+                throw fail(detail || `HTTP ${response.status}: ${diagnostics.proxyBody || response.statusText}`, code, upstreamStatus || response.status);
             }
             return { data, response, diagnostics, source: 'proxy' };
         };
@@ -343,7 +349,7 @@ export class SummaryApiClient {
         let response;
         try {
             response = await this.fetchResponse(path, {
-                method: 'POST', headers, credentials: 'same-origin', body: JSON.stringify(proxyPayload),
+                method: 'POST', headers, credentials: 'same-origin', body: JSON.stringify(proxyPayload), signal,
             }, root);
         } catch (error) {
             if (error.diagnostics) throw error;
@@ -357,13 +363,13 @@ export class SummaryApiClient {
     async complete(request) {
         const payload = this.buildPayload(request);
         let result;
-        try { result = await this.requestOpenAICompatible({ payload }); }
+        try { result = await this.requestOpenAICompatible({ payload, signal: request.signal }); }
         catch (error) {
             // Retry only an explicit rejected parameter, preserving a bounded output budget.
             if (!payload.max_tokens || !/max_tokens/.test(error.message) || !/unsupported|not supported|unknown|use.*max_completion_tokens/i.test(error.message)) throw error;
             payload.max_completion_tokens = payload.max_tokens;
             delete payload.max_tokens;
-            result = await this.requestOpenAICompatible({ payload });
+            result = await this.requestOpenAICompatible({ payload, signal: request.signal });
         }
         const { data, response, diagnostics, source } = result;
         const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text

@@ -11,13 +11,13 @@ import {
     setExtensionPrompt,
 } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.5.1';
-import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.5.1';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.5.1';
-import { getAssistantMessages } from './src/utils.js?v=1.5.1';
-import { MemoryStore } from './src/memory-store.js?v=1.5.1';
-import { MemorySummarizer } from './src/summarizer.js?v=1.5.1';
-import { CacheMemoryUI } from './src/ui.js?v=1.5.1';
+import { SummaryApiClient } from './src/api-client.js?v=1.6.0';
+import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.6.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.6.0';
+import { getAssistantMessages } from './src/utils.js?v=1.6.0';
+import { MemoryStore } from './src/memory-store.js?v=1.6.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.6.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.6.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -96,8 +96,9 @@ const summarizer = new MemorySummarizer({
     apiClient,
     getSettings: () => settings,
     getChat: () => chat,
-    onStatus: (state, message) => {
-        ui?.setStatus(state, message);
+    onStatus: (state, message, error) => {
+        if (state !== 'settled') ui?.setStatus(state, message, error);
+        ui?.renderMessageMemories();
         if (state === 'error') console.warn(LOG_PREFIX, message);
     },
 });
@@ -117,6 +118,8 @@ function refreshChatState() {
     store.syncMessages(chat);
     const chatId = store.current().chatId;
     if (chatId !== activeChatId) {
+        summarizer.invalidateContext();
+        ui?.backfill?.cancel({ discard: true });
         activeChatId = chatId;
         updateInjection('chat changed');
     } else if (!settings.strictCacheMode) updateInjection('history metadata changed');
@@ -217,6 +220,7 @@ export function onHotUnload() {
     timers.clear();
     frames.clear();
     apiClient.abortAll();
+    summarizer.invalidateContext();
     ui?.destroy();
     diagnostics.reset();
     publishedValue = null;

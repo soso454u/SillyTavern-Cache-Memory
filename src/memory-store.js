@@ -1,5 +1,5 @@
-import { getAssistantMessages } from './utils.js?v=1.5.1';
-import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.5.1';
+import { getAssistantMessages } from './utils.js?v=1.6.0';
+import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.6.0';
 
 export const STORE_VERSION = 2;
 
@@ -133,12 +133,12 @@ export class MemoryStore {
         return this.current().summaries[messageId] ?? null;
     }
 
-    addSummary(record, { overwrite = false } = {}) {
+    addSummary(record, { overwrite = false, background = false } = {}) {
         const store = this.current();
         if (store.summaries[record.messageId] && !overwrite) return store.summaries[record.messageId];
         const replacesFrozen = store.summaries[record.messageId]?.frozen !== false && ['frozen', 'manual-edited'].includes(store.summaries[record.messageId]?.status);
         store.summaries[record.messageId] = structuredClone(record);
-        this.persist(replacesFrozen ? 'manual edit' : 'new summary');
+        this.persist(replacesFrozen && !background ? 'manual edit' : 'new summary');
         return store.summaries[record.messageId];
     }
 

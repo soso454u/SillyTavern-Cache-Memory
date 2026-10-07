@@ -1,4 +1,4 @@
-import { fnv1a } from './utils.js?v=1.5.1';
+import { fnv1a } from './utils.js?v=1.6.0';
 
 export const isUsableMemory = item => item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen');
 
