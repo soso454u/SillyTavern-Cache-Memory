@@ -35,6 +35,8 @@ test('normalizes long interval to checkpoint boundaries', () => {
     const settings = normalizeSettings({ checkpointInterval: 20, longMemoryInterval: 101 });
     assert.equal(settings.longMemoryInterval, 120);
     assert.equal(settings.strictCacheMode, true);
+    assert.equal(settings.showWandButton, true);
+    assert.equal(normalizeSettings({ showWandButton: false }).showWandButton, false);
 });
 
 test('assistant floor scan excludes user, system, narrator and tool messages', () => {

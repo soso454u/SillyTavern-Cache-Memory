@@ -25,6 +25,8 @@ SillyTavern/public/scripts/extensions/third-party/cache-memory/
 
 目录内应直接包含 `manifest.json`、`index.js`、`style.css` 和 `src/`。刷新 SillyTavern 后，在“扩展”设置中展开 **Cache Memory**。
 
+扩展设置页只保留启用开关、魔法棒入口开关和两个启动按钮。完整配置使用独立弹窗，可从扩展设置页的“打开设置”进入，也可从输入框旁的魔法棒扩展菜单点击 **Cache Memory** 进入。“在魔法棒菜单中显示”关闭后，该入口会立即隐藏。
+
 也可以在 SillyTavern 的“下载扩展并安装”中填写：
 
 ```text
@@ -35,7 +37,7 @@ https://github.com/soso454u/SillyTavern-Cache-Memory
 
 ## 独立 API
 
-在 **扩展 → Cache Memory → 独立总结 API** 中填写：
+在 **Cache Memory 设置弹窗 → 独立 API** 中填写：
 
 - API Provider
 - API Base URL，例如 `https://example.com/v1`

@@ -66,6 +66,7 @@ export const DEFAULT_PROMPTS = Object.freeze({
 
 export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
+    showWandButton: true,
     autoSummarize: true,
     independentApi: true,
     checkpointInterval: 20,
@@ -103,6 +104,7 @@ export function normalizeSettings(saved = {}) {
         ...DEFAULT_SETTINGS,
         ...source,
         enabled: source.enabled !== false,
+        showWandButton: source.showWandButton !== false,
         autoSummarize: source.autoSummarize !== false,
         independentApi: source.independentApi !== false,
         strictCacheMode: source.strictCacheMode !== false,
