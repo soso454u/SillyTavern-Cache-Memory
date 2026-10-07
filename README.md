@@ -39,14 +39,14 @@ https://github.com/soso454u/SillyTavern-Cache-Memory
 
 在 **缓存记忆设置弹窗 → 模型接口** 中按以下顺序设置：
 
-- 选择“OpenAI 兼容接口”或“豆包方舟 Coding Plan”；
-- 填写接口地址和 API 密钥；选择豆包时会自动填写 `https://ark.cn-beijing.volces.com/api/coding/v3`；
-- 点击“获取模型列表”，然后选择或手动填写摘要模型；
+- 选择接口预设“自定义”或“火山方舟 Coding Plan”；预设只会填写地址，不会切换另一套 provider；
+- 填写接口地址和 API 密钥。火山方舟预设地址为 `https://ark.cn-beijing.volces.com/api/coding/v3`，也可以直接改成任意 OpenAI-compatible 地址；
+- 点击“获取模型列表”刷新候选项，然后在可编辑的模型输入框中手动填写或从下拉候选项选择；
 - 点击“测试连接”。
 
 生成请求直接发送到 `POST {接口地址}/chat/completions`，模型列表从 `GET {接口地址}/models` 获取。如果填写的是完整 `/chat/completions` 地址，插件不会重复追加路径。请求体采用 OpenAI 兼容的 `model/messages/temperature/max_tokens` 格式，密钥通过 `Authorization: Bearer ...` 发送。
 
-方舟 Coding Plan 的模型列表接口并非在所有套餐中开放。远端列表不可用时，插件会自动提供一组官方文档中的预设模型，并优先推荐稳定别名 `ark-code-latest`。火山方舟官方同时说明，Coding Plan 个人版权益仅限 AI 编程工具使用；请先确认你的账号与套餐允许在 SillyTavern 插件中调用，避免产生额外费用或账号风险。
+模型列表失败（包括 404、403、CORS 或接口不支持）时，只提示“无法获取模型列表，请手动填写模型名称”，不会影响手动填写模型或测试连接，也不会注入 provider 专属模型列表。火山方舟官方同时说明，Coding Plan 个人版权益仅限 AI 编程工具使用；请先确认你的账号与套餐允许在 SillyTavern 插件中调用，避免产生额外费用或账号风险。
 
 API 密钥使用独立的浏览器 `localStorage` 项 `cache_memory_api_key_v1`，不写入聊天、`chat_metadata`、扩展设置，也不复用 SillyTavern 自带 API。它不是安全密钥库：同源网页脚本和能访问该浏览器配置的人可以读取它。目标接口还必须允许 SillyTavern 页面来源的跨域请求。面板中的“测试连接”会返回连接状态、模型、HTTP 状态和耗时。
 
@@ -81,7 +81,7 @@ extension_settings.cache_memory
 
 ## 热更新兼容
 
-版本 1.2.0 起实现了 `SillyTavern-Extension-Hot-Reload` 的生命周期协议。更新或禁用时会取消事件监听、计时器、观察器、未完成的接口请求并移除插件界面；所有本地 ES Module 导入也使用版本化地址，避免热更新后混用新旧模块。
+版本 1.2.0 起实现了 `SillyTavern-Extension-Hot-Reload` 的生命周期协议。更新或禁用时会取消事件监听、计时器、观察器、未完成的接口请求并移除插件界面；所有本地 ES Module 导入也使用版本化地址，避免热更新后混用新旧模块。版本 1.3.0 起，旧的豆包/方舟 provider 配置会自动迁移为统一的 OpenAI-compatible provider，并保留原有地址和模型。
 
 ## 验证
 

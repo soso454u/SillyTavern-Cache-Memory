@@ -11,12 +11,12 @@ import {
     setExtensionPrompt,
 } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.2.0';
-import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.2.0';
-import { buildInjection } from './src/injection.js?v=1.2.0';
-import { MemoryStore } from './src/memory-store.js?v=1.2.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.2.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.2.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.3.0';
+import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.3.0';
+import { buildInjection } from './src/injection.js?v=1.3.0';
+import { MemoryStore } from './src/memory-store.js?v=1.3.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.3.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.3.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;

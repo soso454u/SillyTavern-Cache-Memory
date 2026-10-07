@@ -41,6 +41,19 @@ test('normalizes long interval to checkpoint boundaries', () => {
     assert.equal(normalizeSettings({ recentSummaryCount: 0 }).recentSummaryCount, 0);
 });
 
+test('migrates legacy provider values without changing API settings', () => {
+    for (const provider of ['doubao', 'ark', 'coding_plan', 'doubao-coding']) {
+        const settings = normalizeSettings({
+            provider,
+            apiBaseUrl: DOUBAO_CODING_BASE_URL,
+            model: 'my-custom-model',
+        });
+        assert.equal(settings.provider, API_PROVIDERS.OPENAI_COMPATIBLE);
+        assert.equal(settings.apiBaseUrl, DOUBAO_CODING_BASE_URL);
+        assert.equal(settings.model, 'my-custom-model');
+    }
+});
+
 test('builds a model-list endpoint from base or completion URLs', () => {
     assert.equal(normalizeModelsUrl('https://example.com/v1/'), 'https://example.com/v1/models');
     assert.equal(normalizeModelsUrl('https://example.com/v1/chat/completions'), 'https://example.com/v1/models');
@@ -278,7 +291,7 @@ test('independent API client posts directly with its own browser-stored bearer k
     }
 });
 
-test('model listing reads OpenAI responses and falls back to Doubao presets', async () => {
+test('model listing reads OpenAI responses and never injects provider-specific presets', async () => {
     const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
     let settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'test-model' });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
@@ -289,16 +302,18 @@ test('model listing reads OpenAI responses and falls back to Doubao presets', as
         assert.deepEqual(remote.models, ['model-a', 'model-b']);
         assert.equal(remote.source, 'remote');
 
-        settings = normalizeSettings({
-            provider: API_PROVIDERS.DOUBAO_CODING,
-            apiBaseUrl: DOUBAO_CODING_BASE_URL,
-            model: 'ark-code-latest',
-        });
+        settings = normalizeSettings({ apiBaseUrl: DOUBAO_CODING_BASE_URL, model: 'my-custom-model' });
         globalThis.fetch = async () => new Response('not found', { status: 404 });
         const fallback = await client.listModels();
-        assert.equal(fallback.source, 'preset');
-        assert.ok(fallback.models.includes('ark-code-latest'));
-        assert.match(fallback.warning, /HTTP 404/);
+        assert.equal(fallback.source, 'unavailable');
+        assert.deepEqual(fallback.models, []);
+        assert.equal(fallback.warning, '无法获取模型列表，请手动填写模型名称。');
+        assert.equal(settings.model, 'my-custom-model');
+
+        globalThis.fetch = async () => new Response(JSON.stringify({ data: { invalid: true } }), { status: 200 });
+        const malformed = await client.listModels();
+        assert.equal(malformed.source, 'unavailable');
+        assert.equal(malformed.warning, '无法获取模型列表，请手动填写模型名称。');
     } finally {
         globalThis.fetch = originalFetch;
     }

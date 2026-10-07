@@ -6,25 +6,12 @@ export const DOUBAO_CODING_BASE_URL = 'https://ark.cn-beijing.volces.com/api/cod
 
 export const API_PROVIDERS = Object.freeze({
     OPENAI_COMPATIBLE: 'openai-compatible',
-    DOUBAO_CODING: 'doubao-coding',
 });
 
-// 方舟 Coding Plan 的模型列表接口并非在所有套餐中都可用。这里保留官方
-// 推荐的稳定别名和当前文档列出的模型，远端获取失败时仍可直接选择。
-export const DOUBAO_CODING_MODELS = Object.freeze([
-    'ark-code-latest',
-    'doubao-seed-2.1-pro',
-    'doubao-seed-2.1-lite',
-    'doubao-seed-2.0-mini',
-    'doubao-seed-evolving',
-    'glm-5.3',
-    'glm-5.3-flash',
-    'kimi-k3',
-    'kimi-k2.8-preview',
-    'deepseek-v4.1-flash',
-    'deepseek-v4-flash',
-    'deepseek-v4-pro',
-]);
+export const API_PRESETS = Object.freeze({
+    CUSTOM: 'custom',
+    DOUBAO_CODING: 'doubao-coding',
+});
 
 export const INJECTION_MODES = Object.freeze({
     NONE: 'none',
@@ -125,9 +112,9 @@ export function normalizeSettings(saved = {}) {
     const injectionMode = Object.values(INJECTION_MODES).includes(source.injectionMode)
         ? source.injectionMode
         : INJECTION_MODES.NONE;
-    const provider = Object.values(API_PROVIDERS).includes(source.provider)
-        ? source.provider
-        : API_PROVIDERS.OPENAI_COMPATIBLE;
+    // Legacy provider values (including Doubao/Ark names) are migrated to the
+    // single OpenAI-compatible implementation while preserving URL and model.
+    const provider = API_PROVIDERS.OPENAI_COMPATIBLE;
 
     return {
         ...DEFAULT_SETTINGS,

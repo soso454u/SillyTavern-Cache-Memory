@@ -1,4 +1,4 @@
-import { API_PROVIDERS, DOUBAO_CODING_MODELS } from './defaults.js?v=1.2.0';
+export const MODEL_LIST_WARNING = '无法获取模型列表，请手动填写模型名称。';
 
 export function normalizeBaseUrl(value) {
     const url = String(value ?? '').trim().replace(/\/+$/, '');
@@ -129,27 +129,19 @@ export class SummaryApiClient {
 
     async listModels(apiKeyOverride = '') {
         const settings = this.getSettings();
-        if (!settings.apiBaseUrl) throw new Error('请先填写接口地址');
-        let remoteModels = [];
-        let remoteError = null;
+        if (!settings.apiBaseUrl) return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING };
         try {
             const { data } = await this.fetchJson(normalizeModelsUrl(settings.apiBaseUrl), {
                 method: 'GET',
                 headers: this.headers(apiKeyOverride),
             });
-            remoteModels = readModels(data);
-            if (!remoteModels.length) remoteError = new Error('接口返回成功，但没有模型数据');
+            const models = readModels(data);
+            if (!models.length) return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING };
+            return { models, source: 'remote', warning: '' };
         } catch (error) {
             if (error?.code === 'REQUEST_ABORTED') throw error;
-            remoteError = error;
+            return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, detail: error.message };
         }
-
-        if (settings.provider === API_PROVIDERS.DOUBAO_CODING) {
-            const models = [...new Set([...remoteModels, ...DOUBAO_CODING_MODELS])];
-            return { models, source: remoteModels.length ? 'remote-and-preset' : 'preset', warning: remoteError?.message ?? '' };
-        }
-        if (remoteError) throw remoteError;
-        return { models: remoteModels, source: 'remote', warning: '' };
     }
 
     async test() {

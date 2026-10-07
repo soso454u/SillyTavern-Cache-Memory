@@ -1,5 +1,5 @@
-import { API_PROVIDERS, DEFAULT_PROMPTS, DOUBAO_CODING_BASE_URL, INJECTION_MODES } from './defaults.js?v=1.2.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.2.0';
+import { API_PRESETS, API_PROVIDERS, DEFAULT_PROMPTS, DOUBAO_CODING_BASE_URL, INJECTION_MODES } from './defaults.js?v=1.3.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.3.0';
 
 const ROOT_ID = 'cache-memory-settings';
 const CONFIG_ID = 'cache-memory-config';
@@ -81,13 +81,13 @@ function configTemplate() {
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
-                        <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>选择豆包可自动填写地址；其他服务请选择 OpenAI 兼容接口。</p></div></div>
-                        <div class="cache-memory-api-guide"><i class="fa-solid fa-circle-info"></i><span><strong>推荐顺序：</strong>选择接口类型 → 填写并保存密钥 → 获取模型 → 测试连接。密钥只保存在当前浏览器。</span></div>
+                        <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>所有服务都按 OpenAI 兼容格式请求；方舟只是一个地址快捷预设。</p></div></div>
+                        <div class="cache-memory-api-guide"><i class="fa-solid fa-circle-info"></i><span><strong>推荐顺序：</strong>选择接口预设 → 填写并保存密钥 → 获取模型 → 测试连接。密钥只保存在当前浏览器。</span></div>
                         <div class="cache-memory-grid">
-                            <label>接口类型<select data-setting="provider"><option value="${API_PROVIDERS.OPENAI_COMPATIBLE}">OpenAI 兼容接口</option><option value="${API_PROVIDERS.DOUBAO_CODING}">豆包方舟 Coding Plan</option></select></label>
+                            <label>接口预设<select data-api-preset><option value="${API_PRESETS.CUSTOM}">自定义</option><option value="${API_PRESETS.DOUBAO_CODING}">火山方舟 Coding Plan</option></select></label>
                             <label>接口地址<input type="url" data-setting="apiBaseUrl" placeholder="例如：https://example.com/v1"></label>
                             <label>API 密钥<input type="password" data-api-key autocomplete="off" placeholder="未配置"></label>
-                            <label>摘要模型<input type="text" data-setting="model" list="cache-memory-model-list" placeholder="先点击“获取模型列表”"><datalist id="cache-memory-model-list" data-model-list></datalist></label>
+                            <label>摘要模型<input type="text" data-setting="model" list="cache-memory-model-list" placeholder="可手动填写，或先获取模型列表"><datalist id="cache-memory-model-list" data-model-list></datalist></label>
                             <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
                             <label>最大输出长度<input type="number" min="32" data-setting="maxTokens"></label>
                             <label>超时时间（毫秒）<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
@@ -100,7 +100,7 @@ function configTemplate() {
                         </div>
                         <small class="cache-memory-key-state" data-api-key-state></small>
                         <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。接口还需要允许浏览器跨域访问。</small>
-                        <small class="cache-memory-warning">豆包提示：方舟官方说明 Coding Plan 个人版仅限 AI 编程工具使用；请确认你的账号与套餐允许在本插件中调用。</small>
+                        <small class="cache-memory-help">模型输入框支持手动填写和下拉选择；获取列表失败时不会影响手动填写与测试连接。</small>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
@@ -175,6 +175,8 @@ export class CacheMemoryUI {
                 if (element.type === 'checkbox') element.checked = Boolean(settings[key]);
                 else element.value = settings[key] ?? '';
             }
+            const preset = scope.querySelector('[data-api-preset]');
+            if (preset) preset.value = settings.apiBaseUrl === DOUBAO_CODING_BASE_URL ? API_PRESETS.DOUBAO_CODING : API_PRESETS.CUSTOM;
             for (const element of scope.querySelectorAll('[data-prompt]')) {
                 element.value = settings.prompts[element.dataset.prompt] ?? '';
             }
@@ -189,22 +191,34 @@ export class CacheMemoryUI {
         if (!root || root.dataset.cacheMemoryBound === 'true') return;
         root.dataset.cacheMemoryBound = 'true';
         root.addEventListener('change', event => {
+            const preset = event.target.closest('[data-api-preset]');
+            if (preset) {
+                this.updateSettings({
+                    provider: API_PROVIDERS.OPENAI_COMPATIBLE,
+                    apiBaseUrl: preset.value === API_PRESETS.DOUBAO_CODING
+                        ? DOUBAO_CODING_BASE_URL
+                        : this.getSettings().apiBaseUrl === DOUBAO_CODING_BASE_URL ? '' : this.getSettings().apiBaseUrl,
+                });
+                this.populateSettings();
+                return;
+            }
             const element = event.target.closest('[data-setting]');
             if (!element) return;
             const key = element.dataset.setting;
             const numeric = ['checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'maxTokens', 'timeoutMs'];
             const value = element.type === 'checkbox' ? element.checked : numeric.includes(key) ? Number(element.value) : element.value;
-            if (key === 'provider' && value === API_PROVIDERS.DOUBAO_CODING) {
-                this.updateSettings({ provider: value, apiBaseUrl: DOUBAO_CODING_BASE_URL, model: 'ark-code-latest' });
-            } else {
-                this.updateSettings({ [key]: value });
-            }
+            this.updateSettings({ [key]: value, ...(key === 'apiBaseUrl' ? { provider: API_PROVIDERS.OPENAI_COMPATIBLE } : {}) });
             this.populateSettings();
             if (key === 'showWandButton') this.syncWandEntry();
             this.updateInjection();
             this.renderMessageMemories();
         }, { signal: this.controller.signal });
         root.addEventListener('input', event => {
+            const setting = event.target.closest('[data-setting="model"]');
+            if (setting) {
+                this.updateSettings({ model: setting.value });
+                return;
+            }
             const element = event.target.closest('[data-prompt]');
             if (!element) return;
             this.updateSettings({ prompts: { ...this.getSettings().prompts, [element.dataset.prompt]: element.value } });
@@ -257,17 +271,8 @@ export class CacheMemoryUI {
                     const inputKey = root.querySelector('[data-api-key]')?.value ?? '';
                     const result = await this.apiClient.listModels(inputKey);
                     this.renderModelOptions(result.models);
-                    const current = this.getSettings().model;
-                    if (!current && result.models.length) {
-                        this.updateSettings({ model: result.models[0] });
-                        this.populateSettings();
-                    }
-                    const suffix = result.source === 'preset'
-                        ? '接口未返回列表，已加载豆包官方预设模型'
-                        : result.source === 'remote-and-preset'
-                            ? '已合并接口模型与豆包预设模型'
-                            : '已从接口获取';
-                    this.setStatus(result.warning ? 'warning' : 'success', `${suffix} · 共 ${result.models.length} 个`);
+                    const suffix = result.source === 'unavailable' ? result.warning : `已从接口获取 · 共 ${result.models.length} 个`;
+                    this.setStatus(result.warning ? 'warning' : 'success', suffix);
                 } catch (error) {
                     this.setStatus('error', `获取模型失败 · ${error.message}`);
                 } finally {
