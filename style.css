@@ -9,7 +9,7 @@
 .cache-memory-overlay, #cache-memory-manager {
     position: fixed;
     inset: 0;
-    z-index: 10002;
+    z-index: 2147482998;
     display: grid;
     place-items: center;
     padding: 18px;
@@ -26,12 +26,15 @@
     --cm-teal: #087f72;
     --cm-teal-dark: #06665d;
     --cm-blue: #2563a9;
-    width: min(920px, 100%);
-    height: min(800px, calc(100dvh - 36px));
+    width: min(1100px, 100%);
+    height: min(900px, 88vh, 88dvh);
     overflow: hidden;
     border: 1px solid #cbd7e5;
-    border-radius: 18px;
-    background: var(--cm-panel);
+    border-radius: 20px;
+    background: #f8fafc;
+    opacity: 1;
+    position: relative;
+    z-index: 2147482999;
     color: var(--cm-ink);
     color-scheme: light;
     box-shadow: 0 28px 80px rgba(4, 13, 30, 0.44);
@@ -132,7 +135,7 @@ body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden
 
 @media (max-width: 650px) {
     .cache-memory-overlay, #cache-memory-manager { padding: 6px; }
-    .cache-memory-config-panel, .cache-memory-manager-panel { height: calc(100dvh - 12px); border-radius: 12px; }
+    .cache-memory-config-panel, .cache-memory-manager-panel { height: min(88vh, 88dvh); border-radius: 20px; }
     .cache-memory-config-panel { max-width: calc(100dvw - 12px); }
     .cache-memory-dialog-header, .cache-memory-manager-panel > header { padding: 12px 13px; }
     .cache-memory-dialog-title > i { flex-basis: 36px; width: 36px; height: 36px; border-radius: 10px; }
@@ -146,3 +149,7 @@ body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden
     .cache-memory-manager-toolbar { flex-wrap: wrap; padding-inline: 13px; }
     .cache-memory-manager-content { padding-inline: 13px; }
 }
+
+/* Avoid repainting the blurred ST page on each drag frame. */
+.cache-memory-overlay.is-dragging { backdrop-filter: none; }
+.cache-memory-overlay.is-dragging .cache-memory-config-panel { box-shadow: 0 8px 28px rgba(4, 13, 30, 0.35); }

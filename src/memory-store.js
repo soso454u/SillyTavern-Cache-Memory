@@ -1,5 +1,5 @@
-import { getAssistantMessages } from './utils.js?v=1.4.0';
-import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.4.0';
+import { getAssistantMessages } from './utils.js?v=1.5.0';
+import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.5.0';
 
 export const STORE_VERSION = 2;
 
@@ -24,6 +24,7 @@ export function normalizeStore(value, chatId = '') {
             : {},
         checkpoints: Array.isArray(store.checkpoints) ? store.checkpoints : [],
         longMemories: Array.isArray(store.longMemories) ? store.longMemories : [],
+        ...(store.injectionSnapshot && typeof store.injectionSnapshot.value === 'string' && Array.isArray(store.injectionSnapshot.blocks) ? { injectionSnapshot: store.injectionSnapshot } : {}),
         updatedAt: store.updatedAt ?? new Date().toISOString(),
     };
 }
@@ -34,6 +35,7 @@ export class MemoryStore {
         this.getChatId = getChatId;
         this.saveMetadata = saveMetadata;
         this.onChange = onChange;
+        this.aggregateBatches = new Map();
     }
 
     current() {
@@ -43,12 +45,29 @@ export class MemoryStore {
         return normalized;
     }
 
-    persist() {
+    persist(reason = 'history metadata changed') {
         const store = this.current();
         store.updatedAt = new Date().toISOString();
         this.saveMetadata();
-        this.onChange(store);
+        const batch = this.aggregateBatches.get(store.chatId);
+        if (batch && ['new checkpoint', 'new long memory', 'aggregate failed'].includes(reason)) {
+            if (!batch.reason || reason === 'new long memory' || (batch.reason === 'aggregate failed' && reason === 'new checkpoint')) batch.reason = reason;
+        } else this.onChange(store, reason);
         return store;
+    }
+
+    async withAggregateBatch(callback) {
+        const chatId = this.current().chatId;
+        const batch = this.aggregateBatches.get(chatId) ?? { depth: 0, reason: null };
+        batch.depth++;
+        this.aggregateBatches.set(chatId, batch);
+        try { return await callback(); }
+        finally {
+            if (--batch.depth === 0) {
+                this.aggregateBatches.delete(chatId);
+                if (batch.reason && this.current().chatId === chatId) this.onChange(this.current(), batch.reason);
+            }
+        }
     }
 
     syncMessages(chat) {
@@ -117,8 +136,9 @@ export class MemoryStore {
     addSummary(record, { overwrite = false } = {}) {
         const store = this.current();
         if (store.summaries[record.messageId] && !overwrite) return store.summaries[record.messageId];
+        const replacesFrozen = store.summaries[record.messageId]?.frozen !== false && ['frozen', 'manual-edited'].includes(store.summaries[record.messageId]?.status);
         store.summaries[record.messageId] = structuredClone(record);
-        this.persist();
+        this.persist(replacesFrozen ? 'manual edit' : 'new summary');
         return store.summaries[record.messageId];
     }
 
@@ -126,7 +146,7 @@ export class MemoryStore {
         const record = this.getSummary(messageId);
         if (!record) return null;
         Object.assign(record, structuredClone(updates), { messageId });
-        this.persist();
+        this.persist('manual edit');
         return record;
     }
 
@@ -134,29 +154,31 @@ export class MemoryStore {
         const store = this.current();
         if (!store.summaries[messageId]) return false;
         delete store.summaries[messageId];
-        this.persist();
+        this.persist('manual edit');
         return true;
     }
 
     addCheckpoint(record, { overwrite = false } = {}) {
         const store = this.current();
         const index = store.checkpoints.findIndex(item => item.id === record.id);
+        const replacesFrozen = index >= 0 && store.checkpoints[index].frozen !== false && store.checkpoints[index].status !== 'failed';
         if (index >= 0 && !overwrite) return store.checkpoints[index];
         if (index >= 0) store.checkpoints[index] = structuredClone(record);
         else store.checkpoints.push(structuredClone(record));
         store.checkpoints.sort((a, b) => a.startFloor - b.startFloor);
-        this.persist();
+        this.persist(record.frozen !== false && record.status !== 'failed' ? (replacesFrozen ? 'manual edit' : 'new checkpoint') : 'aggregate failed');
         return record;
     }
 
     addLongMemory(record, { overwrite = false } = {}) {
         const store = this.current();
         const index = store.longMemories.findIndex(item => item.id === record.id);
+        const replacesFrozen = index >= 0 && store.longMemories[index].frozen !== false && store.longMemories[index].status !== 'failed';
         if (index >= 0 && !overwrite) return store.longMemories[index];
         if (index >= 0) store.longMemories[index] = structuredClone(record);
         else store.longMemories.push(structuredClone(record));
         store.longMemories.sort((a, b) => a.startFloor - b.startFloor);
-        this.persist();
+        this.persist(record.frozen !== false && record.status !== 'failed' ? (replacesFrozen ? 'manual edit' : 'new long memory') : 'aggregate failed');
         return record;
     }
 
@@ -171,7 +193,7 @@ export class MemoryStore {
                 .map(summaryText).join('\n');
             item.factUpdates = parseFactUpdates(item.content, projectLongFacts(store, item.startFloor - 1), evidence);
         }
-        this.persist();
+        this.persist('manual edit');
         return item;
     }
 
@@ -181,14 +203,14 @@ export class MemoryStore {
         const next = store[key].filter(item => item.id !== id);
         if (next.length === store[key].length) return false;
         store[key] = next;
-        this.persist();
+        this.persist('manual edit');
         return true;
     }
 
     replace(imported) {
         const normalized = normalizeStore(structuredClone(imported), this.getChatId());
         this.getMetadata().cache_memory = normalized;
-        this.persist();
+        this.persist('manual edit');
         return normalized;
     }
 }

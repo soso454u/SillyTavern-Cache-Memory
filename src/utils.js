@@ -79,9 +79,9 @@ export function formatDate(iso) {
     return Number.isNaN(date.getTime()) ? String(iso) : date.toLocaleString();
 }
 
-export function downloadJson(filename, data) {
+export function downloadJson(filename, data, doc = document) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const link = document.createElement('a');
+    const link = doc.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = filename;
     link.click();

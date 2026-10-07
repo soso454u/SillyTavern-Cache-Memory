@@ -9,6 +9,8 @@ export const API_PROVIDERS = Object.freeze({
 
 export const INJECTION_MODES = Object.freeze({
     NONE: 'none',
+    CHECKPOINT_BOUNDARY: 'checkpoint_boundary',
+    LONG_BOUNDARY: 'long_boundary',
     LONG: 'long',
     LONG_CHECKPOINT: 'long_checkpoint',
     LONG_CHECKPOINT_RECENT: 'long_checkpoint_recent',
@@ -144,20 +146,22 @@ export const DEFAULT_SETTINGS = Object.freeze({
     autoSummarize: true,
     independentApi: true,
     memoryStrategy: 'incremental',
-    checkpointInterval: 10,
-    longMemoryInterval: 100,
+    checkpointInterval: 5,
+    longMemoryInterval: 50,
     summaryMaxLength: 500,
     checkpointMaxLength: 1500,
     longMemoryMaxLength: 3000,
     recentSummaryCount: 10,
     recentCheckpointCount: 2,
     strictCacheMode: true,
+    cacheDebug: false,
     injectionMode: INJECTION_MODES.NONE,
     provider: API_PROVIDERS.OPENAI_COMPATIBLE,
     apiBaseUrl: '',
     model: '',
     temperature: 0.2,
     maxTokens: 3200,
+    tokenLimitParameter: 'max_tokens',
     timeoutMs: 60000,
     prompts: DEFAULT_PROMPTS,
 });
@@ -175,7 +179,7 @@ export function normalizeSettings(saved = {}) {
         return Math.min(max, Math.max(min, Number.isFinite(parsed) ? parsed : fallback));
     };
     const checkpointInterval = Math.round(number(source.checkpointInterval, DEFAULT_SETTINGS.checkpointInterval, 1, 1000));
-    let longMemoryInterval = Math.round(number(source.longMemoryInterval, 100, checkpointInterval, 10000));
+    let longMemoryInterval = Math.round(number(source.longMemoryInterval, DEFAULT_SETTINGS.longMemoryInterval, checkpointInterval, 10000));
     if (longMemoryInterval % checkpointInterval !== 0) {
         longMemoryInterval = Math.ceil(longMemoryInterval / checkpointInterval) * checkpointInterval;
     }
@@ -194,6 +198,7 @@ export function normalizeSettings(saved = {}) {
         autoSummarize: source.autoSummarize !== false,
         independentApi: source.independentApi !== false,
         strictCacheMode: source.strictCacheMode !== false,
+        cacheDebug: source.cacheDebug === true,
         memoryStrategy,
         checkpointInterval,
         longMemoryInterval,
@@ -203,6 +208,7 @@ export function normalizeSettings(saved = {}) {
         recentSummaryCount: Math.round(number(source.recentSummaryCount, 10, 0, 200)),
         recentCheckpointCount: Math.round(number(source.recentCheckpointCount, 2, 0, 50)),
         temperature: number(source.temperature, 0.2, 0, 2),
+        tokenLimitParameter: source.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens',
         maxTokens: Math.round(number(source.maxTokens, DEFAULT_SETTINGS.maxTokens, 32, 32000)),
         timeoutMs: Math.round(number(source.timeoutMs, 60000, 1000, 300000)),
         provider,

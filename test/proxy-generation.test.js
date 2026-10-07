@@ -1,0 +1,131 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { SummaryApiClient } from '../src/api-client.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { MemorySummarizer } from '../src/summarizer.js';
+import { getAssistantMessages } from '../src/utils.js';
+import { formatConnectionFailure } from '../src/ui.js';
+
+function setGlobal(t, key, value) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    t.after(() => previous ? Object.defineProperty(globalThis, key, previous) : delete globalThis[key]);
+}
+function fixture(t) {
+    const logs = [];
+    for (const name of ['info', 'warn']) t.mock.method(console, name, (...args) => logs.push(args));
+    const settings = normalizeSettings({ apiBaseUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3', model: 'ark-test-model' });
+    const client = new SummaryApiClient({ getSettings: () => settings, storage: { getItem: () => 'private-ark-key' }, storageKey: 'key' });
+    const requests = [];
+    let token = 0;
+    const root = { location: { href: 'https://st.example/chat' }, SillyTavern: { getContext: () => ({ getRequestHeaders: () => ({ 'X-CSRF-Token': `csrf-${++token}` }) }) },
+        fetch: async (url, options) => { requests.push({ url, options }); return new Response(url.endsWith('/status') ? '{"data":[{"id":"ark-test-model"}]}' : '{"choices":[{"message":{"content":"[SUMMARY]\\n[Event]\\nminimal fact"},"finish_reason":"stop"}]}'); } };
+    setGlobal(t, 'parent', root);
+    t.mock.method(globalThis, 'fetch', () => assert.fail('proxy environment must never fetch third-party from browser'));
+    return { client, requests, root, logs, settings };
+}
+
+test('Ark models, test and a real floor summarizer share ST transport, fresh CSRF and the unchanged coding/v3 base', async t => {
+    const { client, requests, settings, logs } = fixture(t);
+    assert.equal((await client.listModels()).source, 'proxy');
+    assert.equal((await client.test()).ok, true);
+    const metadata = {};
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'chat-a', saveMetadata: () => {} });
+    const chat = [{ is_user: true, mes: 'Hi' }, { is_user: false, name: 'A', mes: '正文', gen_started: 'now', send_date: 'now' }];
+    const summarizer = new MemorySummarizer({ store, apiClient: client, getSettings: () => settings, getChat: () => chat });
+    await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
+    assert.equal(store.current().summaries[getAssistantMessages(chat)[0].messageId].status, 'frozen');
+    assert.deepEqual(requests.map(item => item.url), ['/api/backends/chat-completions/status', '/api/backends/chat-completions/generate', '/api/backends/chat-completions/generate']);
+    requests.forEach(({ options }, index) => {
+        const body = JSON.parse(options.body);
+        assert.equal(options.headers.get('X-CSRF-Token'), `csrf-${index + 1}`);
+        assert.equal(options.credentials, 'same-origin');
+        assert.equal(body.custom_url, settings.apiBaseUrl);
+        assert.equal(body.chat_completion_source, 'custom');
+        assert.equal(JSON.parse(body.custom_include_headers).Authorization, 'Bearer private-ark-key');
+        if (index) { assert.equal(body.stream, false); assert.equal(body.model, settings.model); assert.ok(body.messages.length); assert.ok(body.max_tokens > 0); }
+    });
+    assert.doesNotMatch(JSON.stringify(logs), /private-ark-key|csrf-1|csrf-2|csrf-3|正文/);
+});
+
+test('proxy HTTP200 error is a failure, upstream status is not invented, all secret values are redacted', async t => {
+    const { client, root, logs } = fixture(t);
+    root.fetch = async () => new Response('{"error":{"message":"Forbidden private-ark-key csrf-1"}}');
+    await assert.rejects(client.test(), error => {
+        const display = formatConnectionFailure(error);
+        assert.match(display, /代理状态：HTTP 200/);
+        assert.match(display, /上游 HTTP：未提供/);
+        assert.match(display, /Forbidden \[REDACTED\] \[REDACTED\]/);
+        assert.doesNotMatch(JSON.stringify({ display, logs }), /private-ark-key|csrf-1/);
+        return true;
+    });
+});
+
+test('proxy 403 and network failures never trigger direct duplicate generation; missing route can fall back', async t => {
+    const { client, root } = fixture(t);
+    root.fetch = async () => new Response('Invalid CSRF token', { status: 403 });
+    await assert.rejects(client.test(), /HTTP 403/);
+    root.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    await assert.rejects(client.test(), /Failed to fetch/);
+    root.fetch = async () => new Response('Cannot POST /api/backends/chat-completions/generate', { status: 404 });
+    let called = 0;
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+        called++;
+        assert.equal(url, 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions');
+        assert.equal(options.headers.Authorization, 'Bearer private-ark-key');
+        return new Response('{"choices":[{"message":{"content":"OK"}}]}');
+    });
+    assert.equal((await client.test()).source, 'direct');
+    assert.equal(called, 1);
+});
+
+test('absent ST permits direct fallback with clear CORS diagnostics; broken ST headers fail closed', async t => {
+    const { client, root } = fixture(t);
+    setGlobal(t, 'parent', null);
+    t.mock.method(globalThis, 'fetch', async () => { throw new TypeError('Failed to fetch'); });
+    await assert.rejects(client.test(), error => error.diagnostics.suspectedCors && /可能是 CORS/.test(formatConnectionFailure(error)));
+    setGlobal(t, 'parent', root);
+    root.SillyTavern.getContext = () => ({});
+    await assert.rejects(client.test(), /无法获取 SillyTavern CSRF 请求头/);
+});
+
+test('hot unload cancellation remains active while reading the response body and retains proxy HTTP status', async t => {
+    const { client, root } = fixture(t);
+    let started;
+    const reading = new Promise(resolve => { started = resolve; });
+    root.fetch = async (_url, options) => ({ status: 200, ok: true, url: 'https://st.example/api/backends/chat-completions/generate',
+        text: async () => new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            started();
+        }) });
+    const pending = client.test();
+    await reading;
+    assert.equal(client.activeControllers.size, 1);
+    client.abortAll();
+    await assert.rejects(pending, error => error.code === 'REQUEST_ABORTED' && error.diagnostics.proxy === 'HTTP 200');
+    assert.equal(client.activeControllers.size, 0);
+});
+
+test('a selected max_completion_tokens budget is forwarded by both actual generation and connection test', async t => {
+    const { client, settings, requests } = fixture(t);
+    settings.tokenLimitParameter = 'max_completion_tokens';
+    await client.complete({ systemPrompt: 'system', userContent: 'minimal summary', maxTokens: 64 });
+    await client.test();
+    const bodies = requests.map(item => JSON.parse(item.options.body));
+    assert.equal(bodies[0].max_completion_tokens, 64);
+    assert.equal(bodies[1].max_completion_tokens, 32);
+    assert.ok(bodies.every(body => !Object.hasOwn(body, 'max_tokens')));
+});
+
+test('an upstream-style JSON404 is not a missing-route fallback; unreadable404 errors are sanitized', async t => {
+    const { client, root, logs } = fixture(t);
+    root.fetch = async () => new Response('{"error":{"message":"model not found"}}', { status: 404 });
+    await assert.rejects(client.test(), error => error.diagnostics.proxy === 'HTTP 404' && /model not found/.test(error.message));
+    root.fetch = async () => ({ status: 404, ok: false, text: async () => { throw new Error('read failed private-ark-key csrf-2'); } });
+    await assert.rejects(client.test(), error => {
+        assert.doesNotMatch(JSON.stringify({ error: error.message, diagnostics: error.diagnostics, logs }), /private-ark-key|csrf-2/);
+        assert.equal(error.diagnostics.proxy, 'HTTP 404');
+        return true;
+    });
+});

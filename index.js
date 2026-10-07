@@ -11,12 +11,13 @@ import {
     setExtensionPrompt,
 } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.4.0';
-import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.4.0';
-import { buildInjection } from './src/injection.js?v=1.4.0';
-import { MemoryStore } from './src/memory-store.js?v=1.4.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.4.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.4.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.5.0';
+import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.5.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.5.0';
+import { getAssistantMessages } from './src/utils.js?v=1.5.0';
+import { MemoryStore } from './src/memory-store.js?v=1.5.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.5.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.5.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -28,6 +29,9 @@ let runtimeController = new AbortController();
 const eventBindings = [];
 const timers = new Set();
 const frames = new Set();
+const diagnostics = new CacheDiagnostics();
+let activeChatId = null;
+let publishedValue = null;
 
 function schedule(callback, delay = 0) {
     const id = window.setTimeout(() => {
@@ -60,6 +64,7 @@ function loadSettings() {
 }
 
 function updateSettings(patch) {
+    if (Object.hasOwn(patch, 'cacheDebug')) diagnostics.reset();
     settings = normalizeSettings({ ...settings, ...patch });
     extension_settings[MODULE_ID] = settings;
     saveSettingsDebounced();
@@ -70,11 +75,12 @@ const store = new MemoryStore({
     getMetadata: () => chat_metadata,
     getChatId: () => getCurrentChatId() ?? '',
     saveMetadata: () => saveMetadataDebounced(),
-    onChange: () => {
+    onChange: (changedStore, reason) => {
         queueMicrotask(() => {
             ui?.renderMessageMemories();
             ui?.renderManager();
-            updateInjection();
+            if (store.current().chatId !== changedStore.chatId || runtimeController.signal.aborted) return;
+            if (settings && shouldRefreshInjection(settings, reason)) updateInjection(reason);
         });
     },
 });
@@ -96,26 +102,44 @@ const summarizer = new MemorySummarizer({
     },
 });
 
-function updateInjection() {
-    const value = settings?.enabled ? buildInjection(store.current(), settings) : '';
-    setExtensionPrompt(
-        INJECTION_KEY,
-        value,
-        extension_prompt_types.IN_PROMPT,
-        0,
-        false,
-        extension_prompt_roles.SYSTEM,
-    );
+function updateInjection(reason = 'manual edit') {
+    if (!settings || !shouldRefreshInjection(settings, reason)) return;
+    const current = store.current();
+    const result = refreshSnapshot(current, settings, reason);
+    if (!result.skipped) saveMetadataDebounced();
+    if (publishedValue === result.value) return;
+    publishedValue = result.value;
+    setExtensionPrompt(INJECTION_KEY, result.value, extension_prompt_types.IN_PROMPT, 0, false, extension_prompt_roles.SYSTEM);
 }
 
 function refreshChatState() {
     if (!settings) return;
     store.syncMessages(chat);
-    updateInjection();
+    const chatId = store.current().chatId;
+    if (chatId !== activeChatId) {
+        activeChatId = chatId;
+        updateInjection('chat changed');
+    } else if (!settings.strictCacheMode) updateInjection('history metadata changed');
     nextFrame(() => ui?.renderMessageMemories());
 }
 
+function cacheDebugSnapshot(messages) {
+    if (!settings?.cacheDebug) return;
+    const current = store.current();
+    const snapshot = diagnostics.memory(current, settings, getAssistantMessages(chat).at(-1)?.floor ?? 0);
+    snapshot.history = Array.isArray(messages) ? diagnostics.history(current.chatId, messages)
+        : { unavailable: true, message: '当前 ST 未提供发送前 messages；仅检查 Cache Memory 稳定性' };
+    console.info('[Cache Memory] CACHE DEBUG', snapshot);
+    ui?.setCacheDebug(snapshot);
+}
+
 function bindEvents() {
+    // ST emits this immediately before sending its final Chat Completion payload. Read only.
+    if (event_types.CHAT_COMPLETION_SETTINGS_READY) {
+        bindEvent(event_types.CHAT_COMPLETION_SETTINGS_READY, data => cacheDebugSnapshot(data?.messages));
+    } else {
+        bindEvent(event_types.GENERATION_STARTED, () => cacheDebugSnapshot());
+    }
     bindEvent(event_types.GENERATION_ENDED, () => {
         if (pendingSwipeIndex !== null) {
             store.rebindSummaryAtMessageIndex(pendingSwipeIndex, chat);
@@ -157,13 +181,13 @@ function initialize() {
         updateInjection,
     });
     if (!ui.mountSettings()) {
-        mountObserver = new MutationObserver(() => {
+        mountObserver = new ui.root.MutationObserver(() => {
             if (ui.mountSettings()) {
                 mountObserver?.disconnect();
                 mountObserver = null;
             }
         });
-        mountObserver.observe(document.body, { childList: true, subtree: true });
+        mountObserver.observe(ui.doc.body, { childList: true, subtree: true });
     }
     ui.bindChatActions();
     bindEvents();
@@ -194,6 +218,9 @@ export function onHotUnload() {
     frames.clear();
     apiClient.abortAll();
     ui?.destroy();
+    diagnostics.reset();
+    publishedValue = null;
+    activeChatId = null;
     ui = undefined;
     pendingSwipeIndex = null;
     setExtensionPrompt(INJECTION_KEY, '', extension_prompt_types.IN_PROMPT, 0, false, extension_prompt_roles.SYSTEM);

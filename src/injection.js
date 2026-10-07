@@ -1,5 +1,5 @@
-import { INJECTION_MODES } from './defaults.js?v=1.4.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.4.0';
+import { INJECTION_MODES } from './defaults.js?v=1.5.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.5.0';
 
 function byRange(a, b) {
     return Number(a.startFloor ?? a.floor) - Number(b.startFloor ?? b.floor);
@@ -7,6 +7,7 @@ function byRange(a, b) {
 
 export function buildInjection(store, settings) {
     if (!settings.enabled || settings.injectionMode === INJECTION_MODES.NONE) return '';
+    if (settings.strictCacheMode) return store.injectionSnapshot?.value ?? '';
     const states = store.checkpoints.filter(item => isUsableMemory(item) && item.memoryKind === 'state').sort(byRange);
     const latest = states.at(-1);
     if (settings.memoryStrategy !== 'legacy' && (store.version >= 2 || latest || store.longMemories.some(item => item.memoryKind === 'facts'))) {
@@ -17,7 +18,7 @@ export function buildInjection(store, settings) {
         if (facts !== '无') blocks.push(`[LONG_MEMORY]\n${facts}`);
         const keeps = formatKeepItems(collectKeepItems(store));
         if (keeps !== '无') blocks.push(`[KEEP]\n${keeps}`);
-        if ([INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode) && stateEnd) {
+        if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode) && stateEnd) {
             blocks.push(`[LATEST_CHECKPOINT | 截至第${stateEnd}层]\n${latest?.content ?? previousState(store, stateEnd + 1).content}`);
         }
         if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {
@@ -34,7 +35,7 @@ export function buildInjection(store, settings) {
         .sort(byRange);
     for (const item of longs) blocks.push(`[${String(item.id).toUpperCase().replaceAll('-', '_')}]\n${item.content}`);
 
-    if ([INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode)) {
+    if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode)) {
         const coveredThrough = longs.at(-1)?.endFloor ?? 0;
         const checkpoints = [...store.checkpoints]
             .filter(item => item.frozen !== false && item.status !== 'failed' && item.endFloor > coveredThrough)

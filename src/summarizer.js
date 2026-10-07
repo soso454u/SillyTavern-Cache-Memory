@@ -1,5 +1,5 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.4.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.4.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.5.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.5.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -156,16 +156,18 @@ export class MemorySummarizer {
     }
 
     async generateDueAggregates() {
-        const assistants = getAssistantMessages(this.getChat());
-        const latestFloor = assistants.at(-1)?.floor ?? 0;
-        let range = this.getNextCheckpointRange();
-        while (range.endFloor <= latestFloor) {
-            const created = await this.generateCheckpoint(range.startFloor, range.endFloor);
-            if (!created) break;
-            if (this.getSettings().memoryStrategy !== 'legacy') await this.generateDueLongMemories();
-            range = this.getNextCheckpointRange();
-        }
-        await this.generateDueLongMemories();
+        return this.store.withAggregateBatch(async () => {
+            const assistants = getAssistantMessages(this.getChat());
+            const latestFloor = assistants.at(-1)?.floor ?? 0;
+            let range = this.getNextCheckpointRange();
+            while (range.endFloor <= latestFloor) {
+                const created = await this.generateCheckpoint(range.startFloor, range.endFloor);
+                if (!created) break;
+                if (this.getSettings().memoryStrategy !== 'legacy') await this.generateDueLongMemories();
+                range = this.getNextCheckpointRange();
+            }
+            await this.generateDueLongMemories();
+        });
     }
 
     async generateCheckpoint(startFloor, endFloor, { overwrite = false, allowMissing = false } = {}) {
@@ -243,16 +245,8 @@ export class MemorySummarizer {
     async generateDueLongMemories() {
         const settings = this.getSettings();
         const store = this.store.current();
-        if (settings.memoryStrategy !== 'legacy') {
-            const used = new Set(store.longMemories.filter(isUsableMemory).flatMap(item => item.checkpointIds ?? []));
-            const coveredThrough = Math.max(0, ...store.longMemories.filter(item => isUsableMemory(item) && item.memoryKind !== 'facts').map(item => item.endFloor));
-            for (const checkpoint of store.checkpoints.filter(isUsableMemory).sort((a, b) => a.endFloor - b.endFloor)) {
-                if (used.has(checkpoint.id) || checkpoint.endFloor <= coveredThrough) continue;
-                await this.generateLongMemory([checkpoint]);
-            }
-            return;
-        }
-        const usedThrough = store.longMemories.length ? Math.max(...store.longMemories.map(item => item.endFloor)) : 0;
+        const committed = store.longMemories.filter(isUsableMemory);
+        const usedThrough = committed.length ? Math.max(...committed.map(item => item.endFloor)) : 0;
         const available = store.checkpoints
             .filter(item => item.startFloor > usedThrough && item.frozen !== false && item.status !== 'failed')
             .sort((a, b) => a.startFloor - b.startFloor);
@@ -306,7 +300,7 @@ export class MemorySummarizer {
                 endFloor,
                 checkpointIds: sorted.map(item => item.id),
                 content: incremental ? result.content.trim() : clampText(result.content, settings.longMemoryMaxLength),
-                ...(incremental ? { memoryKind: 'facts', factUpdates: parseFactUpdates(result.content, projection, newSummaries) } : {}),
+                ...(incremental ? { memoryKind: 'facts', factUpdates: parseFactUpdates(result.content, projection, newSummaries), keepItems: collectKeepItems(this.store.current(), endFloor) } : {}),
                 createdAt: new Date().toISOString(),
                 frozen: true,
                 manualEdited: false,

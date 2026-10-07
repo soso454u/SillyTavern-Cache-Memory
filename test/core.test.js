@@ -147,6 +147,7 @@ test('injection is deterministic, ordered and excludes checkpoints covered by lo
         },
     };
     const settings = normalizeSettings({
+        strictCacheMode: false,
         injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT,
         recentCheckpointCount: 2,
         recentSummaryCount: 2,
@@ -340,7 +341,7 @@ test('model listing reads OpenAI responses and never injects provider-specific p
     }
 });
 
-test('model listing uses a GET with Accept and Bearer auth, then falls back to the SillyTavern proxy on network failure', async () => {
+test('model listing uses the SillyTavern proxy first without a browser cross-origin request', async () => {
     const values = new Map([['key', 'secret-key']]);
     const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
     const settings = normalizeSettings({ apiBaseUrl: 'https://provider.example/api/v3', model: '' });
@@ -367,14 +368,10 @@ test('model listing uses a GET with Accept and Bearer auth, then falls back to t
         const result = await client.listModels();
         assert.deepEqual(result.models, ['proxy-model']);
         assert.equal(result.source, 'proxy');
-        assert.equal(result.diagnostics.directException, 'Failed to fetch');
-        assert.equal(result.diagnostics.suspectedCors, true);
+        assert.equal(result.diagnostics.direct, '未请求');
+        assert.equal(result.diagnostics.suspectedCors, false);
         assert.equal(result.diagnostics.proxy, 'HTTP 200');
-        assert.equal(directRequest.url, 'https://provider.example/api/v3/models');
-        assert.equal(directRequest.options.method, 'GET');
-        assert.equal(directRequest.options.headers.Accept, 'application/json');
-        assert.equal(directRequest.options.headers.Authorization, 'Bearer secret-key');
-        assert.equal('body' in directRequest.options, false);
+        assert.equal(directRequest, undefined);
         assert.equal(proxyRequest.url, '/api/backends/chat-completions/status');
         assert.equal(proxyRequest.options.headers.get('X-CSRF-Token'), 'test-csrf');
         assert.equal(proxyRequest.options.credentials, 'same-origin');
@@ -382,7 +379,7 @@ test('model listing uses a GET with Accept and Bearer auth, then falls back to t
         const proxyBody = JSON.parse(proxyRequest.options.body);
         assert.equal(proxyBody.chat_completion_source, 'custom');
         assert.equal(proxyBody.custom_url, 'https://provider.example/api/v3');
-        assert.equal(proxyBody.custom_include_headers, 'Authorization: Bearer secret-key');
+        assert.deepEqual(JSON.parse(proxyBody.custom_include_headers), { Authorization: 'Bearer secret-key' });
         assert.doesNotMatch(JSON.stringify(result), /secret-key/);
     } finally {
         globalThis.fetch = originalFetch;
@@ -393,7 +390,7 @@ test('model listing uses a GET with Accept and Bearer auth, then falls back to t
     }
 });
 
-test('connection test retries without max_tokens when rejected by provider', async () => {
+test('connection test switches to max_completion_tokens when max_tokens is explicitly rejected', async () => {
     const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
     const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x' });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
@@ -408,10 +405,11 @@ test('connection test retries without max_tokens when rejected by provider', asy
         const result = await client.test();
         assert.equal(result.ok, true);
         assert.equal(requests[0].url, 'https://example.com/v1/chat/completions');
-        assert.equal(requests[0].payload.max_tokens, 1);
-        assert.deepEqual(requests[0].payload.messages, [{ role: 'user', content: 'Hi' }]);
+        assert.equal(requests[0].payload.max_tokens, 32);
+        assert.equal(requests[0].payload.messages.at(-1).content, 'Hi');
+        assert.equal(requests[1].payload.max_completion_tokens, 32);
         assert.equal('max_tokens' in requests[1].payload, false);
-        assert.equal(requests[1].payload.temperature, undefined);
+        assert.equal(requests[1].payload.temperature, 0.2);
     } finally {
         globalThis.fetch = originalFetch;
     }

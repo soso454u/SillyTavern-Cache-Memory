@@ -1,7 +1,11 @@
-import { API_PROVIDERS, DEFAULT_PROMPTS, LEGACY_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.4.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.4.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.4.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.5.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.5.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, LEGACY_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.5.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.5.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.5.0';
 
+const STYLE_ID = 'cache-memory-parent-style';
+const OWNER_KEY = '__cacheMemoryUIOwner';
 const ROOT_ID = 'cache-memory-settings';
 const CONFIG_ID = 'cache-memory-config';
 const MANAGER_ID = 'cache-memory-manager';
@@ -9,7 +13,7 @@ const WAND_CONTAINER_ID = 'cache-memory-wand-container';
 const WAND_ENTRY_ID = 'cache-memory-wand-entry';
 
 function notify(type, message) {
-    const toaster = globalThis.toastr;
+    const toaster = resolveUIRoot().toastr;
     if (toaster?.[type]) toaster[type](message, 'Cache Memory');
     else console[type === 'error' ? 'error' : 'info']('[Cache Memory]', message);
 }
@@ -38,10 +42,18 @@ export function formatModelListFailure(result) {
     return lines.join('\n');
 }
 
-function settingsHost() {
-    return document.querySelector('#extensions_settings2')
-        ?? document.querySelector('#extensions_settings')
-        ?? document.querySelector('#extensions_settings_block');
+export function formatConnectionFailure(error) {
+    const d = error.diagnostics ?? {};
+    const source = d.direct !== '未请求' && d.direct ? 'direct' : 'proxy';
+    return ['连接失败', `URL: ${d.endpoint || '未知'}`, `代理状态：${d.proxy || '未请求'}`,
+        `上游 HTTP：${d.upstream || '未提供'}`, `响应前 500 字：${d[`${source}Body`] || '无可读取响应'}`,
+        `错误：${error.message}`, ...(d.suspectedCors ? ['可能是 CORS 或网络限制（浏览器无法确定）'] : [])].join('\n');
+}
+
+function settingsHost(doc) {
+    return doc.querySelector('#extensions_settings2')
+        ?? doc.querySelector('#extensions_settings')
+        ?? doc.querySelector('#extensions_settings_block');
 }
 
 function settingsTemplate() {
@@ -74,7 +86,7 @@ function configTemplate() {
                         <i class="fa-solid fa-brain" aria-hidden="true"></i>
                         <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节 · 可拖动标题栏</small></div>
                     </div>
-                    <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button>
+                    <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button>
                 </header>
                 <div class="cache-memory-config-status cache-memory-status" data-cache-status data-state="idle">等待生成</div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
@@ -90,20 +102,20 @@ function configTemplate() {
                             <label class="cache-memory-toggle"><span><strong>启用插件</strong><small>显示楼层记忆并启用处理流程</small></span><input type="checkbox" data-setting="enabled"></label>
                             <label class="cache-memory-toggle"><span><strong>自动生成小总结</strong><small>正常回复结束后自动排队</small></span><input type="checkbox" data-setting="autoSummarize"></label>
                             <label class="cache-memory-toggle"><span><strong>使用独立模型接口</strong><small>不占用 SillyTavern 当前聊天模型</small></span><input type="checkbox" data-setting="independentApi"></label>
-                            <label class="cache-memory-toggle"><span><strong>严格缓存模式</strong><small>只追加新记忆，不自动改写旧内容</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
+                            <label class="cache-memory-toggle"><span><strong>严格缓存模式</strong><small>小总结仅后台保存，主 Prompt 只在边界更新</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
                         <div class="cache-memory-grid">
                             <label>记忆策略<select data-setting="memoryStrategy"><option value="incremental">增量状态 + 长期事实 + KEEP</option><option value="legacy">兼容旧版分段摘要</option></select></label>
                             <label>阶段记忆间隔（层）<input type="number" min="1" max="1000" data-setting="checkpointInterval"></label>
-                            <label data-legacy-setting>旧版长期记忆间隔（层）<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
+                            <label>长期记忆间隔（层）<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
                             <label>小总结目标长度<input type="number" min="50" data-setting="summaryMaxLength"></label>
                             <label>阶段状态目标长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
                             <label>长期事实目标长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
                             <label data-legacy-setting>旧版近期小总结数量<input type="number" min="0" data-setting="recentSummaryCount"></label>
                             <label data-legacy-setting>旧版近期阶段记忆数量<input type="number" min="0" data-setting="recentCheckpointCount"></label>
                         </div>
-                        <small class="cache-memory-help">增量策略在每个新 Checkpoint 后检查长期事实，仅追加新增或有明确证据的变更；长度是软目标，KEEP 不因遗漏而丢弃。旧数据和自定义设置会保留。</small>
+                        <small class="cache-memory-help">默认每 5 层提交 Checkpoint、每 50 层提交分段 Long Memory；已有自定义间隔保留。后台增量状态和 KEEP 不会逐层刷新严格模式的 Prompt。</small>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
@@ -116,6 +128,7 @@ function configTemplate() {
                             <label>摘要模型<input type="text" data-setting="model" placeholder="可手动填写模型名称"><select data-model-list data-model-select aria-label="从完整模型列表选择"><option value="">获取列表后可在此选择模型</option></select></label>
                             <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
                             <label>最大输出长度<input type="number" min="32" data-setting="maxTokens"></label>
+                            <label>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
                             <label>超时时间（毫秒）<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
                         </div>
                         <div class="cache-memory-actions">
@@ -125,14 +138,17 @@ function configTemplate() {
                             <button type="button" class="menu_button" data-clear-api-key><i class="fa-solid fa-trash"></i> 清除密钥</button>
                         </div>
                         <small class="cache-memory-key-state" data-api-key-state></small>
-                        <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。接口还需要允许浏览器跨域访问。</small>
+                        <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。优先由 SillyTavern 服务端请求；仅代理不可用时尝试浏览器直连。</small>
                         <small class="cache-memory-help">模型输入框支持手动填写和下拉选择；获取列表失败时不会影响手动填写与测试连接。</small>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
                         <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择发送请求时附加到上下文的冻结记忆层。</p></div></div>
-                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">长期记忆 + 阶段记忆 + 近期小总结</option></select></label>
-                        <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>增量策略组合当前长期事实、有效 KEEP、最新阶段状态与该状态之后的全部小总结。内容按固定顺序注入，已有冻结历史仍保留。</span></div>
+                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入（默认，缓存最安全）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（推荐只读最近 5 层正文时使用）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">长期记忆 + 阶段记忆 + 近期小总结</option></select></label>
+                        <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>严格模式不注入逐层小总结；Checkpoint / Long Memory 提交后更新一次，其余楼层逐字冻结。Long Memory 边界可替换其覆盖的阶段注入，原始记录仍保留。</span></div>
+                        <p class="cache-memory-warning" data-cache-mode-warning></p>
+                        <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>仅记录 hash；检查主请求的记忆与消息前缀稳定性</small></span><input type="checkbox" data-setting="cacheDebug"></label>
+                        <pre class="cache-memory-continuity" data-cache-debug hidden></pre>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
@@ -148,6 +164,8 @@ function configTemplate() {
 
 export class CacheMemoryUI {
     constructor({ getSettings, updateSettings, apiClient, store, summarizer, getChat, updateInjection }) {
+        this.root = resolveUIRoot();
+        this.doc = this.root.document;
         this.getSettings = getSettings;
         this.updateSettings = updateSettings;
         this.apiClient = apiClient;
@@ -160,17 +178,29 @@ export class CacheMemoryUI {
         this.wandObserver = null;
         this.wandSyncQueued = false;
         this.lastFocusedElement = null;
-        this.controller = new AbortController();
+        this.controller = new (this.root.AbortController ?? AbortController)();
         this.destroyed = false;
         this.modelOptions = [];
     }
 
+    mountStyles() {
+        if (this.root[OWNER_KEY] && this.root[OWNER_KEY] !== this) this.root[OWNER_KEY].destroy();
+        this.root[OWNER_KEY] = this;
+        if (this.style?.isConnected) return;
+        this.doc.getElementById(STYLE_ID)?.remove();
+        this.style = this.doc.createElement('link');
+        this.style.id = STYLE_ID;
+        this.style.rel = 'stylesheet';
+        this.style.href = new URL('../style.css?v=1.5.0', import.meta.url).href;
+        this.doc.head.append(this.style);
+    }
+
     mountSettings() {
-        const host = settingsHost();
+        const host = settingsHost(this.doc);
         if (!host) return false;
-        document.getElementById(ROOT_ID)?.remove();
+        this.doc.getElementById(ROOT_ID)?.remove();
         host.insertAdjacentHTML('beforeend', settingsTemplate());
-        const root = document.getElementById(ROOT_ID);
+        const root = this.doc.getElementById(ROOT_ID);
         this.createConfig();
         this.populateSettings();
         this.bindSettings(root);
@@ -180,12 +210,13 @@ export class CacheMemoryUI {
     }
 
     createConfig() {
-        this.config = document.getElementById(CONFIG_ID);
+        this.mountStyles();
+        this.config = this.doc.getElementById(CONFIG_ID);
         if (this.config) return;
-        document.body.insertAdjacentHTML('beforeend', configTemplate());
-        this.config = document.getElementById(CONFIG_ID);
+        this.doc.body.insertAdjacentHTML('beforeend', configTemplate());
+        this.config = this.doc.getElementById(CONFIG_ID);
         this.bindDialogDrag(this.config);
-        document.addEventListener('keydown', event => {
+        this.doc.addEventListener('keydown', event => {
             if (event.key === 'Escape' && this.config && !this.config.hidden) this.closeSettings();
         }, { signal: this.controller.signal });
     }
@@ -193,58 +224,67 @@ export class CacheMemoryUI {
     bindDialogDrag(overlay) {
         const panel = overlay.querySelector('.cache-memory-config-panel');
         const handle = panel.querySelector('.cache-memory-dialog-header');
-        const viewport = overlay.ownerDocument.defaultView;
+        const root = this.root;
         let drag = null;
-        const constrain = (left, top) => {
-            const rect = panel.getBoundingClientRect();
-            const bounds = overlay.getBoundingClientRect();
-            const x = Math.max(bounds.left, Math.min(left, bounds.right - rect.width));
-            const y = Math.max(bounds.top, Math.min(top, bounds.bottom - rect.height));
-            panel.style.width = `${rect.width}px`;
-            panel.style.position = 'absolute';
-            panel.style.left = `${x - bounds.left}px`;
-            panel.style.top = `${y - bounds.top}px`;
+        let frame = null;
+        let x = 0, y = 0;
+        const paint = () => {
+            frame = null;
+            panel.style.transform = `translate3d(${x}px, ${y}px, 0)`;
         };
+        const queuePaint = () => { if (frame === null) frame = root.requestAnimationFrame(paint); };
         const stop = () => {
-            if (!drag) return;
-            const id = drag.id;
-            drag = null;
-            if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+            if (frame !== null) { root.cancelAnimationFrame(frame); paint(); }
+            if (drag) {
+                const id = drag.id;
+                drag = null;
+                if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+            }
             handle.classList.remove('is-dragging');
+            overlay.classList.remove('is-dragging');
+            panel.style.removeProperty('will-change');
         };
         this.stopConfigDrag = stop;
+        this.resetConfigDrag = () => { stop(); x = y = 0; panel.style.removeProperty('transform'); };
         handle.addEventListener('pointerdown', event => {
             if (event.button !== 0 || event.target.closest('button, input, select, textarea, a')) return;
             const rect = panel.getBoundingClientRect();
-            drag = { id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top };
+            const view = viewportSize(root);
+            drag = { id: event.pointerId, pointerX: event.clientX, pointerY: event.clientY, x, y,
+                minX: view.left - rect.left + x, maxX: view.left + view.width - rect.right + x,
+                minY: view.top - rect.top + y, maxY: view.top + view.height - rect.bottom + y };
             handle.setPointerCapture(event.pointerId);
             handle.classList.add('is-dragging');
+            overlay.classList.add('is-dragging');
+            panel.style.willChange = 'transform';
             event.preventDefault();
         }, { signal: this.controller.signal });
         handle.addEventListener('pointermove', event => {
             if (drag?.id !== event.pointerId) return;
-            constrain(event.clientX - drag.x, event.clientY - drag.y);
+            x = Math.max(drag.minX, Math.min(drag.maxX, drag.x + event.clientX - drag.pointerX));
+            y = Math.max(drag.minY, Math.min(drag.maxY, drag.y + event.clientY - drag.pointerY));
+            queuePaint();
         }, { signal: this.controller.signal });
-        for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-            handle.addEventListener(name, stop, { signal: this.controller.signal });
-        }
-        viewport.addEventListener('resize', () => {
-            stop();
-            if (overlay.hidden || !panel.style.left) return;
-            const rect = panel.getBoundingClientRect();
-            constrain(rect.left, rect.top);
-        }, { signal: this.controller.signal });
+        for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(name, stop, { signal: this.controller.signal });
+        const resize = () => this.resetConfigDrag();
+        root.addEventListener('resize', resize, { signal: this.controller.signal });
+        root.visualViewport?.addEventListener('resize', resize, { signal: this.controller.signal });
+        root.visualViewport?.addEventListener('scroll', resize, { signal: this.controller.signal });
         this.controller.signal.addEventListener('abort', stop, { once: true });
     }
 
     settingsScopes() {
-        return [document.getElementById(ROOT_ID), this.config].filter(Boolean);
+        return [this.doc.getElementById(ROOT_ID), this.config].filter(Boolean);
     }
 
     populateSettings(root) {
         const settings = this.getSettings();
         const scopes = root ? [root] : this.settingsScopes();
         for (const scope of scopes) {
+            const warning = scope.querySelector('[data-cache-mode-warning]');
+            if (warning) warning.textContent = settings.strictCacheMode
+                ? `近期小总结会每轮改变 Prompt，不适合严格缓存模式。当前实际策略：${effectiveInjectionMode(settings)}；近期模式会自动降级到 Checkpoint 边界。`
+                : '严格缓存模式已关闭：当前长期事实、KEEP、近期小总结等动态内容可能逐层改变 Prompt Prefix。';
             for (const element of scope.querySelectorAll('[data-legacy-setting]')) element.hidden = settings.memoryStrategy !== 'legacy';
             for (const element of scope.querySelectorAll('[data-setting]')) {
                 const key = element.dataset.setting;
@@ -282,7 +322,7 @@ export class CacheMemoryUI {
             this.updateSettings({ [key]: value, ...(key === 'apiBaseUrl' ? { provider: API_PROVIDERS.OPENAI_COMPATIBLE } : {}) });
             this.populateSettings();
             if (key === 'showWandButton') this.syncWandEntry();
-            this.updateInjection();
+            if (['enabled', 'strictCacheMode', 'injectionMode', 'recentSummaryCount', 'recentCheckpointCount', 'memoryStrategy'].includes(key)) this.updateInjection('settings changed');
             this.renderMessageMemories();
         }, { signal: this.controller.signal });
         root.addEventListener('input', event => {
@@ -330,7 +370,7 @@ export class CacheMemoryUI {
                 return;
             }
             if (event.target.closest('[data-clear-api-key]')) {
-                if (!confirm('清除当前浏览器保存的缓存记忆 API 密钥？')) return;
+                if (!this.root.confirm('清除当前浏览器保存的缓存记忆 API 密钥？')) return;
                 this.apiClient.clearApiKey();
                 this.populateSettings();
                 notify('success', 'API 密钥已清除');
@@ -355,7 +395,7 @@ export class CacheMemoryUI {
                         : `已从${result.source === 'proxy' ? 'SillyTavern 代理' : '接口'}获取 · 共 ${result.models.length} 个`;
                     this.setStatus(result.warning ? 'warning' : 'success', suffix);
                     if (result.source === 'unavailable') {
-                        for (const output of document.querySelectorAll('[data-cache-status]')) output.title = '详细诊断已输出到浏览器开发者控制台';
+                        for (const output of this.doc.querySelectorAll('[data-cache-status]')) output.title = '详细诊断已输出到浏览器开发者控制台';
                         console.warn('[Cache Memory] model list failed:', suffix);
                     }
                 } catch (error) {
@@ -375,7 +415,7 @@ export class CacheMemoryUI {
                     const result = await this.apiClient.test();
                     this.setStatus('success', `连接成功 · 模型 ${result.model} · HTTP ${result.status} · ${result.latencyMs} ms`);
                 } catch (error) {
-                    this.setStatus('error', `连接失败 · ${error.message}`);
+                    this.setStatus('error', formatConnectionFailure(error));
                 } finally {
                     button.disabled = false;
                 }
@@ -390,12 +430,12 @@ export class CacheMemoryUI {
 
     renderModelOptions(models) {
         this.modelOptions = [...models];
-        for (const list of document.querySelectorAll('[data-model-list]')) {
-            const placeholder = document.createElement('option');
+        for (const list of this.doc.querySelectorAll('[data-model-list]')) {
+            const placeholder = this.doc.createElement('option');
             placeholder.value = '';
             placeholder.textContent = models.length ? `选择模型（共 ${models.length} 个，显示完整列表）` : '获取列表后可在此选择模型';
             list.replaceChildren(placeholder, ...models.map(model => {
-                const option = document.createElement('option');
+                const option = this.doc.createElement('option');
                 option.value = model;
                 option.textContent = model;
                 return option;
@@ -406,21 +446,20 @@ export class CacheMemoryUI {
 
     openSettings() {
         this.createConfig();
-        this.lastFocusedElement = document.activeElement;
+        this.lastFocusedElement = this.doc.activeElement;
         this.populateSettings();
         this.renderModelOptions(this.modelOptions);
         this.config.hidden = false;
-        document.body.classList.add('cache-memory-config-open');
+        if (this.debugSnapshot) this.setCacheDebug(this.debugSnapshot);
+        this.doc.body.classList.add('cache-memory-config-open');
         this.config.querySelector('[data-settings-close]')?.focus();
     }
 
     closeSettings() {
         if (!this.config || this.config.hidden) return;
-        this.stopConfigDrag?.();
+        this.resetConfigDrag?.();
         this.config.hidden = true;
-        const panel = this.config.querySelector('.cache-memory-config-panel');
-        for (const property of ['position', 'left', 'top', 'width']) panel.style.removeProperty(property);
-        document.body.classList.remove('cache-memory-config-open');
+        this.doc.body.classList.remove('cache-memory-config-open');
         this.lastFocusedElement?.focus?.();
     }
 
@@ -438,32 +477,33 @@ export class CacheMemoryUI {
 
     watchWandMenu() {
         this.syncWandEntry();
-        if (this.wandObserver || !document.body) return;
-        this.wandObserver = new MutationObserver(() => {
+        if (this.wandObserver || !this.doc.body) return;
+        this.wandObserver = new this.root.MutationObserver(() => {
             if (this.wandSyncQueued) return;
             this.wandSyncQueued = true;
-            requestAnimationFrame(() => {
+            this.wandFrame = this.root.requestAnimationFrame(() => {
+                this.wandFrame = null;
                 this.wandSyncQueued = false;
                 this.syncWandEntry();
             });
         });
-        this.wandObserver.observe(document.body, { childList: true, subtree: true });
+        this.wandObserver.observe(this.doc.body, { childList: true, subtree: true });
     }
 
     syncWandEntry() {
         if (this.destroyed) return;
-        const existing = document.getElementById(WAND_CONTAINER_ID);
+        const existing = this.doc.getElementById(WAND_CONTAINER_ID);
         if (!this.getSettings().showWandButton) {
             existing?.remove();
             return;
         }
         if (existing?.isConnected) return;
-        const host = document.getElementById('extensionsMenu');
+        const host = this.doc.getElementById('extensionsMenu');
         if (!host) return;
-        const container = document.createElement('div');
+        const container = this.doc.createElement('div');
         container.id = WAND_CONTAINER_ID;
         container.className = 'extension_container';
-        const entry = document.createElement('div');
+        const entry = this.doc.createElement('div');
         entry.id = WAND_ENTRY_ID;
         entry.className = 'list-group-item flex-container flexGap5 interactable';
         entry.role = 'button';
@@ -480,8 +520,17 @@ export class CacheMemoryUI {
         host.append(container);
     }
 
+    setCacheDebug(snapshot) {
+        this.debugSnapshot = snapshot;
+        for (const output of this.doc.querySelectorAll('[data-cache-debug]')) {
+            output.hidden = !this.getSettings().cacheDebug;
+            output.textContent = `CACHE DEBUG\n${JSON.stringify(snapshot, null, 2)}`;
+        }
+    }
+
     setStatus(state, text) {
-        for (const output of document.querySelectorAll('[data-cache-status]')) {
+        if (this.destroyed) return;
+        for (const output of this.doc.querySelectorAll('[data-cache-status]')) {
             output.dataset.state = state;
             output.textContent = text;
             output.removeAttribute('title');
@@ -490,26 +539,26 @@ export class CacheMemoryUI {
 
     renderMessageMemories() {
         if (!this.getSettings().enabled) {
-            document.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
+            this.doc.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
             return;
         }
         const assistants = this.store.syncMessages(this.getChat());
         const store = this.store.current();
-        document.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
+        this.doc.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
         for (const entry of assistants) {
             const record = store.summaries[entry.messageId];
             if (!record) continue;
-            const message = document.querySelector(`#chat .mes[mesid="${entry.messageIndex}"]`);
+            const message = this.doc.querySelector(`#chat .mes[mesid="${entry.messageIndex}"]`);
             const anchor = message?.querySelector('.mes_text');
             if (!anchor) continue;
-            const widget = document.createElement('details');
+            const widget = this.doc.createElement('details');
             widget.className = 'cache-memory-message';
             widget.dataset.messageId = entry.messageId;
-            const summary = document.createElement('summary');
+            const summary = this.doc.createElement('summary');
             summary.textContent = record.status === 'failed'
                 ? `本层记忆 · 生成失败`
                 : `本层记忆 · ${record.title}`;
-            const body = document.createElement('div');
+            const body = this.doc.createElement('div');
             body.className = 'cache-memory-message-body';
             if (record.status === 'failed') {
                 body.append(this.line('错误', record.error || '未知错误'));
@@ -517,7 +566,7 @@ export class CacheMemoryUI {
                 body.append(this.line('人物', record.characters), this.line('事件', record.event));
                 if (record.status === 'stale') body.append(this.line('状态', '原消息已编辑或切换了备选回复，请手动重新生成'));
             }
-            const actions = document.createElement('div');
+            const actions = this.doc.createElement('div');
             actions.className = 'cache-memory-actions';
             actions.innerHTML = `
                 <button type="button" class="menu_button" data-memory-action="regenerate"><i class="fa-solid fa-rotate"></i> ${record.status === 'failed' ? '重试' : '重新生成'}</button>
@@ -530,25 +579,25 @@ export class CacheMemoryUI {
     }
 
     line(label, value) {
-        const line = document.createElement('p');
-        const strong = document.createElement('strong');
+        const line = this.doc.createElement('p');
+        const strong = this.doc.createElement('strong');
         strong.textContent = `${label}：`;
-        line.append(strong, document.createTextNode(value || '未提供'));
+        line.append(strong, this.doc.createTextNode(value || '未提供'));
         return line;
     }
 
     bindChatActions() {
-        document.querySelector('#chat')?.addEventListener('click', async event => {
+        this.doc.querySelector('#chat')?.addEventListener('click', async event => {
             const button = event.target.closest('[data-memory-action]');
             const widget = button?.closest('.cache-memory-message');
             if (!button || !widget) return;
             const { messageId } = widget.dataset;
             if (button.dataset.memoryAction === 'delete') {
-                if (confirm('删除这条小总结？历史 assistant 正文不会被修改。')) this.store.deleteSummary(messageId);
+                if (this.root.confirm('删除这条小总结？历史 assistant 正文不会被修改。')) this.store.deleteSummary(messageId);
             } else if (button.dataset.memoryAction === 'edit') {
                 this.editSummary(messageId);
             } else if (button.dataset.memoryAction === 'regenerate') {
-                if (!confirm('重新生成会替换这条摘要，但不会修改原始 assistant 正文。继续？')) return;
+                if (!this.root.confirm('重新生成会替换这条摘要，但不会修改原始 assistant 正文。继续？')) return;
                 button.disabled = true;
                 try {
                     await this.summarizer.summarizeMessage(messageId, { overwrite: true });
@@ -557,18 +606,17 @@ export class CacheMemoryUI {
             }
             this.renderMessageMemories();
             this.renderManager();
-            this.updateInjection();
         }, { signal: this.controller.signal });
     }
 
     editSummary(messageId) {
         const record = this.store.getSummary(messageId);
         if (!record) return;
-        const title = prompt('摘要标题', record.title);
+        const title = this.root.prompt('摘要标题', record.title);
         if (title === null) return;
-        const characters = prompt('实际出现的人物', record.characters);
+        const characters = this.root.prompt('实际出现的人物', record.characters);
         if (characters === null) return;
-        const event = prompt('事件', record.event);
+        const event = this.root.prompt('事件', record.event);
         if (event === null) return;
         this.store.updateSummary(messageId, {
             title: title.trim() || '未命名摘要',
@@ -585,22 +633,23 @@ export class CacheMemoryUI {
     openManager() {
         if (!this.manager) this.createManager();
         this.manager.hidden = false;
-        document.body.classList.add('cache-memory-manager-open');
+        this.doc.body.classList.add('cache-memory-manager-open');
         this.renderManager();
     }
 
     closeManager() {
         if (this.manager) this.manager.hidden = true;
-        document.body.classList.remove('cache-memory-manager-open');
+        this.doc.body.classList.remove('cache-memory-manager-open');
     }
 
     createManager() {
-        const overlay = document.createElement('div');
+        this.mountStyles();
+        const overlay = this.doc.createElement('div');
         overlay.id = MANAGER_ID;
         overlay.hidden = true;
         overlay.innerHTML = `
             <div class="cache-memory-manager-panel" role="dialog" aria-modal="true" aria-label="记忆管理">
-                <header><div><h3>记忆管理</h3><small>查看和整理当前聊天的冻结记忆</small></div><button type="button" class="menu_button" data-manager-close title="关闭" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button></header>
+                <header><div><h3>记忆管理</h3><small>查看和整理当前聊天的冻结记忆</small></div><button type="button" class="menu_button" data-manager-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button></header>
                 <div class="cache-memory-manager-toolbar">
                     <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
                     <button type="button" class="menu_button" data-import><i class="fa-solid fa-upload"></i> 导入 JSON</button>
@@ -608,7 +657,7 @@ export class CacheMemoryUI {
                 </div>
                 <div class="cache-memory-manager-content" data-manager-content></div>
             </div>`;
-        document.body.append(overlay);
+        this.doc.body.append(overlay);
         this.manager = overlay;
         overlay.addEventListener('click', event => this.handleManagerClick(event), { signal: this.controller.signal });
         overlay.querySelector('[data-import-file]').addEventListener('change', event => this.importFile(event), { signal: this.controller.signal });
@@ -629,11 +678,11 @@ export class CacheMemoryUI {
     }
 
     continuitySection(title, text) {
-        const section = document.createElement('section');
+        const section = this.doc.createElement('section');
         section.className = 'cache-memory-manager-section';
-        const heading = document.createElement('h4');
+        const heading = this.doc.createElement('h4');
         heading.textContent = title;
-        const body = document.createElement('pre');
+        const body = this.doc.createElement('pre');
         body.className = 'cache-memory-continuity';
         body.textContent = text;
         section.append(heading, body);
@@ -641,13 +690,13 @@ export class CacheMemoryUI {
     }
 
     managerSection(title, items, type) {
-        const section = document.createElement('section');
+        const section = this.doc.createElement('section');
         section.className = 'cache-memory-manager-section';
-        const heading = document.createElement('h4');
+        const heading = this.doc.createElement('h4');
         heading.textContent = `${title} · ${items.length}`;
         section.append(heading);
         if (!items.length) {
-            const empty = document.createElement('p');
+            const empty = this.doc.createElement('p');
             empty.className = 'cache-memory-empty';
             empty.textContent = '暂无记录';
             section.append(empty);
@@ -658,25 +707,25 @@ export class CacheMemoryUI {
     }
 
     managerCard(item, type) {
-        const card = document.createElement('article');
+        const card = this.doc.createElement('article');
         card.className = 'cache-memory-card';
         card.dataset.memoryType = type;
         card.dataset.memoryId = type === 'summary' ? item.messageId : item.id;
         const range = type === 'summary' ? `第 ${item.floor} 层` : `第 ${item.startFloor}-${item.endFloor} 层`;
         const title = type === 'summary' ? item.title : item.id;
-        const header = document.createElement('header');
-        const name = document.createElement('strong');
+        const header = this.doc.createElement('header');
+        const name = this.doc.createElement('strong');
         name.textContent = title;
-        const status = document.createElement('span');
+        const status = this.doc.createElement('span');
         status.textContent = item.status === 'manual-edited' || item.manualEdited ? '手动编辑' : item.status === 'failed' ? '生成失败' : item.status === 'stale' ? '需要更新' : item.status === 'orphaned' ? '原文已删除' : '已冻结';
         header.append(name, status);
-        const meta = document.createElement('small');
+        const meta = this.doc.createElement('small');
         meta.textContent = `${range} · ${formatDate(item.createdAt)}`;
-        const text = document.createElement('pre');
+        const text = this.doc.createElement('pre');
         text.textContent = type === 'summary'
             ? `人物：${item.characters || '未提供'}\n事件：${item.event || item.error || '未提供'}`
             : item.content;
-        const actions = document.createElement('div');
+        const actions = this.doc.createElement('div');
         actions.className = 'cache-memory-actions';
         actions.innerHTML = `
             <button type="button" class="menu_button" data-manager-action="regenerate"><i class="fa-solid fa-rotate"></i> 重新生成</button>
@@ -687,7 +736,7 @@ export class CacheMemoryUI {
     }
 
     pendingCheckpoint() {
-        const holder = document.createElement('div');
+        const holder = this.doc.createElement('div');
         const range = this.summarizer.getNextCheckpointRange();
         const latestFloor = getAssistantMessages(this.getChat()).at(-1)?.floor ?? 0;
         if (range.endFloor > latestFloor) return holder;
@@ -698,9 +747,9 @@ export class CacheMemoryUI {
         }
         if (!missing.length) return holder;
         holder.className = 'cache-memory-missing';
-        const text = document.createElement('p');
+        const text = this.doc.createElement('p');
         text.textContent = `第 ${range.startFloor}-${range.endFloor} 层存在 ${missing.length} 条缺失摘要：${missing.join('、')}`;
-        const actions = document.createElement('div');
+        const actions = this.doc.createElement('div');
         actions.className = 'cache-memory-actions';
         actions.innerHTML = `<button type="button" class="menu_button" data-fill-missing="${missing.join(',')}">先补齐缺失摘要</button><button type="button" class="menu_button" data-continue-checkpoint="${range.startFloor}:${range.endFloor}">继续生成阶段记忆</button>`;
         holder.append(text, actions);
@@ -711,7 +760,7 @@ export class CacheMemoryUI {
         if (event.target === this.manager || event.target.closest('[data-manager-close]')) return this.closeManager();
         if (event.target.closest('[data-export]')) {
             const chatId = this.store.current().chatId || 'chat';
-            downloadJson(`cache-memory-${chatId}.json`, this.store.current());
+            downloadJson(`cache-memory-${chatId}.json`, this.store.current(), this.doc);
             return;
         }
         if (event.target.closest('[data-import]')) return this.manager.querySelector('[data-import-file]').click();
@@ -746,27 +795,26 @@ export class CacheMemoryUI {
         const id = card.dataset.memoryId;
         const action = button.dataset.managerAction;
         if (action === 'delete') {
-            if (!confirm('删除这条记忆？聊天正文不会被修改。')) return;
+            if (!this.root.confirm('删除这条记忆？聊天正文不会被修改。')) return;
             if (type === 'summary') this.store.deleteSummary(id);
             else this.store.deleteAggregate(type, id);
         } else if (action === 'edit') {
             if (type === 'summary') this.editSummary(id);
             else this.editAggregate(type, id);
         } else if (action === 'regenerate') {
-            if (!confirm('仅按该条记忆的固定来源重新生成并替换它。继续？')) return;
+            if (!this.root.confirm('仅按该条记忆的固定来源重新生成并替换它。继续？')) return;
             button.disabled = true;
             try { await this.regenerate(type, id); } catch (error) { notify('error', error.message); }
         }
         this.renderMessageMemories();
         this.renderManager();
-        this.updateInjection();
     }
 
     editAggregate(type, id) {
         const list = type === 'long' ? this.store.current().longMemories : this.store.current().checkpoints;
         const item = list.find(entry => entry.id === id);
         if (!item) return;
-        const content = prompt('记忆内容', item.content);
+        const content = this.root.prompt('记忆内容', item.content);
         if (content === null) return;
         this.store.updateAggregate(type, id, {
             content: content.trim(),
@@ -794,14 +842,13 @@ export class CacheMemoryUI {
         if (!file) return;
         try {
             const data = JSON.parse(await file.text());
-            if (Number(data.version) !== 1 || !data.summaries || !Array.isArray(data.checkpoints) || !Array.isArray(data.longMemories)) {
-                throw new Error('不是有效的 Cache Memory v1 JSON');
+            if (![1, 2].includes(Number(data.version)) || !data.summaries || !Array.isArray(data.checkpoints) || !Array.isArray(data.longMemories)) {
+                throw new Error('不是有效的 Cache Memory JSON');
             }
-            if (!confirm('导入将替换当前聊天的 Cache Memory 数据，但不会修改聊天正文。继续？')) return;
+            if (!this.root.confirm('导入将替换当前聊天的 Cache Memory 数据，但不会修改聊天正文。继续？')) return;
             this.store.replace(data);
             this.renderManager();
             this.renderMessageMemories();
-            this.updateInjection();
             notify('success', '记忆数据已导入当前聊天');
         } catch (error) {
             notify('error', `导入失败：${error.message}`);
@@ -809,16 +856,20 @@ export class CacheMemoryUI {
     }
 
     destroy() {
+        if (this.destroyed) return;
         this.destroyed = true;
         this.controller.abort();
+        if (this.wandFrame != null) this.root.cancelAnimationFrame(this.wandFrame);
+        this.style?.remove();
+        if (this.root[OWNER_KEY] === this) delete this.root[OWNER_KEY];
         this.wandObserver?.disconnect();
         this.wandObserver = null;
-        document.getElementById(ROOT_ID)?.remove();
-        document.getElementById(CONFIG_ID)?.remove();
-        document.getElementById(MANAGER_ID)?.remove();
-        document.getElementById(WAND_CONTAINER_ID)?.remove();
-        document.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
-        document.body.classList.remove('cache-memory-config-open', 'cache-memory-manager-open');
+        this.doc.getElementById(ROOT_ID)?.remove();
+        this.doc.getElementById(CONFIG_ID)?.remove();
+        this.doc.getElementById(MANAGER_ID)?.remove();
+        this.doc.getElementById(WAND_CONTAINER_ID)?.remove();
+        this.doc.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
+        this.doc.body.classList.remove('cache-memory-config-open', 'cache-memory-manager-open');
         this.config = null;
         this.manager = null;
     }

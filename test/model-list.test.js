@@ -51,7 +51,7 @@ test('HTTP failure shows final URL, status and 500-character body without leakin
     assert.equal(output.includes('private/'), false);
 });
 
-test('failed direct fetch keeps its exception and CORS hint alongside proxy HTTP diagnostics', async t => {
+test('proxy HTTP failures preserve diagnostics without attempting a CORS-prone direct request', async t => {
     const { client, logs, apiKey } = fixture(t);
     setGlobal(t, 'location', { origin: 'https://st.example' });
     setGlobal(t, 'parent', {
@@ -62,11 +62,12 @@ test('failed direct fetch keeps its exception and CORS hint alongside proxy HTTP
     t.mock.method(globalThis, 'fetch', async () => { throw new TypeError(`Failed to fetch: ${apiKey}`); });
     const result = await client.listModels();
     const display = formatModelListFailure(result);
-    assert.equal(result.diagnostics.directException, 'Failed to fetch: [REDACTED]');
-    assert.equal(result.diagnostics.suspectedCors, true);
+    assert.equal(result.diagnostics.directException, '');
+    assert.equal(result.diagnostics.direct, '未请求');
+    assert.equal(result.diagnostics.suspectedCors, false);
     assert.match(display, /URL: https:\/\/example\.com\/v1\/models/);
-    assert.match(display, /错误: Failed to fetch/);
-    assert.match(display, /可能是 CORS 或网络限制/);
+    assert.doesNotMatch(display, /Failed to fetch/);
+    assert.match(display, /疑似 CORS: 否/);
     assert.match(display, /代理 URL: https:\/\/st\.example\/api\/backends\/chat-completions\/status/);
     assert.match(display, /代理状态: HTTP 403/);
     assert.match(display, /代理响应（前 500 字）: permission denied/);
@@ -84,7 +85,7 @@ test('proxy fetch exceptions are also displayed and redacted', async t => {
     t.mock.method(globalThis, 'fetch', async () => { throw new TypeError('Failed to fetch'); });
     const result = await client.listModels();
     const display = formatModelListFailure(result);
-    assert.match(display, /错误: Failed to fetch/);
+    assert.doesNotMatch(display, /Failed to fetch/);
     assert.match(display, /代理错误: Load failed: \[REDACTED\]/);
     assert.equal(JSON.stringify({ result, display, logs }).includes(apiKey), false);
 });
@@ -98,7 +99,7 @@ test('proxy response snippets are limited to 500 characters and redact an unsave
         location: { origin: 'https://st.example' },
         getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'test-csrf' }),
         fetch: async (_url, options) => {
-            assert.match(options.body, /Authorization: Bearer unsaved-key/);
+            assert.equal(JSON.parse(JSON.parse(options.body).custom_include_headers).Authorization, 'Bearer unsaved-key');
             return new Response(body, { status: 502 });
         },
     });

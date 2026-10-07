@@ -47,7 +47,7 @@ test('nested frames use the topmost accessible ST window, live headers, and a re
         assert.equal(options.headers.get('Content-Type'), 'application/json');
         assert.equal(options.credentials, 'same-origin');
         assert.equal(options.method, 'POST');
-        assert.equal(JSON.parse(options.body).custom_include_headers, 'Authorization: Bearer private-api-key');
+        assert.equal(JSON.parse(JSON.parse(options.body).custom_include_headers).Authorization, 'Bearer private-api-key');
     }
     assert.match(JSON.stringify(logs), /getRequestHeaders found/);
     assert.match(JSON.stringify(logs), /x-csrf-token/);

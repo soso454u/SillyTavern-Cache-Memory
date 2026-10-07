@@ -1,5 +1,6 @@
 export const MODEL_LIST_WARNING = '无法获取模型列表，请手动填写模型名称。';
 const ST_MODELS_PROXY_PATH = '/api/backends/chat-completions/status';
+const ST_GENERATE_PROXY_PATH = '/api/backends/chat-completions/generate';
 
 function trimEndpoint(value) {
     return String(value ?? '').trim().replace(/\/+$/, '');
@@ -77,6 +78,7 @@ function safeText(value, apiKey, maxLength = 500) {
             text = text.split(key).join('[REDACTED]');
         }
     }
+    text = text.replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [REDACTED]');
     return text.slice(0, maxLength);
 }
 
@@ -137,21 +139,9 @@ function getStRequestContext() {
     }
     console.info('[Cache Memory] SillyTavern getRequestHeaders found:', false);
     console.info('[Cache Memory] SillyTavern header keys:', []);
-    throw new Error('无法获取 SillyTavern CSRF 请求头');
-}
-
-function responseError(status, statusText, body) {
-    let message = '';
-    try {
-        const data = body ? JSON.parse(body) : {};
-        message = data?.error?.message ?? data?.message ?? '';
-    } catch {
-        // Keep the response body as the diagnostic when it is not JSON.
-    }
-    const error = new Error(`HTTP ${status}: ${message || body || statusText || 'Request failed'}`);
-    error.status = status;
-    error.body = body;
-    return error;
+    const error = new Error('无法获取 SillyTavern CSRF 请求头');
+    if (!windows.some(root => root.SillyTavern)) error.code = 'ST_PROXY_UNAVAILABLE';
+    throw error;
 }
 
 export class SummaryApiClient {
@@ -200,32 +190,27 @@ export class SummaryApiClient {
         const controller = new AbortController();
         this.activeControllers.add(controller);
         const timeout = setTimeout(() => controller.abort(), Number(settings.timeoutMs) || 60000);
+        const cleanup = () => { clearTimeout(timeout); this.activeControllers.delete(controller); };
+        const translate = error => {
+            if (error?.name !== 'AbortError') return error;
+            const aborted = new Error(this.cancelledControllers.has(controller) ? '请求已取消' : `请求超时（${settings.timeoutMs} 毫秒）`);
+            aborted.code = this.cancelledControllers.has(controller) ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT';
+            return aborted;
+        };
         try {
-            return await fetchContext.fetch(url, { cache: 'no-cache', ...options, signal: controller.signal });
+            const response = await fetchContext.fetch(url, { cache: 'no-cache', ...options, signal: controller.signal });
+            const readText = response.text.bind(response);
+            // Keep cancellation and the timeout active until the body has finished, not only the headers.
+            response.text = async () => {
+                try { return await readText(); }
+                catch (error) { throw translate(error); }
+                finally { cleanup(); }
+            };
+            return response;
         } catch (error) {
-            if (error?.name === 'AbortError') {
-                const aborted = new Error(this.cancelledControllers.has(controller) ? '请求已取消' : `请求超时（${settings.timeoutMs} 毫秒）`);
-                aborted.code = this.cancelledControllers.has(controller) ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT';
-                throw aborted;
-            }
-            throw error;
-        } finally {
-            clearTimeout(timeout);
-            this.activeControllers.delete(controller);
+            cleanup();
+            throw translate(error);
         }
-    }
-
-    async fetchJson(url, options = {}) {
-        const response = await this.fetchResponse(url, options);
-        const raw = await response.text();
-        let data;
-        try {
-            data = raw ? JSON.parse(raw) : {};
-        } catch {
-            data = {};
-        }
-        if (!response.ok || data?.error) throw responseError(response.status, response.statusText, raw);
-        return { data, response, raw };
     }
 
     buildPayload({ systemPrompt, userContent, maxTokens }) {
@@ -239,182 +224,161 @@ export class SummaryApiClient {
                 { role: 'user', content: String(userContent ?? '') },
             ],
             temperature: Number(settings.temperature),
-            max_tokens: Number(maxTokens ?? settings.maxTokens),
+            [settings.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens']: Number(maxTokens ?? settings.maxTokens),
             stream: false,
         };
     }
 
-    async complete(request) {
+    // Models, test and every generation share live ST headers, URL normalization and diagnostics.
+    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '' } = {}) {
         const settings = this.getSettings();
-        const { data, response } = await this.fetchJson(normalizeBaseUrl(settings.apiBaseUrl), {
-            method: 'POST',
-            headers: this.headers(),
-            body: JSON.stringify(this.buildPayload(request)),
-        });
-        const content = data?.choices?.[0]?.message?.content
-            ?? data?.choices?.[0]?.text
-            ?? data?.content?.[0]?.text
-            ?? data?.response
-            ?? '';
-        if (!String(content).trim()) throw new Error('API 返回成功，但没有可用文本');
-        return { content: String(content).trim(), status: response.status, finishReason: data?.choices?.[0]?.finish_reason };
+        const apiKey = String(apiKeyOverride || this.storage.getItem(this.storageKey) || '').trim();
+        const endpoint = kind === 'models' ? normalizeModelsUrl(settings.apiBaseUrl) : normalizeBaseUrl(settings.apiBaseUrl);
+        const path = kind === 'models' ? ST_MODELS_PROXY_PATH : ST_GENERATE_PROXY_PATH;
+        const secrets = [apiKey];
+        const diagnostics = {
+            endpoint: safeText(safeUrl(endpoint), secrets, Infinity), direct: '未请求', directBody: '',
+            directException: '', suspectedCors: false, proxy: '未请求', proxyEndpoint: path,
+            proxyBody: '', proxyException: '', upstream: '未提供（ST 代理可能不透传上游状态）',
+        };
+        const fail = (message, code) => {
+            const error = new Error(safeText(message, secrets, 1000));
+            error.code = code;
+            error.diagnostics = { ...diagnostics };
+            console.warn('[Cache Memory] AI request failed:', error.diagnostics, error.message);
+            return error;
+        };
+        if (!endpoint) { diagnostics.direct = '未请求：请先填写接口地址'; throw fail('请先填写接口地址'); }
+        let context;
+        try { context = getStRequestContext(); }
+        catch (error) {
+            diagnostics.proxy = '不可用';
+            diagnostics.proxyException = safeText(errorText(error), secrets);
+            if (error.code !== 'ST_PROXY_UNAVAILABLE') throw fail(error.message, error.code);
+        }
+        const consume = async (response, source) => {
+            diagnostics[source] = `HTTP ${response.status}`;
+            if (source === 'direct') {
+                diagnostics.endpoint = safeText(safeUrl(response.url || endpoint), secrets, Infinity);
+                diagnostics.upstream = `HTTP ${response.status}`;
+            } else {
+                diagnostics.proxyEndpoint = safeText(safeUrl(response.url || diagnostics.proxyEndpoint), secrets, Infinity);
+            }
+            let raw;
+            try { raw = await response.text(); }
+            catch (error) { diagnostics[`${source}Exception`] = safeText(errorText(error), secrets); throw fail(error.message, error.code); }
+            diagnostics[`${source}Body`] = safeText(raw, secrets);
+            let data;
+            try { data = raw ? JSON.parse(raw) : {}; }
+            catch {
+                if (!response.ok) throw fail(`HTTP ${response.status}: ${diagnostics[`${source}Body`] || response.statusText}`);
+                throw fail('响应不是有效 JSON');
+            }
+            const upstreamStatus = data?.upstream_status ?? data?.error?.status ?? data?.error?.status_code;
+            if (source === 'proxy' && Number.isInteger(Number(upstreamStatus)) && Number(upstreamStatus) > 0) {
+                diagnostics.upstream = `HTTP ${Number(upstreamStatus)}`;
+            }
+            console.info('[Cache Memory] AI request:', { kind, source, ...diagnostics });
+            if (!response.ok || data?.error) {
+                const detail = typeof data?.error === 'string' ? data.error : data?.error?.message ?? data?.message;
+                throw fail(detail || `HTTP ${response.status}: ${diagnostics[`${source}Body`] || response.statusText}`);
+            }
+            return { data, response, diagnostics, source };
+        };
+        if (context) {
+            const { root, headers } = context;
+            // Header values never enter a diagnostic. Include all returned values in the redactor.
+            secrets.push(...headers.values());
+            diagnostics.proxyEndpoint = safeText(safeUrl(new URL(path, root.location?.href || root.location?.origin).toString()), secrets, Infinity);
+            const proxyPayload = {
+                ...payload, chat_completion_source: 'custom',
+                custom_url: normalizeApiBaseUrl(settings.apiBaseUrl),
+                custom_include_headers: JSON.stringify({ Authorization: apiKey ? `Bearer ${apiKey}` : '' }),
+                ...(kind === 'completion' ? { stream: false, custom_prompt_post_processing: '' } : {}),
+            };
+            let response;
+            try {
+                response = await this.fetchResponse(path, {
+                    method: 'POST', headers, credentials: 'same-origin', body: JSON.stringify(proxyPayload),
+                }, root);
+            } catch (error) {
+                diagnostics.proxy = '未收到 HTTP 响应';
+                diagnostics.proxyException = safeText(errorText(error), secrets);
+                // A network failure after sending is not proof of an unavailable route; avoid duplicate generation.
+                throw fail(error.message, error.code);
+            }
+            if (![404, 405].includes(response.status)) return consume(response, 'proxy');
+            let raw;
+            try { raw = await response.text(); }
+            catch (error) {
+                diagnostics.proxy = `HTTP ${response.status}`;
+                diagnostics.proxyException = safeText(errorText(error), secrets);
+                throw fail(error.message, error.code);
+            }
+            // A returned upstream 404 is not proof that the local ST route is missing.
+            const missingRoute = response.status === 405 || /Cannot POST\s+\/api\/backends\/chat-completions\/(status|generate)/i.test(raw);
+            if (!missingRoute) {
+                response.text = async () => raw;
+                return consume(response, 'proxy');
+            }
+            diagnostics.proxy = `HTTP ${response.status}（ST 路由不可用）`;
+            diagnostics.proxyBody = safeText(raw, secrets);
+        }
+        try {
+            const response = await this.fetchResponse(endpoint, {
+                method: kind === 'models' ? 'GET' : 'POST', headers: this.headers(apiKey),
+                ...(kind === 'completion' ? { body: JSON.stringify(payload) } : {}),
+            });
+            return await consume(response, 'direct');
+        } catch (error) {
+            if (error.diagnostics) throw error;
+            if (diagnostics.direct === '未请求') diagnostics.direct = '未收到 HTTP 响应';
+            diagnostics.directException = safeText(errorText(error), secrets);
+            diagnostics.suspectedCors = diagnostics.direct === '未收到 HTTP 响应' && isNetworkFailure(error);
+            throw fail(error.message, error.code);
+        }
+    }
+
+    async complete(request) {
+        const payload = this.buildPayload(request);
+        let result;
+        try { result = await this.requestOpenAICompatible({ payload }); }
+        catch (error) {
+            // Retry only an explicit rejected parameter, preserving a bounded output budget.
+            if (!payload.max_tokens || !/max_tokens/.test(error.message) || !/unsupported|not supported|unknown|use.*max_completion_tokens/i.test(error.message)) throw error;
+            payload.max_completion_tokens = payload.max_tokens;
+            delete payload.max_tokens;
+            result = await this.requestOpenAICompatible({ payload });
+        }
+        const { data, response, diagnostics, source } = result;
+        const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text
+            ?? data?.content?.[0]?.text ?? data?.response ?? '';
+        if (!String(content).trim()) {
+            const error = new Error('API 返回成功，但没有可用文本');
+            error.diagnostics = diagnostics;
+            throw error;
+        }
+        return { content: String(content).trim(), status: response.status, finishReason: data?.choices?.[0]?.finish_reason, diagnostics, source };
     }
 
     async listModels(apiKeyOverride = '') {
-        const settings = this.getSettings();
-        const apiKey = String(apiKeyOverride || this.storage.getItem(this.storageKey) || '').trim();
-        const endpoint = normalizeModelsUrl(settings.apiBaseUrl);
-        const diagnosticSecrets = [apiKey];
-        const diagnostics = {
-            endpoint: safeText(safeUrl(endpoint), apiKey, Infinity),
-            direct: '未请求',
-            directBody: '',
-            directException: '',
-            suspectedCors: false,
-            proxy: '未请求',
-            proxyEndpoint: '',
-            proxyBody: '',
-            proxyException: '',
-        };
-        const recordException = (error, source) => {
-            const message = safeText(errorText(error), diagnosticSecrets, Infinity);
-            diagnostics[`${source}Exception`] = message;
-            if (diagnostics[source] === '未请求') diagnostics[source] = '未收到 HTTP 响应';
-            if (source === 'direct') {
-                diagnostics.suspectedCors = diagnostics.direct === '未收到 HTTP 响应' && isNetworkFailure(error);
-            }
-            console.warn(`[Cache Memory] ${source} model list exception:`, { ...diagnostics });
-            if (error?.code === 'REQUEST_ABORTED' || error?.code === 'REQUEST_TIMEOUT') {
-                const failure = new Error(message);
-                failure.code = error.code;
-                failure.diagnostics = diagnostics;
-                throw failure;
-            }
-            return message;
-        };
-        console.info('[Cache Memory] model endpoint:', diagnostics.endpoint);
-
-        if (!endpoint) {
-            diagnostics.direct = '未请求：请先填写接口地址';
-            console.info('[Cache Memory] direct fetch status:', diagnostics.direct);
-            console.info('[Cache Memory] direct fetch response:', '');
-            return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics };
-        }
-
         try {
-            const response = await this.fetchResponse(endpoint, {
-                method: 'GET',
-                headers: {
-                    Accept: 'application/json',
-                    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-                },
-            });
-            diagnostics.endpoint = safeText(safeUrl(response.url || endpoint), apiKey, Infinity);
-            diagnostics.direct = `HTTP ${response.status}`;
-            console.info('[Cache Memory] direct fetch URL:', diagnostics.endpoint);
-            console.info('[Cache Memory] direct fetch status:', diagnostics.direct);
-            const raw = await response.text();
-            const safeResponse = safeText(raw, apiKey);
-            diagnostics.directBody = safeResponse;
-            console.info('[Cache Memory] direct fetch response:', safeResponse);
-
-            if (!response.ok) {
-                const error = responseError(response.status, safeText(response.statusText, apiKey), safeResponse);
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: error.message };
-            }
-
-            let payload;
-            try {
-                payload = raw ? JSON.parse(raw) : {};
-            } catch {
-                diagnostics.direct = `HTTP ${response.status}（JSON 解析失败）`;
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: '响应不是有效 JSON' };
-            }
-            const models = readModels(payload);
+            const result = await this.requestOpenAICompatible({ kind: 'models', apiKeyOverride });
+            const models = readModels(result.data);
             if (!models.length) {
-                diagnostics.direct = `HTTP ${response.status}（未识别模型数组）`;
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: '响应中没有可识别的模型数组' };
+                result.diagnostics[result.source] += '（未识别模型数组）';
+                return { models, source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics: result.diagnostics, error: '响应中没有可识别的模型数组' };
             }
-            return { models, source: 'direct', warning: '', diagnostics };
+            return { models, source: result.source, warning: '', diagnostics: result.diagnostics };
         } catch (error) {
-            const message = recordException(error, 'direct');
-            if (!isNetworkFailure(error)) {
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: message };
-            }
-        }
-
-        diagnostics.proxyEndpoint = ST_MODELS_PROXY_PATH;
-        try {
-            const { root: stWindow, headers } = getStRequestContext();
-            diagnosticSecrets.push(headers.get('X-CSRF-Token'));
-            diagnostics.proxyEndpoint = safeText(safeUrl(new URL(ST_MODELS_PROXY_PATH, stWindow.location?.href || stWindow.location?.origin).toString()), diagnosticSecrets, Infinity);
-            console.info('[Cache Memory] proxy fetch URL:', diagnostics.proxyEndpoint);
-            const response = await this.fetchResponse(ST_MODELS_PROXY_PATH, {
-                method: 'POST',
-                headers,
-                credentials: 'same-origin',
-                body: JSON.stringify({
-                    chat_completion_source: 'custom',
-                    custom_url: normalizeApiBaseUrl(settings.apiBaseUrl),
-                    custom_include_headers: `Authorization: Bearer ${apiKey}`,
-                }),
-            }, stWindow);
-            diagnostics.proxyEndpoint = safeText(safeUrl(response.url || diagnostics.proxyEndpoint), diagnosticSecrets, Infinity);
-            diagnostics.proxy = `HTTP ${response.status}`;
-            console.info('[Cache Memory] proxy fetch URL:', diagnostics.proxyEndpoint);
-            console.info('[Cache Memory] proxy fetch status:', diagnostics.proxy);
-            const raw = await response.text();
-            const safeResponse = safeText(raw, diagnosticSecrets);
-            diagnostics.proxyBody = safeResponse;
-            console.info('[Cache Memory] proxy fetch response:', safeResponse);
-            if (!response.ok) {
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: responseError(response.status, safeText(response.statusText, diagnosticSecrets), safeResponse).message };
-            }
-            let payload;
-            try {
-                payload = raw ? JSON.parse(raw) : {};
-            } catch {
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: '代理响应不是有效 JSON' };
-            }
-            const models = readModels(payload);
-            if (!models.length) {
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: '代理响应中没有可识别的模型数组' };
-            }
-            return { models, source: 'proxy', warning: '', diagnostics };
-        } catch (error) {
-            const message = recordException(error, 'proxy');
-            return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: message };
+            if (['REQUEST_ABORTED', 'REQUEST_TIMEOUT'].includes(error.code)) throw error;
+            return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics: error.diagnostics, error: error.message };
         }
     }
 
     async test() {
-        const settings = this.getSettings();
-        const endpoint = normalizeBaseUrl(settings.apiBaseUrl);
-        if (!endpoint) throw new Error('请先填写接口地址');
-        if (!settings.model) throw new Error('请先填写摘要模型');
         const startedAt = performance.now();
-        const payload = { model: settings.model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 1 };
-        let result;
-        try {
-            result = await this.fetchJson(endpoint, {
-                method: 'POST',
-                headers: this.headers(),
-                body: JSON.stringify(payload),
-            });
-        } catch (error) {
-            if (!/max_tokens|unsupported.*parameter|unknown.*parameter|unrecognized.*parameter/i.test(errorText(error))) throw error;
-            delete payload.max_tokens;
-            result = await this.fetchJson(endpoint, {
-                method: 'POST',
-                headers: this.headers(),
-                body: JSON.stringify(payload),
-            });
-        }
-        return {
-            ok: true,
-            status: result.response.status,
-            latencyMs: Math.round(performance.now() - startedAt),
-            model: settings.model,
-        };
+        const result = await this.complete({ systemPrompt: 'Reply briefly.', userContent: 'Hi', maxTokens: 32 });
+        return { ok: true, status: result.status, latencyMs: Math.round(performance.now() - startedAt), model: this.getSettings().model, source: result.source };
     }
 }

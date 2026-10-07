@@ -32,7 +32,7 @@ test('old stores and custom prompts survive migration while former default promp
     assert.equal(settings.prompts.checkpoint, DEFAULT_PROMPTS.checkpoint);
     assert.equal(settings.checkpointInterval, 20);
     assert.equal(settings.summaryMaxLength, 350);
-    assert.equal(normalizeSettings().checkpointInterval, 10);
+    assert.equal(normalizeSettings().checkpointInterval, 5);
     assert.equal(normalizeSettings().summaryMaxLength, 500);
 });
 
@@ -54,7 +54,7 @@ test('incremental checkpoints carry prior state and KEEP; fact extraction append
     for (let floor = 21; floor <= 24; floor += 1) addSummary(store, floor, `本阶段第${floor}层明确发生的事件`);
     const inputs = [];
     let factCalls = 0;
-    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2, checkpointMaxLength: 100 }), getChat: () => [], apiClient: {
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2, longMemoryInterval: 2, checkpointMaxLength: 100 }), getChat: () => [], apiClient: {
         complete: async request => {
             inputs.push(request.userContent);
             if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) {
@@ -111,7 +111,7 @@ test('fact replacements require exact new-summary evidence and retain the old fa
     assert.deepEqual(store, snapshot);
 });
 
-test('incremental injection combines active facts, KEEP, latest state and every subsequent summary deterministically', () => {
+test('non-strict incremental injection combines active facts, KEEP, latest state and every subsequent summary deterministically', () => {
     const { store } = fixture();
     addSummary(store, 1, '旧事件');
     const keeps = collectKeepItems(store.current());
@@ -120,7 +120,7 @@ test('incremental injection combines active facts, KEEP, latest state and every 
     store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 10, memoryKind: 'facts', factUpdates: [{ id: 'fact-1', action: 'add', text: '长期有效的重要事实' }], status: 'frozen', frozen: true });
     addSummary(store, 21, '最近第一件事');
     addSummary(store, 22, '最近第二件事');
-    const settings = normalizeSettings({ injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT, recentSummaryCount: 1, recentCheckpointCount: 0 });
+    const settings = normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT, recentSummaryCount: 1, recentCheckpointCount: 0 });
     const output = buildInjection(store.current(), settings);
     assert.equal(output, buildInjection(store.current(), settings));
     assert.match(output, /长期有效的重要事实/);
@@ -146,11 +146,11 @@ test('manual fact edits rebuild the visible projection and evidence-based retire
     assert.equal(store.current().longMemories[0].factUpdates[0].text, '陆雾尚欠江珩两笔债务');
 });
 
-test('KEEP and new summaries are available before the first checkpoint without a recent-count gap', () => {
+test('non-strict KEEP and new summaries are available before the first checkpoint without a recent-count gap', () => {
     const { store } = fixture();
     addSummary(store, 1, '刚刚作出的约定');
     addSummary(store, 2, '最新发生的事情');
-    const output = buildInjection(store.current(), normalizeSettings({ injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT, recentSummaryCount: 0 }));
+    const output = buildInjection(store.current(), normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT, recentSummaryCount: 0 }));
     assert.match(output, /\[KEEP\]/);
     assert.match(output, /刚刚作出的约定/);
     assert.match(output, /最新发生的事情/);
@@ -179,7 +179,7 @@ test('automatic incremental stages feed new facts into the next state and never 
     const bodies = chat.map(item => item.mes);
     const stateInputs = [];
     let factCalls = 0;
-    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2 }), getChat: () => chat,
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2, longMemoryInterval: 2 }), getChat: () => chat,
         apiClient: { complete: async ({ userContent }) => {
             if (userContent.startsWith('正文')) return { content: `[SUMMARY]\n[Event]\n${userContent}\n[KEEP]\n- 姜梨答应十二月前陪陆雾回巴黎见外婆` };
             if (userContent.startsWith('[EXISTING_LONG_FACTS]')) {
@@ -216,7 +216,7 @@ test('KEEP and stable facts survive 100 incremental checkpoints through floor 10
     assert.equal(memory.checkpoints.at(-1).endFloor, 1000);
     assert.equal(projectLongFacts(memory).facts.filter(item => item.status === 'active').length, 1);
     assert.equal(collectKeepItems(memory).filter(item => item.status === 'active').length, 1);
-    const output = buildInjection(memory, normalizeSettings({ injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT }));
+    const output = buildInjection(memory, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT }));
     assert.match(output, /陆雾不知道姜梨看过那封邮件/);
     assert.match(output, /十二月前陪陆雾回巴黎见外婆/);
     assert.match(output, /截至第1000层/);
