@@ -324,6 +324,9 @@ test('model listing reads OpenAI responses and never injects provider-specific p
         assert.deepEqual(fallback.models, []);
         assert.equal(fallback.warning, '无法获取模型列表，请手动填写模型名称。');
         assert.match(fallback.diagnostics.direct, /HTTP 404/);
+        assert.equal(fallback.diagnostics.directBody, 'not found');
+        assert.equal(fallback.diagnostics.directException, '');
+        assert.equal(fallback.diagnostics.suspectedCors, false);
         assert.equal(settings.model, 'my-custom-model');
 
         globalThis.fetch = async () => new Response(JSON.stringify({ data: { invalid: true } }), { status: 200 });
@@ -363,6 +366,9 @@ test('model listing uses a GET with Accept and Bearer auth, then falls back to t
         const result = await client.listModels();
         assert.deepEqual(result.models, ['proxy-model']);
         assert.equal(result.source, 'proxy');
+        assert.equal(result.diagnostics.directException, 'Failed to fetch');
+        assert.equal(result.diagnostics.suspectedCors, true);
+        assert.equal(result.diagnostics.proxy, 'HTTP 200');
         assert.equal(directRequest.url, 'https://provider.example/api/v3/models');
         assert.equal(directRequest.options.method, 'GET');
         assert.equal(directRequest.options.headers.Accept, 'application/json');

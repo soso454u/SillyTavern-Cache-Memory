@@ -45,7 +45,7 @@ https://github.com/soso454u/SillyTavern-Cache-Memory
 
 纯 origin 地址（例如 `https://example.com`）会补成 `/v1`；已有 `/v1`、`/v2`、`/v3` 或 `/api/...` 等路径会保留。生成请求发送到 `POST {base}/chat/completions`，模型列表从 `GET {base}/models` 获取；填写完整 `/chat/completions` 地址也会正确推导同一 base。请求体采用 OpenAI 兼容格式，密钥通过 `Authorization: Bearer ...` 发送。
 
-模型列表先由浏览器直接以 `GET` 请求，若网络/CORS 层失败，会自动回退到 SillyTavern `/api/backends/chat-completions/status` 代理。界面提示“无法获取模型列表，请手动填写模型名称”，并附请求地址、直连状态和代理状态；开发者控制台也会输出状态及直连响应前 500 字。部分兼容服务不开放 `/models`，此时可以手动填写模型并用“测试连接”验证聊天接口。
+模型列表先由浏览器直接以 `GET` 请求，若网络/CORS 层失败，会自动回退到 SillyTavern `/api/backends/chat-completions/status` 代理。失败时界面显示“模型列表获取失败”，附最终 models URL、HTTP 状态（未收到响应时明确标注）、响应正文前 500 字、fetch 异常消息及是否疑似 CORS；若尝试了代理，也会保留代理 URL、状态、响应和异常。浏览器的网络错误无法确定是否由 CORS 引起，提示仅供排查。超时和取消也会保留请求地址。开发者控制台同步输出诊断，URL、响应和异常中的 API Key 会先脱敏再截断。部分兼容服务不开放 `/models`，此时可以手动填写模型并用“测试连接”验证聊天接口。
 
 API 密钥使用独立的浏览器 `localStorage` 项 `cache_memory_api_key_v1`，不写入聊天、`chat_metadata`、扩展设置，也不复用 SillyTavern 自带 API。它不是安全密钥库：同源网页脚本和能访问该浏览器配置的人可以读取它。目标接口还必须允许 SillyTavern 页面来源的跨域请求。面板中的“测试连接”会返回连接状态、模型、HTTP 状态和耗时。
 

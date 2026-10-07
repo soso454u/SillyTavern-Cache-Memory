@@ -96,7 +96,7 @@
 .cache-memory-note { margin-top: 15px; border-color: #bde0d9; border-left-color: var(--cm-teal); background: #eaf8f5; color: #24534d; }
 .cache-memory-api-guide i, .cache-memory-note i { margin-top: 3px; color: var(--cm-blue); }
 .cache-memory-note i { color: var(--cm-teal); }
-.cache-memory-status { min-height: 38px; padding: 9px 11px; border: 1px solid #dbe4ef; border-left: 4px solid #94a3b8; background: #f1f5f9; color: #334155; box-sizing: border-box; font-size: 12px; font-weight: 600; line-height: 1.45; }
+.cache-memory-status { min-height: 38px; padding: 9px 11px; border: 1px solid #dbe4ef; border-left: 4px solid #94a3b8; background: #f1f5f9; color: #334155; box-sizing: border-box; font-size: 12px; font-weight: 600; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cache-memory-status[data-state="success"] { border-color: #a7dbc0; border-left-color: #18864b; background: #ebf9f1; color: #126238; }
 .cache-memory-status[data-state="warning"] { border-color: #f1cc8c; border-left-color: #c87808; background: #fff8e8; color: #7b4705; }
 .cache-memory-status[data-state="error"] { border-color: #edb7bd; border-left-color: #c8384b; background: #fff0f2; color: #8b2030; }

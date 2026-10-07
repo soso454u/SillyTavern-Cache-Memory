@@ -55,6 +55,7 @@ export function readModels(payload) {
 }
 
 function safeUrl(value) {
+    if (!value) return '';
     try {
         const url = new URL(value, globalThis.location?.href);
         url.username = '';
@@ -69,9 +70,13 @@ function safeUrl(value) {
 }
 
 function safeText(value, apiKey, maxLength = 500) {
-    let text = String(value ?? '').slice(0, maxLength);
-    if (apiKey) text = text.split(apiKey).join('[REDACTED]');
-    return text;
+    let text = String(value ?? '');
+    if (apiKey) {
+        for (const key of new Set([apiKey, encodeURIComponent(apiKey), JSON.stringify(apiKey).slice(1, -1)])) {
+            text = text.split(key).join('[REDACTED]');
+        }
+    }
+    return text.slice(0, maxLength);
 }
 
 function errorText(error) {
@@ -216,7 +221,33 @@ export class SummaryApiClient {
         const settings = this.getSettings();
         const apiKey = String(apiKeyOverride || this.storage.getItem(this.storageKey) || '').trim();
         const endpoint = normalizeModelsUrl(settings.apiBaseUrl);
-        const diagnostics = { endpoint: safeUrl(endpoint), direct: '未请求', proxy: '未请求' };
+        const diagnostics = {
+            endpoint: safeText(safeUrl(endpoint), apiKey, Infinity),
+            direct: '未请求',
+            directBody: '',
+            directException: '',
+            suspectedCors: false,
+            proxy: '未请求',
+            proxyEndpoint: '',
+            proxyBody: '',
+            proxyException: '',
+        };
+        const recordException = (error, source) => {
+            const message = safeText(errorText(error), apiKey, Infinity);
+            diagnostics[`${source}Exception`] = message;
+            if (diagnostics[source] === '未请求') diagnostics[source] = '未收到 HTTP 响应';
+            if (source === 'direct') {
+                diagnostics.suspectedCors = diagnostics.direct === '未收到 HTTP 响应' && isNetworkFailure(error);
+            }
+            console.warn(`[Cache Memory] ${source} model list exception:`, { ...diagnostics });
+            if (error?.code === 'REQUEST_ABORTED' || error?.code === 'REQUEST_TIMEOUT') {
+                const failure = new Error(message);
+                failure.code = error.code;
+                failure.diagnostics = diagnostics;
+                throw failure;
+            }
+            return message;
+        };
         console.info('[Cache Memory] model endpoint:', diagnostics.endpoint);
 
         if (!endpoint) {
@@ -234,14 +265,17 @@ export class SummaryApiClient {
                     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
                 },
             });
+            diagnostics.endpoint = safeText(safeUrl(response.url || endpoint), apiKey, Infinity);
+            diagnostics.direct = `HTTP ${response.status}`;
+            console.info('[Cache Memory] direct fetch URL:', diagnostics.endpoint);
+            console.info('[Cache Memory] direct fetch status:', diagnostics.direct);
             const raw = await response.text();
             const safeResponse = safeText(raw, apiKey);
-            diagnostics.direct = `HTTP ${response.status}`;
-            console.info('[Cache Memory] direct fetch status:', diagnostics.direct);
+            diagnostics.directBody = safeResponse;
             console.info('[Cache Memory] direct fetch response:', safeResponse);
 
             if (!response.ok) {
-                const error = responseError(response.status, response.statusText, safeResponse);
+                const error = responseError(response.status, safeText(response.statusText, apiKey), safeResponse);
                 return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: error.message };
             }
 
@@ -259,17 +293,16 @@ export class SummaryApiClient {
             }
             return { models, source: 'direct', warning: '', diagnostics };
         } catch (error) {
-            if (error?.code === 'REQUEST_ABORTED' || error?.code === 'REQUEST_TIMEOUT') throw error;
-            diagnostics.direct = safeText(errorText(error), apiKey, 300);
-            console.info('[Cache Memory] direct fetch status:', diagnostics.direct);
-            console.info('[Cache Memory] direct fetch response:', '');
+            const message = recordException(error, 'direct');
             if (!isNetworkFailure(error)) {
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: diagnostics.direct };
+                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: message };
             }
         }
 
         const stWindow = sameOriginSillyTavernWindow();
         const proxyUrl = `${stWindow.location?.origin ?? ''}${ST_MODELS_PROXY_PATH}`;
+        diagnostics.proxyEndpoint = safeText(safeUrl(proxyUrl), apiKey, Infinity);
+        console.info('[Cache Memory] proxy fetch URL:', diagnostics.proxyEndpoint);
         try {
             const response = await this.fetchResponse(proxyUrl, {
                 method: 'POST',
@@ -280,12 +313,16 @@ export class SummaryApiClient {
                     custom_include_headers: `Authorization: Bearer ${apiKey}`,
                 }),
             }, stWindow);
+            diagnostics.proxyEndpoint = safeText(safeUrl(response.url || proxyUrl), apiKey, Infinity);
+            diagnostics.proxy = `HTTP ${response.status}`;
+            console.info('[Cache Memory] proxy fetch URL:', diagnostics.proxyEndpoint);
+            console.info('[Cache Memory] proxy fetch status:', diagnostics.proxy);
             const raw = await response.text();
             const safeResponse = safeText(raw, apiKey);
-            diagnostics.proxy = `HTTP ${response.status}`;
-            console.info('[Cache Memory] proxy fetch status:', diagnostics.proxy);
+            diagnostics.proxyBody = safeResponse;
+            console.info('[Cache Memory] proxy fetch response:', safeResponse);
             if (!response.ok) {
-                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: responseError(response.status, response.statusText, safeResponse).message };
+                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: responseError(response.status, safeText(response.statusText, apiKey), safeResponse).message };
             }
             let payload;
             try {
@@ -299,10 +336,8 @@ export class SummaryApiClient {
             }
             return { models, source: 'proxy', warning: '', diagnostics };
         } catch (error) {
-            if (error?.code === 'REQUEST_ABORTED' || error?.code === 'REQUEST_TIMEOUT') throw error;
-            diagnostics.proxy = safeText(errorText(error), apiKey, 300);
-            console.info('[Cache Memory] proxy fetch status:', diagnostics.proxy);
-            return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: diagnostics.proxy };
+            const message = recordException(error, 'proxy');
+            return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics, error: message };
         }
     }
 
