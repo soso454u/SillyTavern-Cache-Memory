@@ -4,7 +4,7 @@
 
 ## 兼容基线
 
-1.5.0 开发时核对了 SillyTavern 官方 `release` 分支的 custom 后端路由和发送前事件；当前用户安装版本仍需联机验证。扩展使用的公开接口如下：
+1.5.1 开发时核对了 SillyTavern 官方 `release` 分支的 custom 后端路由和发送前事件；当前用户安装版本仍需联机验证。扩展使用的公开接口如下：
 
 - `eventSource` / `event_types.GENERATION_ENDED`：正常生成完成后排队生成楼层摘要。
 - `CHAT_CHANGED`、`CHAT_LOADED`、`MESSAGE_EDITED`、`MESSAGE_DELETED`、`MESSAGE_SWIPED`：同步当前聊天、消息身份和展示状态。
@@ -45,21 +45,21 @@ https://github.com/soso454u/SillyTavern-Cache-Memory
 
 纯 origin 地址（例如 `https://example.com`）会补成 `/v1`；已有 `/v1`、`/v2`、`/v3` 或 `/api/...` 等路径会保留。生成请求发送到 `POST {base}/chat/completions`，模型列表从 `GET {base}/models` 获取；填写完整 `/chat/completions` 地址也会正确推导同一 base。请求体采用 OpenAI 兼容格式，密钥通过 `Authorization: Bearer ...` 发送。
 
-模型列表、测试连接、Summary、Checkpoint 和 Long Memory 统一使用 `requestOpenAICompatible()`：优先 SillyTavern 原生代理，代理环境不存在或明确路由不存在的 404/405 时才尝试 direct。代理返回 403/CSRF、上游错误、超时或网络中断不会触发重复生成。
+模型列表、测试连接、Summary、Checkpoint 和 Long Memory 统一使用 `requestOpenAICompatible()`，并且只允许请求 SillyTavern 同源后端。缺少 ST 上下文、CSRF 请求头或代理路由时直接失败，不会携带 Authorization 从浏览器请求第三方 URL。
 
 - models：相对路径 `POST /api/backends/chat-completions/status`；
 - completions：相对路径 `POST /api/backends/chat-completions/generate`；
 - 每次实时复用最上层可访问的 ST 页面 `getContext().getRequestHeaders()`（兼容页面 getter），使用该窗口的 fetch 和同源 cookie；不缓存 headers/token，不伪造 CSRF，不发送仅有 Content-Type 的代理请求；
-- 请求体使用 `chat_completion_source: custom`、保留原路径的 `custom_url`、JSON 格式的 `custom_include_headers`（ST 的 YAML 解析器兼容 JSON），以及 model/messages/temperature/输出上限；测试连接也调用实际生成的 `complete()`；
+- 请求体使用 `chat_completion_source: custom`、保留原路径的 `custom_url`、JSON 格式的 `custom_include_headers`（ST 的 YAML 解析器兼容 JSON），以及 model/messages/temperature/输出上限；`response_format`、thinking 等兼容字段同时通过 `custom_include_body` 交给 ST 服务端合并；测试连接也调用实际生成的 `complete()`；
 - 输出上限参数可选择 `max_tokens` 或 `max_completion_tokens`。收到明确的 max_tokens 参数拒绝时，统一生成函数会改用后者再试一次，不移除输出限制。
 
 例如火山 base `https://ark.cn-beijing.volces.com/api/coding/v3` 的目标为 `/api/coding/v3/models` 与 `/api/coding/v3/chat/completions`，不会追加 `/v1`。独立记忆请求不会修改 ST 主聊天的接口配置、模型或历史。
 
-失败显示目标 URL、代理 HTTP、可获得的上游 HTTP、响应前 500 字和 fetch 异常；direct 的网络失败提示可能是 CORS/网络限制。ST 的部分版本用 HTTP 200 包装 `{error: ...}`，且不透传上游状态/原始响应；插件会识别为失败并明确显示“上游未提供”，不编造 HTTP 状态。此时需查看 ST 服务端日志获得上游原始错误。console 中的响应和异常先脱敏再截断；请求头仅打印 getter 是否找到、获取是否成功及 key 列表，API Key、header value 和 CSRF token 不输出。
+失败显示目标 URL、代理 HTTP、可获得的上游 HTTP、错误分类、响应前 500 字和 fetch 异常。ST 的部分版本用 HTTP 200 包装 `{error: ...}`，且不透传上游状态/原始响应；插件会识别为失败并明确显示“上游未提供”，不编造 HTTP 状态。此时需查看 ST 服务端日志获得上游原始错误。console 中的响应和异常先脱敏再截断；请求头仅打印 getter 是否找到、获取是否成功及 key 列表，API Key、header value 和 CSRF token 不输出。
 
 API 密钥仍仅存当前浏览器 `localStorage` 项 `cache_memory_api_key_v1`，不进入记忆导出或扩展设置。它不是安全密钥库，同源脚本可以读取。ST 代理成功不要求第三方 API 开放浏览器 CORS。
 
-## 冻结边界与长期连续性（1.5.0）
+## 冻结边界与长期连续性（1.5.1）
 
 新安装默认 **严格缓存模式开启 / 不注入 / Checkpoint 5 层 / Long Memory 50 层**。已有自定义间隔、长度、提示词和旧聊天记忆保留；若旧设置为 10/100，需自行改为 5/50。只让主模型读取最近约 5 层正文时，建议选择 **Checkpoint 边界**，而非保持不注入。Long 间隔会向上对齐为 CP 间隔的整数倍。
 

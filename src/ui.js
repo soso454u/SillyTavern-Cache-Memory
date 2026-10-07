@@ -1,8 +1,8 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.5.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.5.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, LEGACY_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.5.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.5.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.5.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.5.1';
+import { effectiveInjectionMode } from './cache-control.js?v=1.5.1';
+import { API_PROVIDERS, DEFAULT_PROMPTS, LEGACY_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.5.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.5.1';
+import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.5.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -23,20 +23,18 @@ export function formatModelListFailure(result) {
     const lines = [
         '模型列表获取失败',
         `URL: ${diagnostics.endpoint || '未知'}`,
-        `状态: ${diagnostics.direct || '未知'}`,
+        `状态: ${diagnostics.upstream && !diagnostics.upstream.startsWith('未提供') ? diagnostics.upstream : diagnostics.proxy || '未知'}`,
     ];
-    if (diagnostics.directBody) lines.push(`响应（前 500 字）: ${diagnostics.directBody}`);
-    if (diagnostics.directException) lines.push(`错误: ${diagnostics.directException}`);
-    lines.push(diagnostics.suspectedCors
-        ? '疑似 CORS: 是（可能是 CORS 或网络限制，浏览器无法确定）'
-        : '疑似 CORS: 否（未检测到相关迹象）');
+    const responseBody = diagnostics.proxyBody || diagnostics.directBody;
+    const exception = diagnostics.proxyException || diagnostics.directException;
+    if (responseBody) lines.push(`响应（前 500 字）: ${responseBody}`);
+    if (exception) lines.push(`错误: ${exception}`);
+    lines.push('疑似 CORS: 否（请求由 SillyTavern 同源后端转发）');
     if (diagnostics.proxyEndpoint) lines.push(`代理 URL: ${diagnostics.proxyEndpoint}`);
     if (diagnostics.proxy && diagnostics.proxy !== '未请求') lines.push(`代理状态: ${diagnostics.proxy}`);
-    if (diagnostics.proxyBody) lines.push(`代理响应（前 500 字）: ${diagnostics.proxyBody}`);
-    if (diagnostics.proxyException) lines.push(`代理错误: ${diagnostics.proxyException}`);
     const repeatedBody = /^HTTP \d+:/.test(result?.error ?? '')
         && [diagnostics.directBody, diagnostics.proxyBody].some(body => body && result.error.endsWith(body));
-    if (result?.error && !repeatedBody && result.error !== diagnostics.directException && result.error !== diagnostics.proxyException) {
+    if (result?.error && !repeatedBody && result.error !== exception) {
         lines.push(`错误: ${result.error}`);
     }
     return lines.join('\n');
@@ -44,10 +42,15 @@ export function formatModelListFailure(result) {
 
 export function formatConnectionFailure(error) {
     const d = error.diagnostics ?? {};
-    const source = d.direct !== '未请求' && d.direct ? 'direct' : 'proxy';
+    const upstream = String(d.upstream || '未提供').replace(/^HTTP\s+/i, '');
+    const categoryLabels = {
+        authentication_error: 'API Key / 鉴权错误', permission_error: '权限错误', endpoint_error: 'Endpoint / 路径错误',
+        rate_limit_error: '限流', upstream_error: '上游服务异常', timeout: '请求超时',
+        proxy_error: 'SillyTavern 后端代理错误', network_error: '服务端网络错误', cancelled: '请求已取消',
+    };
     return ['连接失败', `URL: ${d.endpoint || '未知'}`, `代理状态：${d.proxy || '未请求'}`,
-        `上游 HTTP：${d.upstream || '未提供'}`, `响应前 500 字：${d[`${source}Body`] || '无可读取响应'}`,
-        `错误：${error.message}`, ...(d.suspectedCors ? ['可能是 CORS 或网络限制（浏览器无法确定）'] : [])].join('\n');
+        `上游 HTTP：${upstream}`, `错误类型：${categoryLabels[error.category] || '未知错误'}`,
+        `响应前 500 字：${d.proxyBody || '无可读取响应'}`, `错误：${error.message}`].join('\n');
 }
 
 function settingsHost(doc) {
@@ -138,7 +141,7 @@ function configTemplate() {
                             <button type="button" class="menu_button" data-clear-api-key><i class="fa-solid fa-trash"></i> 清除密钥</button>
                         </div>
                         <small class="cache-memory-key-state" data-api-key-state></small>
-                        <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。优先由 SillyTavern 服务端请求；仅代理不可用时尝试浏览器直连。</small>
+                        <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。所有第三方模型请求均由 SillyTavern 同源后端转发，浏览器不会跨域直连。</small>
                         <small class="cache-memory-help">模型输入框支持手动填写和下拉选择；获取列表失败时不会影响手动填写与测试连接。</small>
                     </section>
 
@@ -191,7 +194,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.5.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.5.1', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 

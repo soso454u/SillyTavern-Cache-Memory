@@ -1,4 +1,4 @@
-# Prompt Cache 专项审计（1.5.0，本地未提交）
+# Prompt Cache 专项审计（1.5.1，本地未提交）
 
 审计对象：`index.js`、`src/api-client.js`、`src/injection.js`、`src/cache-control.js`、`src/memory-store.js`、`src/summarizer.js`、`src/continuity.js`、`src/ui.js`、`src/utils.js` 与默认设置。主模型缓存优先于记忆丰富度。
 
@@ -37,7 +37,7 @@
 
 ## 网络实现与上游错误限制
 
-统一 `requestOpenAICompatible()`，models/test/Summary/CP/Long 都复用同一个 live CSRF getter、ST window.fetch、credentials 和 base normalization。native proxy 优先，仅没有 ST 或明确路由不存在的 404/405 时 direct；403、网络中断、超时和上游错误不触发可能重复计费的 direct 生成。
+统一 `requestOpenAICompatible()`，models/test/Summary/CP/Long 都复用同一个 live CSRF getter、ST window.fetch、credentials 和 base normalization。浏览器只允许访问 ST 的相对代理路径；没有 ST、没有有效 CSRF 或代理路由不存在时失败关闭，不再 direct 请求第三方 API。
 
 核对的官方实现：
 
@@ -64,7 +64,7 @@ Cache Debug 仅在启用时读主 RP 的发送前事件；独立记忆 API 不�
 
 ## 已完成验证
 
-- `npm run check`、`npm test`：统一运输、活 CSRF、secret 脱敏、代理200错误、403禁止direct重试、body阶段取消、两种输出上限；严格模式1–4/6–9 hash、CP追加、Long覆盖CP但存档保留、已发布字节保护、失败重试、reload恢复、debug LCP。
+- `npm run check`、`npm test`：统一运输、活 CSRF、secret 脱敏、代理200错误、任何失败都禁止direct、body阶段取消、两种输出上限及兼容请求体；严格模式1–4/6–9 hash、CP追加、Long覆盖CP但存档保留、已发布字节保护、失败重试、reload恢复、debug LCP。
 - 完整105层后台测试：105 Summary、21 CP、2段 Long（1–50、51–100），主聊天对象深度比对不变；自动边界共21次刷新，50/100的双提交合并。
 - 浏览器 UI 验证：1280×900桌面、390×844手机、180×90同源iframe的父级挂载、长错误滚动、已填模型的完整下拉选择、拖动松手清理、卸载后modal/style/scrollLock归零、重新挂载无重复。
 - cross-origin parent 安全fallback与 visualViewport 参数有单元测试；100次 pointermove只测一次布局、只排队一个frame。

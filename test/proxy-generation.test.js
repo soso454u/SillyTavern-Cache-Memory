@@ -49,6 +49,40 @@ test('Ark models, test and a real floor summarizer share ST transport, fresh CSR
     assert.doesNotMatch(JSON.stringify(logs), /private-ark-key|csrf-1|csrf-2|csrf-3|正文/);
 });
 
+test('manual summary, automatic summary, checkpoint and long memory all use the same ST generate route', async t => {
+    const { client, requests, root, settings } = fixture(t);
+    Object.assign(settings, { enabled: true, autoSummarize: true, independentApi: true, checkpointInterval: 2, longMemoryInterval: 2 });
+    root.fetch = async (url, options) => {
+        requests.push({ url, options });
+        if (url.endsWith('/status')) return new Response('{"data":[{"id":"ark-test-model"}]}');
+        const system = JSON.parse(options.body).messages?.[0]?.content ?? '';
+        if (system.includes('[CHECKPOINT]')) return new Response(JSON.stringify({ choices: [{ message: { content: '[CHECKPOINT]\n[Current State]\n状态已冻结' } }] }));
+        if (system.includes('[LONG_MEMORY]')) return new Response(JSON.stringify({ choices: [{ message: { content: '[LONG_MEMORY]\n- 【人物｜状态】长期事实。' } }] }));
+        return new Response(JSON.stringify({ choices: [{ message: { content: '[SUMMARY]\n[Event]\n新增事实\n[State]\n状态\n[Open]\n无\n[KEEP]\n无' } }] }));
+    };
+    await client.listModels();
+    await client.test();
+    const metadata = {};
+    const chat = [{ is_user: true, mes: 'U1' }, { is_user: false, name: 'A', mes: 'A1', gen_started: '1', send_date: '1' }];
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'chat-a', saveMetadata: () => {} });
+    const summarizer = new MemorySummarizer({ store, apiClient: client, getSettings: () => settings, getChat: () => chat });
+    await summarizer.summarizeMessage(getAssistantMessages(chat)[0].messageId);
+    chat.push({ is_user: true, mes: 'U2' }, { is_user: false, name: 'A', mes: 'A2', gen_started: '2', send_date: '2' });
+    await summarizer.summarizeLatest();
+    assert.equal(Object.keys(store.current().summaries).length, 2);
+    assert.equal(store.current().checkpoints.length, 1);
+    assert.equal(store.current().longMemories.length, 1);
+    assert.deepEqual(requests.map(item => item.url), [
+        '/api/backends/chat-completions/status',
+        '/api/backends/chat-completions/generate',
+        '/api/backends/chat-completions/generate',
+        '/api/backends/chat-completions/generate',
+        '/api/backends/chat-completions/generate',
+        '/api/backends/chat-completions/generate',
+    ]);
+    assert.ok(requests.every(({ options }) => JSON.parse(options.body).custom_url === settings.apiBaseUrl));
+});
+
 test('proxy HTTP200 error is a failure, upstream status is not invented, all secret values are redacted', async t => {
     const { client, root, logs } = fixture(t);
     root.fetch = async () => new Response('{"error":{"message":"Forbidden private-ark-key csrf-1"}}');
@@ -62,29 +96,34 @@ test('proxy HTTP200 error is a failure, upstream status is not invented, all sec
     });
 });
 
-test('proxy 403 and network failures never trigger direct duplicate generation; missing route can fall back', async t => {
+test('connection failures expose authentication, permission, endpoint, rate-limit and upstream categories', async t => {
+    const { client, root } = fixture(t);
+    for (const [status, category] of [[401, 'authentication_error'], [403, 'permission_error'], [404, 'endpoint_error'], [429, 'rate_limit_error'], [503, 'upstream_error']]) {
+        root.fetch = async () => new Response(JSON.stringify({ error: { status, message: `upstream ${status}` } }));
+        await assert.rejects(client.test(), error => error.category === category
+            && error.diagnostics.upstream === `HTTP ${status}`
+            && formatConnectionFailure(error).includes(`上游 HTTP：${status}`));
+    }
+});
+
+test('proxy 403, network failures and a missing route all fail closed without direct generation', async t => {
     const { client, root } = fixture(t);
     root.fetch = async () => new Response('Invalid CSRF token', { status: 403 });
     await assert.rejects(client.test(), /HTTP 403/);
     root.fetch = async () => { throw new TypeError('Failed to fetch'); };
     await assert.rejects(client.test(), /Failed to fetch/);
     root.fetch = async () => new Response('Cannot POST /api/backends/chat-completions/generate', { status: 404 });
-    let called = 0;
-    t.mock.method(globalThis, 'fetch', async (url, options) => {
-        called++;
-        assert.equal(url, 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions');
-        assert.equal(options.headers.Authorization, 'Bearer private-ark-key');
-        return new Response('{"choices":[{"message":{"content":"OK"}}]}');
-    });
-    assert.equal((await client.test()).source, 'direct');
-    assert.equal(called, 1);
+    await assert.rejects(client.test(), error => error.code === 'ST_PROXY_ROUTE_MISSING'
+        && error.category === 'proxy_error'
+        && error.diagnostics.direct === '已禁用');
 });
 
-test('absent ST permits direct fallback with clear CORS diagnostics; broken ST headers fail closed', async t => {
+test('absent ST and broken ST headers both fail closed before any third-party request', async t => {
     const { client, root } = fixture(t);
     setGlobal(t, 'parent', null);
-    t.mock.method(globalThis, 'fetch', async () => { throw new TypeError('Failed to fetch'); });
-    await assert.rejects(client.test(), error => error.diagnostics.suspectedCors && /可能是 CORS/.test(formatConnectionFailure(error)));
+    await assert.rejects(client.test(), error => error.category === 'proxy_error'
+        && error.diagnostics.direct === '已禁用'
+        && !/CORS/.test(formatConnectionFailure(error)));
     setGlobal(t, 'parent', root);
     root.SillyTavern.getContext = () => ({});
     await assert.rejects(client.test(), /无法获取 SillyTavern CSRF 请求头/);
@@ -116,6 +155,22 @@ test('a selected max_completion_tokens budget is forwarded by both actual genera
     assert.equal(bodies[0].max_completion_tokens, 64);
     assert.equal(bodies[1].max_completion_tokens, 32);
     assert.ok(bodies.every(body => !Object.hasOwn(body, 'max_tokens')));
+});
+
+test('OpenAI-compatible response_format and thinking fields survive the ST transport', async t => {
+    const { client, requests } = fixture(t);
+    await client.complete({
+        messages: [{ role: 'user', content: 'structured' }], maxTokens: 64,
+        response_format: { type: 'json_object' }, thinking: { type: 'enabled' }, enable_thinking: true,
+        top_p: 0.8, extraBody: { provider_extension: 'kept' },
+    });
+    const body = JSON.parse(requests[0].options.body);
+    assert.deepEqual(body.messages, [{ role: 'user', content: 'structured' }]);
+    assert.deepEqual(body.response_format, { type: 'json_object' });
+    assert.deepEqual(JSON.parse(body.custom_include_body), {
+        provider_extension: 'kept', response_format: { type: 'json_object' }, thinking: { type: 'enabled' },
+        enable_thinking: true, top_p: 0.8,
+    });
 });
 
 test('an upstream-style JSON404 is not a missing-route fallback; unreadable404 errors are sanitized', async t => {

@@ -86,8 +86,32 @@ function errorText(error) {
     return String(error?.message ?? error ?? 'Unknown error');
 }
 
-function isNetworkFailure(error) {
-    return /failed to fetch|load failed|networkerror|network error|cors|cross[- ]origin/i.test(errorText(error));
+const CUSTOM_BODY_KEYS = [
+    'response_format', 'thinking', 'enable_thinking', 'reasoning_effort',
+    'top_p', 'top_k', 'min_p', 'presence_penalty', 'frequency_penalty', 'repetition_penalty',
+    'seed', 'stop', 'tools', 'tool_choice', 'parallel_tool_calls', 'logit_bias', 'n', 'user',
+];
+const ST_NATIVE_BODY_KEYS = new Set(['model', 'messages', 'temperature', 'max_tokens', 'max_completion_tokens', 'stream']);
+
+function classifyFailure(status, message, code, proxyRouteMissing = false) {
+    if (code === 'REQUEST_TIMEOUT') return 'timeout';
+    if (code === 'REQUEST_ABORTED') return 'cancelled';
+    if (code === 'ST_PROXY_UNAVAILABLE' || code === 'ST_PROXY_ROUTE_MISSING' || code === 'ST_PROXY_HTTP_ERROR' || proxyRouteMissing) return 'proxy_error';
+    const numericStatus = Number(status);
+    if (numericStatus === 401) return 'authentication_error';
+    if (numericStatus === 403) return 'permission_error';
+    if (numericStatus === 404) return 'endpoint_error';
+    if (numericStatus === 429) return 'rate_limit_error';
+    if (numericStatus >= 500) return 'upstream_error';
+    const detail = String(message ?? '');
+    if (/\bunauthori[sz]ed\b|invalid (?:api )?key|authentication/i.test(detail)) return 'authentication_error';
+    if (/\bforbidden\b|permission denied/i.test(detail)) return 'permission_error';
+    if (/\bnot found\b|unknown endpoint/i.test(detail)) return 'endpoint_error';
+    if (/too many requests|rate.?limit/i.test(detail)) return 'rate_limit_error';
+    if (/internal server error|bad gateway|service unavailable|gateway timeout/i.test(detail)) return 'upstream_error';
+    if (/request timeout|timed out/i.test(detail)) return 'timeout';
+    if (/econn|enotfound|etimedout|socket|network|fetch failed|failed to fetch|load failed/i.test(detail)) return 'network_error';
+    return 'proxy_error';
 }
 
 function sillyTavernWindows() {
@@ -176,16 +200,13 @@ export class SummaryApiClient {
         this.activeControllers.clear();
     }
 
-    headers(apiKeyOverride = '') {
-        const apiKey = String(apiKeyOverride || this.storage.getItem(this.storageKey) || '').trim();
-        return {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        };
-    }
-
     async fetchResponse(url, options = {}, fetchContext = globalThis) {
+        if (!String(url).startsWith('/api/backends/chat-completions/')) {
+            console.warn('[Cache Memory] blocked direct cross-origin API request');
+            const blocked = new Error('已阻止浏览器直接请求第三方 API；请使用 SillyTavern 后端代理');
+            blocked.code = 'DIRECT_CROSS_ORIGIN_BLOCKED';
+            throw blocked;
+        }
         const settings = this.getSettings();
         const controller = new AbortController();
         this.activeControllers.add(controller);
@@ -213,18 +234,27 @@ export class SummaryApiClient {
         }
     }
 
-    buildPayload({ systemPrompt, userContent, maxTokens }) {
+    buildPayload(request = {}) {
         const settings = this.getSettings();
         if (!settings.apiBaseUrl) throw new Error('请先填写接口地址');
         if (!settings.model) throw new Error('请先填写摘要模型');
+        const { systemPrompt, userContent, maxTokens, messages, extraBody, ...compatibility } = request;
+        const payload = {};
+        if (extraBody && typeof extraBody === 'object' && !Array.isArray(extraBody)) Object.assign(payload, extraBody);
+        for (const key of CUSTOM_BODY_KEYS) {
+            if (compatibility[key] !== undefined) payload[key] = compatibility[key];
+        }
+        const tokenParameter = settings.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens';
+        const explicitTokenLimit = request.max_completion_tokens ?? request.max_tokens ?? maxTokens;
         return {
+            ...payload,
             model: settings.model,
-            messages: [
+            messages: Array.isArray(messages) ? messages : [
                 { role: 'system', content: String(systemPrompt ?? '') },
                 { role: 'user', content: String(userContent ?? '') },
             ],
-            temperature: Number(settings.temperature),
-            [settings.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens']: Number(maxTokens ?? settings.maxTokens),
+            temperature: Number(request.temperature ?? settings.temperature),
+            [tokenParameter]: Number(explicitTokenLimit ?? settings.maxTokens),
             stream: false,
         };
     }
@@ -237,106 +267,91 @@ export class SummaryApiClient {
         const path = kind === 'models' ? ST_MODELS_PROXY_PATH : ST_GENERATE_PROXY_PATH;
         const secrets = [apiKey];
         const diagnostics = {
-            endpoint: safeText(safeUrl(endpoint), secrets, Infinity), direct: '未请求', directBody: '',
+            endpoint: safeText(safeUrl(endpoint), secrets, Infinity), direct: '已禁用', directBody: '',
             directException: '', suspectedCors: false, proxy: '未请求', proxyEndpoint: path,
             proxyBody: '', proxyException: '', upstream: '未提供（ST 代理可能不透传上游状态）',
         };
-        const fail = (message, code) => {
+        const fail = (message, code, status, proxyRouteMissing = false) => {
             const error = new Error(safeText(message, secrets, 1000));
             error.code = code;
+            error.category = classifyFailure(status, error.message, code, proxyRouteMissing);
             error.diagnostics = { ...diagnostics };
             console.warn('[Cache Memory] AI request failed:', error.diagnostics, error.message);
             return error;
         };
         if (!endpoint) { diagnostics.direct = '未请求：请先填写接口地址'; throw fail('请先填写接口地址'); }
+        console.info('[Cache Memory] transport: sillytavern-backend');
+        console.info('[Cache Memory] operation:', kind === 'models' ? 'models' : 'chat-completions');
+        console.info('[Cache Memory] upstream base:', safeText(safeUrl(normalizeApiBaseUrl(settings.apiBaseUrl)), secrets, Infinity));
         let context;
         try { context = getStRequestContext(); }
         catch (error) {
             diagnostics.proxy = '不可用';
             diagnostics.proxyException = safeText(errorText(error), secrets);
-            if (error.code !== 'ST_PROXY_UNAVAILABLE') throw fail(error.message, error.code);
+            throw fail(error.message, error.code || 'ST_PROXY_UNAVAILABLE');
         }
-        const consume = async (response, source) => {
-            diagnostics[source] = `HTTP ${response.status}`;
-            if (source === 'direct') {
-                diagnostics.endpoint = safeText(safeUrl(response.url || endpoint), secrets, Infinity);
-                diagnostics.upstream = `HTTP ${response.status}`;
-            } else {
-                diagnostics.proxyEndpoint = safeText(safeUrl(response.url || diagnostics.proxyEndpoint), secrets, Infinity);
-            }
+        const consume = async response => {
+            diagnostics.proxy = `HTTP ${response.status}`;
+            diagnostics.proxyEndpoint = safeText(safeUrl(response.url || diagnostics.proxyEndpoint), secrets, Infinity);
             let raw;
             try { raw = await response.text(); }
-            catch (error) { diagnostics[`${source}Exception`] = safeText(errorText(error), secrets); throw fail(error.message, error.code); }
-            diagnostics[`${source}Body`] = safeText(raw, secrets);
+            catch (error) { diagnostics.proxyException = safeText(errorText(error), secrets); throw fail(error.message, error.code, response.status); }
+            diagnostics.proxyBody = safeText(raw, secrets);
+            const proxyRouteMissing = response.status === 405
+                || /Cannot POST\s+\/api\/backends\/chat-completions\/(status|generate)/i.test(raw);
+            if (proxyRouteMissing) {
+                const error = new Error(`SillyTavern 后端代理路由不可用：${path}`);
+                error.code = 'ST_PROXY_ROUTE_MISSING';
+                throw fail(error.message, error.code, response.status, true);
+            }
             let data;
             try { data = raw ? JSON.parse(raw) : {}; }
             catch {
-                if (!response.ok) throw fail(`HTTP ${response.status}: ${diagnostics[`${source}Body`] || response.statusText}`);
+                if (!response.ok) throw fail(`HTTP ${response.status}: ${diagnostics.proxyBody || response.statusText}`, 'ST_PROXY_HTTP_ERROR', response.status);
                 throw fail('响应不是有效 JSON');
             }
             const upstreamStatus = data?.upstream_status ?? data?.error?.status ?? data?.error?.status_code;
-            if (source === 'proxy' && Number.isInteger(Number(upstreamStatus)) && Number(upstreamStatus) > 0) {
+            if (Number.isInteger(Number(upstreamStatus)) && Number(upstreamStatus) > 0) {
                 diagnostics.upstream = `HTTP ${Number(upstreamStatus)}`;
+            } else if (response.ok && !data?.error) {
+                diagnostics.upstream = 'HTTP 200';
             }
-            console.info('[Cache Memory] AI request:', { kind, source, ...diagnostics });
+            console.info('[Cache Memory] upstream status:', diagnostics.upstream);
             if (!response.ok || data?.error) {
                 const detail = typeof data?.error === 'string' ? data.error : data?.error?.message ?? data?.message;
-                throw fail(detail || `HTTP ${response.status}: ${diagnostics[`${source}Body`] || response.statusText}`);
+                const code = !response.ok && !upstreamStatus ? 'ST_PROXY_HTTP_ERROR' : undefined;
+                throw fail(detail || `HTTP ${response.status}: ${diagnostics.proxyBody || response.statusText}`, code, upstreamStatus);
             }
-            return { data, response, diagnostics, source };
+            return { data, response, diagnostics, source: 'proxy' };
         };
-        if (context) {
-            const { root, headers } = context;
-            // Header values never enter a diagnostic. Include all returned values in the redactor.
-            secrets.push(...headers.values());
-            diagnostics.proxyEndpoint = safeText(safeUrl(new URL(path, root.location?.href || root.location?.origin).toString()), secrets, Infinity);
-            const proxyPayload = {
-                ...payload, chat_completion_source: 'custom',
-                custom_url: normalizeApiBaseUrl(settings.apiBaseUrl),
-                custom_include_headers: JSON.stringify({ Authorization: apiKey ? `Bearer ${apiKey}` : '' }),
-                ...(kind === 'completion' ? { stream: false, custom_prompt_post_processing: '' } : {}),
-            };
-            let response;
-            try {
-                response = await this.fetchResponse(path, {
-                    method: 'POST', headers, credentials: 'same-origin', body: JSON.stringify(proxyPayload),
-                }, root);
-            } catch (error) {
-                diagnostics.proxy = '未收到 HTTP 响应';
-                diagnostics.proxyException = safeText(errorText(error), secrets);
-                // A network failure after sending is not proof of an unavailable route; avoid duplicate generation.
-                throw fail(error.message, error.code);
-            }
-            if (![404, 405].includes(response.status)) return consume(response, 'proxy');
-            let raw;
-            try { raw = await response.text(); }
-            catch (error) {
-                diagnostics.proxy = `HTTP ${response.status}`;
-                diagnostics.proxyException = safeText(errorText(error), secrets);
-                throw fail(error.message, error.code);
-            }
-            // A returned upstream 404 is not proof that the local ST route is missing.
-            const missingRoute = response.status === 405 || /Cannot POST\s+\/api\/backends\/chat-completions\/(status|generate)/i.test(raw);
-            if (!missingRoute) {
-                response.text = async () => raw;
-                return consume(response, 'proxy');
-            }
-            diagnostics.proxy = `HTTP ${response.status}（ST 路由不可用）`;
-            diagnostics.proxyBody = safeText(raw, secrets);
-        }
+        const { root, headers } = context;
+        // Header values never enter a diagnostic. Include all returned values in the redactor.
+        secrets.push(...headers.values());
+        diagnostics.proxyEndpoint = safeText(safeUrl(new URL(path, root.location?.href || root.location?.origin).toString()), secrets, Infinity);
+        const customBody = Object.fromEntries(Object.entries(payload ?? {})
+            .filter(([key, value]) => !ST_NATIVE_BODY_KEYS.has(key) && value !== undefined));
+        const proxyPayload = {
+            ...payload, chat_completion_source: 'custom',
+            custom_url: normalizeApiBaseUrl(settings.apiBaseUrl),
+            custom_include_headers: JSON.stringify({ Authorization: apiKey ? `Bearer ${apiKey}` : '' }),
+            ...(kind === 'completion' ? {
+                stream: false,
+                custom_prompt_post_processing: '',
+                ...(Object.keys(customBody).length ? { custom_include_body: JSON.stringify(customBody) } : {}),
+            } : {}),
+        };
+        let response;
         try {
-            const response = await this.fetchResponse(endpoint, {
-                method: kind === 'models' ? 'GET' : 'POST', headers: this.headers(apiKey),
-                ...(kind === 'completion' ? { body: JSON.stringify(payload) } : {}),
-            });
-            return await consume(response, 'direct');
+            response = await this.fetchResponse(path, {
+                method: 'POST', headers, credentials: 'same-origin', body: JSON.stringify(proxyPayload),
+            }, root);
         } catch (error) {
             if (error.diagnostics) throw error;
-            if (diagnostics.direct === '未请求') diagnostics.direct = '未收到 HTTP 响应';
-            diagnostics.directException = safeText(errorText(error), secrets);
-            diagnostics.suspectedCors = diagnostics.direct === '未收到 HTTP 响应' && isNetworkFailure(error);
+            diagnostics.proxy = '未收到 HTTP 响应';
+            diagnostics.proxyException = safeText(errorText(error), secrets);
             throw fail(error.message, error.code);
         }
+        return consume(response);
     }
 
     async complete(request) {

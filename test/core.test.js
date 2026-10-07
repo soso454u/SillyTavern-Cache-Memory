@@ -279,7 +279,7 @@ test('late summary response is discarded after switching chats', async () => {
     assert.equal(Object.keys(store.current().summaries).length, 0);
 });
 
-test('independent API client posts directly with its own browser-stored bearer key', async () => {
+test('independent API client sends its browser-stored key only through the same-origin ST backend', async () => {
     const values = new Map([['key', 'private-key']]);
     const storage = {
         getItem: key => values.get(key) ?? null,
@@ -289,55 +289,71 @@ test('independent API client posts directly with its own browser-stored bearer k
     const settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1/', model: 'small-model' });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
     const originalFetch = globalThis.fetch;
+    const originalParent = globalThis.parent;
     let request;
-    globalThis.fetch = async (url, options) => {
-        request = { url, options };
-        return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), { status: 200 });
+    globalThis.parent = {
+        location: { href: 'https://st.example/chat' },
+        getRequestHeaders: () => ({ 'X-CSRF-Token': 'csrf' }),
+        fetch: async (url, options) => {
+            request = { url, options };
+            return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), { status: 200 });
+        },
     };
+    globalThis.fetch = async () => assert.fail('browser must not request a third-party API');
     try {
         const result = await client.complete({ systemPrompt: 'system', userContent: 'body' });
         assert.equal(result.content, 'OK');
-        assert.equal(request.url, 'https://example.com/v1/chat/completions');
-        assert.equal(request.options.headers.Authorization, 'Bearer private-key');
+        assert.equal(request.url, '/api/backends/chat-completions/generate');
+        assert.equal(request.options.headers.has('Authorization'), false);
         const payload = JSON.parse(request.options.body);
+        assert.equal(JSON.parse(payload.custom_include_headers).Authorization, 'Bearer private-key');
         assert.equal(payload.model, 'small-model');
         assert.deepEqual(payload.messages.map(item => item.role), ['system', 'user']);
     } finally {
         globalThis.fetch = originalFetch;
+        if (originalParent === undefined) delete globalThis.parent;
+        else globalThis.parent = originalParent;
     }
 });
 
-test('model listing reads OpenAI responses and never injects provider-specific presets', async () => {
+test('model listing reads proxied OpenAI responses and never injects provider-specific presets', async () => {
     const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
     let settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'test-model' });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({ data: [{ id: 'model-b' }, { id: 'model-a' }] }), { status: 200 });
+    const originalParent = globalThis.parent;
+    const root = {
+        location: { href: 'https://st.example/chat' },
+        getRequestHeaders: () => ({ 'X-CSRF-Token': 'csrf' }),
+        fetch: async () => new Response(JSON.stringify({ data: [{ id: 'model-b' }, { id: 'model-a' }] }), { status: 200 }),
+    };
+    globalThis.parent = root;
+    globalThis.fetch = async () => assert.fail('browser must not request a third-party API');
     try {
         const remote = await client.listModels();
         assert.deepEqual(remote.models, ['model-a', 'model-b']);
-        assert.equal(remote.source, 'direct');
+        assert.equal(remote.source, 'proxy');
 
         settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'my-custom-model' });
-        globalThis.fetch = async () => new Response('not found', { status: 404 });
-        const fallback = await client.listModels();
-        assert.equal(fallback.source, 'unavailable');
-        assert.deepEqual(fallback.models, []);
-        assert.equal(fallback.warning, '无法获取模型列表，请手动填写模型名称。');
-        assert.match(fallback.diagnostics.direct, /HTTP 404/);
-        assert.equal(fallback.diagnostics.directBody, 'not found');
-        assert.equal(fallback.diagnostics.directException, '');
-        assert.equal(fallback.diagnostics.suspectedCors, false);
+        root.fetch = async () => new Response('not found', { status: 404 });
+        const failure = await client.listModels();
+        assert.equal(failure.source, 'unavailable');
+        assert.deepEqual(failure.models, []);
+        assert.equal(failure.warning, '无法获取模型列表，请手动填写模型名称。');
+        assert.match(failure.diagnostics.proxy, /HTTP 404/);
+        assert.equal(failure.diagnostics.proxyBody, 'not found');
         assert.equal(settings.model, 'my-custom-model');
 
-        globalThis.fetch = async () => new Response(JSON.stringify({ data: { invalid: true } }), { status: 200 });
+        root.fetch = async () => new Response(JSON.stringify({ data: { invalid: true } }), { status: 200 });
         const malformed = await client.listModels();
         assert.equal(malformed.source, 'unavailable');
         assert.equal(malformed.warning, '无法获取模型列表，请手动填写模型名称。');
-        assert.match(malformed.diagnostics.direct, /未识别模型数组/);
+        assert.match(malformed.diagnostics.proxy, /未识别模型数组/);
         assert.match(malformed.error, /没有可识别的模型数组/);
     } finally {
         globalThis.fetch = originalFetch;
+        if (originalParent === undefined) delete globalThis.parent;
+        else globalThis.parent = originalParent;
     }
 });
 
@@ -368,7 +384,7 @@ test('model listing uses the SillyTavern proxy first without a browser cross-ori
         const result = await client.listModels();
         assert.deepEqual(result.models, ['proxy-model']);
         assert.equal(result.source, 'proxy');
-        assert.equal(result.diagnostics.direct, '未请求');
+        assert.equal(result.diagnostics.direct, '已禁用');
         assert.equal(result.diagnostics.suspectedCors, false);
         assert.equal(result.diagnostics.proxy, 'HTTP 200');
         assert.equal(directRequest, undefined);
@@ -395,16 +411,22 @@ test('connection test switches to max_completion_tokens when max_tokens is expli
     const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x' });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
     const originalFetch = globalThis.fetch;
+    const originalParent = globalThis.parent;
     const requests = [];
-    globalThis.fetch = async (url, options) => {
-        requests.push({ url, payload: JSON.parse(options.body) });
-        if (requests.length === 1) return new Response(JSON.stringify({ error: { message: 'Unsupported parameter max_tokens' } }), { status: 400 });
-        return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), { status: 200 });
+    globalThis.parent = {
+        location: { href: 'https://st.example/chat' },
+        getRequestHeaders: () => ({ 'X-CSRF-Token': 'csrf' }),
+        fetch: async (url, options) => {
+            requests.push({ url, payload: JSON.parse(options.body) });
+            if (requests.length === 1) return new Response(JSON.stringify({ error: { message: 'Unsupported parameter max_tokens' } }));
+            return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), { status: 200 });
+        },
     };
+    globalThis.fetch = async () => assert.fail('browser must not request a third-party API');
     try {
         const result = await client.test();
         assert.equal(result.ok, true);
-        assert.equal(requests[0].url, 'https://example.com/v1/chat/completions');
+        assert.equal(requests[0].url, '/api/backends/chat-completions/generate');
         assert.equal(requests[0].payload.max_tokens, 32);
         assert.equal(requests[0].payload.messages.at(-1).content, 'Hi');
         assert.equal(requests[1].payload.max_completion_tokens, 32);
@@ -412,6 +434,8 @@ test('connection test switches to max_completion_tokens when max_tokens is expli
         assert.equal(requests[1].payload.temperature, 0.2);
     } finally {
         globalThis.fetch = originalFetch;
+        if (originalParent === undefined) delete globalThis.parent;
+        else globalThis.parent = originalParent;
     }
 });
 
@@ -420,14 +444,22 @@ test('hot unload cancellation is distinguishable from an API timeout', async () 
     const settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'test-model' });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (_url, options) => new Promise((_resolve, reject) => {
-        options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
-    });
+    const originalParent = globalThis.parent;
+    globalThis.parent = {
+        location: { href: 'https://st.example/chat' },
+        getRequestHeaders: () => ({ 'X-CSRF-Token': 'csrf' }),
+        fetch: async (_url, options) => new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        }),
+    };
+    globalThis.fetch = async () => assert.fail('browser must not request a third-party API');
     try {
         const pending = client.complete({ systemPrompt: 'system', userContent: 'body' });
         client.abortAll();
         await assert.rejects(pending, error => error.code === 'REQUEST_ABORTED');
     } finally {
         globalThis.fetch = originalFetch;
+        if (originalParent === undefined) delete globalThis.parent;
+        else globalThis.parent = originalParent;
     }
 });
