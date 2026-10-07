@@ -27,6 +27,10 @@ test('fresh defaults are strict, no injection, CP5/Long50; existing custom inter
     assert.equal(settings.injectionMode, INJECTION_MODES.NONE);
     assert.equal(settings.checkpointInterval, 5);
     assert.equal(settings.longMemoryInterval, 50);
+    assert.equal(settings.generationTransport, 'auto');
+    assert.equal(normalizeSettings({ generationTransport: 'stream' }).generationTransport, 'stream');
+    assert.equal(normalizeSettings({ generationTransport: 'non-stream' }).generationTransport, 'non-stream');
+    assert.equal(normalizeSettings({ generationTransport: 'invalid' }).generationTransport, 'auto');
     assert.equal(settings.cacheDebug, false);
     assert.equal(normalizeSettings({ checkpointInterval: 10, longMemoryInterval: 100 }).longMemoryInterval, 100);
 });

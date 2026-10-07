@@ -1,4 +1,4 @@
-export const PLUGIN_VERSION = '1.6.0';
+export const PLUGIN_VERSION = '1.7.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -7,6 +7,12 @@ export const API_KEY_STORAGE_KEY = 'cache_memory_api_key_v1';
 
 export const API_PROVIDERS = Object.freeze({
     OPENAI_COMPATIBLE: 'openai-compatible',
+});
+
+export const GENERATION_TRANSPORTS = Object.freeze({
+    AUTO: 'auto',
+    STREAM: 'stream',
+    NON_STREAM: 'non-stream',
 });
 
 export const INJECTION_MODES = Object.freeze({
@@ -473,6 +479,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     temperature: 0.2,
     maxTokens: 4096,
     tokenLimitParameter: 'max_tokens',
+    generationTransport: GENERATION_TRANSPORTS.AUTO,
     timeoutMs: 180000,
     prompts: DEFAULT_PROMPTS,
 });
@@ -500,6 +507,9 @@ export function normalizeSettings(saved = {}) {
     // Legacy provider values (including Doubao/Ark names) are migrated to the
     // single OpenAI-compatible implementation while preserving URL and model.
     const provider = API_PROVIDERS.OPENAI_COMPATIBLE;
+    const generationTransport = Object.values(GENERATION_TRANSPORTS).includes(source.generationTransport)
+        ? source.generationTransport
+        : GENERATION_TRANSPORTS.AUTO;
 
     return {
         ...DEFAULT_SETTINGS,
@@ -520,6 +530,7 @@ export function normalizeSettings(saved = {}) {
         recentCheckpointCount: Math.round(number(source.recentCheckpointCount, 2, 0, 50)),
         temperature: number(source.temperature, 0.2, 0, 2),
         tokenLimitParameter: source.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens',
+        generationTransport,
         maxTokens: Math.round(number(source.maxTokens, DEFAULT_SETTINGS.maxTokens, 32, 32000)),
         timeoutMs: Math.round(number(source.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 300000)),
         provider,

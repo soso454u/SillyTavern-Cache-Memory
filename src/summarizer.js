@@ -1,5 +1,5 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.6.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.6.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.7.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.7.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');

@@ -2,7 +2,19 @@
 
 面向长篇 RP 的追加式剧情记忆扩展。正常 assistant 回复完成后，通过独立 OpenAI-compatible 接口生成楼层摘要，并增量维护 Checkpoint 世界状态、长期事实档案和 KEEP 不可丢失事项。历史记录保留为冻结快照。
 
-当前版本 **v1.6.0**，扩展栏“缓存记忆”标题和设置弹窗标题均显示版本号。
+当前版本 **v1.7.0**，扩展栏“缓存记忆”标题和设置弹窗标题均显示版本号。
+
+## 流式后台传输
+
+Summary、Checkpoint 与 Long Memory 统一通过 SillyTavern 同源后端的 `POST /api/backends/chat-completions/generate` 调用 OpenAI-compatible 接口。v1.7.0 新增“自动／流式／非流式”三种生成传输模式；默认自动模式优先 `stream:true`，Ark Coding Plan 地址 `https://ark.cn-beijing.volces.com/api/coding/v3` 保持原样并优先流式。
+
+SSE 响应按 `text/event-stream` 读取，通过 `ReadableStream.getReader()` 与 `TextDecoder` 逐块解析 `data:` 事件，直到 `[DONE]`。普通正文从 `choices[0].delta.content` 拼接；`reasoning_content`、`reasoning` 与 `thinking` 可单独累计但不会代替摘要正文。传输结束后才把完整正文交给现有 Summary／Checkpoint／Long Memory 解析器，界面不会逐字刷新。
+
+自动模式仅在 400／404／405／406／415／422 响应明确说明 stream 不受支持时，额外尝试一次 `stream:false`。504、请求超时或含义不明确的 4xx 不会降级为非流式。模型列表仍使用普通 JSON 请求。
+
+控制台的脱敏传输诊断记录：ST 后端传输、stream 值、模型、输出上限参数、temperature、消息数、系统／用户文本字符数、HTTP Content-Type、TTFB、TTFC 和总耗时。日志不记录 prompt 正文、API Key、CSRF 值或请求头值。
+
+模型接口页提供“极速流式测试”和“非流式诊断测试”。两者都要求模型严格回复 `OK`，输出上限为 16 tokens，并展示 HTTP、响应类型、首包时间、首有效 SSE chunk、总耗时和最终文本，便于在同一部署环境中做真实对照。
 
 ## 手动总结与历史补齐
 
@@ -141,3 +153,5 @@ npm test
 测试覆盖楼层过滤、冻结历史保护、消息同步、确定性注入、聚合失败/切换聊天隔离、独立 API、实时 CSRF 及 iframe 代理、诊断脱敏、旧数据/提示词迁移、KEEP 继承/解除、事实替代和字符/token 截断保护。
 
 v1.6.0 验证：78 项自动测试通过；50 层旧聊天关闭自动总结后补齐 1–10 层，得到 Checkpoint 001（1–5）与 002（6–10），随后手动生成第 11 层；所有聊天对象深度比对不变。浏览器模拟 ST 页面验证了版本号、无摘要入口、旧 DOM 延后加载、504 重试、暂停／继续／取消、桌面和手机布局及卸载清理。自动测试与浏览器测试使用模拟模型响应，未调用真实账户或验证部署服务器的网关配置。
+
+v1.7.0 验证：85 项自动测试通过，覆盖 SSE 跨块解析、`[DONE]` 停止、reasoning 容错、三种传输模式、受控自动降级、504／timeout 禁止降级、三层记忆流式生成和两种连接诊断。浏览器模拟 ST 页面验证版本号、传输选择器、两种测试按钮及其计时结果，并复跑历史补齐与严格缓存回归。模拟结果不代表真实 Ark 网关耗时；请在实际部署中使用两个诊断按钮完成同模型对照。

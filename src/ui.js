@@ -1,9 +1,9 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.6.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.6.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION } from './defaults.js?v=1.6.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.6.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.6.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.6.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.7.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.7.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION } from './defaults.js?v=1.7.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.7.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.7.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.7.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -145,11 +145,13 @@ function configTemplate() {
                             <label>最大输出长度<input type="number" min="32" data-setting="maxTokens"></label>
                             <label>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
                             <label>超时时间（毫秒）<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
+                            <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
                         </div>
                         <div class="cache-memory-actions">
                             <button type="button" class="menu_button" data-save-api-key><i class="fa-solid fa-key"></i> 保存密钥</button>
                             <button type="button" class="menu_button cache-memory-primary" data-list-models><i class="fa-solid fa-arrows-rotate"></i> 获取模型列表</button>
-                            <button type="button" class="menu_button" data-test-api><i class="fa-solid fa-plug"></i> 测试连接</button>
+                            <button type="button" class="menu_button" data-test-api="stream"><i class="fa-solid fa-bolt"></i> 极速流式测试</button>
+                            <button type="button" class="menu_button" data-test-api="non-stream"><i class="fa-solid fa-stopwatch"></i> 非流式诊断测试</button>
                             <button type="button" class="menu_button" data-clear-api-key><i class="fa-solid fa-trash"></i> 清除密钥</button>
                         </div>
                         <small class="cache-memory-key-state" data-api-key-state></small>
@@ -210,7 +212,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.6.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.7.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -426,13 +428,16 @@ export class CacheMemoryUI {
                 }
                 return;
             }
-            if (event.target.closest('[data-test-api]')) {
-                const button = event.target.closest('button');
+            const testButton = event.target.closest('[data-test-api]');
+            if (testButton) {
+                const button = testButton;
+                const stream = button.dataset.testApi === 'stream';
                 button.disabled = true;
-                this.setStatus('busy', '正在测试模型连接…');
+                this.setStatus('busy', `正在进行${stream ? '极速流式' : '非流式诊断'}测试…`);
                 try {
-                    const result = await this.apiClient.test();
-                    this.setStatus('success', `连接成功 · 模型 ${result.model} · HTTP ${result.status} · ${result.latencyMs} ms`);
+                    const result = await this.apiClient.test({ stream });
+                    const firstChunk = result.ttfcMs == null ? '不适用' : `${result.ttfcMs} ms`;
+                    this.setStatus('success', `${stream ? '极速流式' : '非流式诊断'}测试成功\n模型：${result.model}\nHTTP：${result.status}\n响应类型：${result.contentType || '未提供'}\n首包时间：${result.ttfbMs} ms\n首 chunk：${firstChunk}\n总耗时：${result.totalMs} ms\n最终文本：${result.content}`);
                 } catch (error) {
                     this.setStatus('error', formatConnectionFailure(error));
                 } finally {

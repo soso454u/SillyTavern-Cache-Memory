@@ -427,11 +427,12 @@ test('connection test switches to max_completion_tokens when max_tokens is expli
         const result = await client.test();
         assert.equal(result.ok, true);
         assert.equal(requests[0].url, '/api/backends/chat-completions/generate');
-        assert.equal(requests[0].payload.max_tokens, 32);
-        assert.equal(requests[0].payload.messages.at(-1).content, 'Hi');
-        assert.equal(requests[1].payload.max_completion_tokens, 32);
+        assert.equal(requests[0].payload.max_tokens, 16);
+        assert.equal(requests[0].payload.messages.at(-1).content, 'OK');
+        assert.equal(requests[0].payload.stream, true);
+        assert.equal(requests[1].payload.max_completion_tokens, 16);
         assert.equal('max_tokens' in requests[1].payload, false);
-        assert.equal(requests[1].payload.temperature, 0.2);
+        assert.equal(requests[1].payload.temperature, 0);
     } finally {
         globalThis.fetch = originalFetch;
         if (originalParent === undefined) delete globalThis.parent;

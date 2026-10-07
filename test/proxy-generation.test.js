@@ -26,6 +26,16 @@ function fixture(t) {
     return { client, requests, root, logs, settings };
 }
 
+function sseResponse(chunks, { status = 200 } = {}) {
+    const encoder = new TextEncoder();
+    return new Response(new ReadableStream({
+        start(controller) {
+            for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+            controller.close();
+        },
+    }), { status, headers: { 'Content-Type': 'text/event-stream; charset=utf-8' } });
+}
+
 test('Ark models, test and a real floor summarizer share ST transport, fresh CSRF and the unchanged coding/v3 base', async t => {
     const { client, requests, settings, logs } = fixture(t);
     assert.equal((await client.listModels()).source, 'proxy');
@@ -44,7 +54,7 @@ test('Ark models, test and a real floor summarizer share ST transport, fresh CSR
         assert.equal(body.custom_url, settings.apiBaseUrl);
         assert.equal(body.chat_completion_source, 'custom');
         assert.equal(JSON.parse(body.custom_include_headers).Authorization, 'Bearer private-ark-key');
-        if (index) { assert.equal(body.stream, false); assert.equal(body.model, settings.model); assert.ok(body.messages.length); assert.ok(body.max_tokens > 0); }
+        if (index) { assert.equal(body.stream, true); assert.equal(body.model, settings.model); assert.ok(body.messages.length); assert.ok(body.max_tokens > 0); }
     });
     assert.doesNotMatch(JSON.stringify(logs), /private-ark-key|csrf-1|csrf-2|csrf-3|正文/);
 });
@@ -153,7 +163,7 @@ test('a selected max_completion_tokens budget is forwarded by both actual genera
     await client.test();
     const bodies = requests.map(item => JSON.parse(item.options.body));
     assert.equal(bodies[0].max_completion_tokens, 64);
-    assert.equal(bodies[1].max_completion_tokens, 32);
+    assert.equal(bodies[1].max_completion_tokens, 16);
     assert.ok(bodies.every(body => !Object.hasOwn(body, 'max_tokens')));
 });
 
@@ -214,4 +224,129 @@ test('proxy gateway504 and confirmed upstream504 keep distinct diagnostics and r
     root.fetch = async () => new Response('{"error":{"status":504,"message":"Gateway timeout"}}');
     await assert.rejects(client.test(), error => error.status === 504 && error.category === 'upstream_error'
         && error.diagnostics.proxy === 'HTTP 200' && error.diagnostics.upstream === 'HTTP 504');
+});
+
+test('SSE chunks are joined across transport boundaries; reasoning-only chunks are tolerated and measured', async t => {
+    const { client, root, logs } = fixture(t);
+    root.fetch = async () => sseResponse([
+        'data: {"choices":[{"delta":{"reasoning_content":"先分析"}}]}\n\n',
+        'data: {"choices":[{"del',
+        'ta":{"content":"[SUMMARY]\\n"}}]}\r\n\r\n',
+        'data: {"choices":[{"delta":{"thinking":"内部思考","content":"[Event]\\n事实"},"finish_reason":"stop"}]}\n\n',
+        'data: [DONE]\n\n',
+        'data: {"choices":[{"delta":{"content":"不应读取"}}]}\n\n',
+    ]);
+    const result = await client.complete({ systemPrompt: '只返回摘要', userContent: '私密正文' });
+    assert.equal(result.content, '[SUMMARY]\n[Event]\n事实');
+    assert.equal(result.reasoning, '先分析内部思考');
+    assert.equal(result.finishReason, 'stop');
+    assert.equal(result.diagnostics.stream, true);
+    assert.match(result.diagnostics.contentType, /text\/event-stream/);
+    assert.equal(typeof result.diagnostics.ttfbMs, 'number');
+    assert.equal(typeof result.diagnostics.ttfcMs, 'number');
+    assert.equal(typeof result.diagnostics.totalMs, 'number');
+    assert.doesNotMatch(JSON.stringify(logs), /private-ark-key|私密正文|只返回摘要/);
+    assert.match(JSON.stringify(logs), /systemPromptChars|userChars|ttfbMs|ttfcMs|totalMs/);
+});
+
+test('an SSE stream with reasoning but no ordinary content fails only after DONE', async t => {
+    const { client, root } = fixture(t);
+    root.fetch = async () => sseResponse([
+        'data: {"choices":[{"delta":{"reasoning":"有思考但没有正文"}}]}\n\n',
+        'data: [DONE]\n\n',
+    ]);
+    await assert.rejects(client.complete({ userContent: 'body' }), /没有可用文本/);
+});
+
+test('auto transport falls back once only for an explicit unsupported-stream 4xx', async t => {
+    const { client, root } = fixture(t);
+    const streams = [];
+    root.fetch = async (_url, options) => {
+        const body = JSON.parse(options.body);
+        streams.push(body.stream);
+        if (body.stream) return new Response('{"error":{"status":400,"message":"stream is not supported by this endpoint"}}', {
+            headers: { 'Content-Type': 'application/json' },
+        });
+        return new Response('{"choices":[{"message":{"content":"fallback ok"}}]}', { headers: { 'Content-Type': 'application/json' } });
+    };
+    const result = await client.complete({ userContent: 'body' });
+    assert.equal(result.content, 'fallback ok');
+    assert.equal(result.diagnostics.streamFallback, true);
+    assert.deepEqual(streams, [true, false]);
+});
+
+test('auto transport never falls back to non-streaming for 504, timeout or vague 4xx', async t => {
+    const { client, root } = fixture(t);
+    for (const response of [
+        () => new Response('504 Gateway Time-out / openresty', { status: 504 }),
+        () => new Response('{"error":{"status":400,"message":"bad request"}}', { headers: { 'Content-Type': 'application/json' } }),
+    ]) {
+        let requests = 0;
+        root.fetch = async () => { requests++; return response(); };
+        await assert.rejects(client.complete({ userContent: 'body' }));
+        assert.equal(requests, 1);
+    }
+});
+
+test('forced stream and non-stream modes send the selected body; Ark auto mode prefers stream', async t => {
+    const { client, root, settings } = fixture(t);
+    const streams = [];
+    root.fetch = async (_url, options) => {
+        streams.push(JSON.parse(options.body).stream);
+        return new Response('{"choices":[{"message":{"content":"OK"}}]}', { headers: { 'Content-Type': 'application/json' } });
+    };
+    await client.complete({ userContent: 'auto' });
+    await client.complete({ userContent: 'stream', transportMode: 'stream' });
+    await client.complete({ userContent: 'non-stream', transportMode: 'non-stream' });
+    assert.match(settings.apiBaseUrl, /ark\.cn-beijing\.volces\.com\/api\/coding\/v3/);
+    assert.deepEqual(streams, [true, true, false]);
+});
+
+test('Summary, Checkpoint and Long Memory all consume SSE through the ST backend', async t => {
+    const { client, root, settings, requests } = fixture(t);
+    Object.assign(settings, { checkpointInterval: 1, longMemoryInterval: 1 });
+    root.fetch = async (url, options) => {
+        requests.push({ url, options });
+        const prompt = JSON.parse(options.body).messages[0].content;
+        const content = prompt.includes('[CHECKPOINT]') ? '[CHECKPOINT]\n[Current State]\n状态'
+            : prompt.includes('[LONG_MEMORY]') ? '[LONG_MEMORY]\n- 【人物｜状态】事实'
+                : '[SUMMARY]\n[Title]\n标题\n[Event]\n事件\n[KEEP]\n无';
+        return sseResponse([
+            `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'think' } }] })}\n\n`,
+            `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\n`,
+            'data: [DONE]\n\n',
+        ]);
+    };
+    const metadata = {};
+    const chat = [{ name: 'A', mes: '正文', is_user: false, gen_started: '1', send_date: '1' }];
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'chat', saveMetadata: () => {} });
+    const summarizer = new MemorySummarizer({ store, apiClient: client, getSettings: () => settings, getChat: () => chat });
+    await summarizer.summarizeMessage(getAssistantMessages(chat)[0].messageId);
+    assert.equal(store.current().summaries[getAssistantMessages(chat)[0].messageId].status, 'frozen');
+    assert.equal(store.current().checkpoints.length, 1);
+    assert.equal(store.current().longMemories.length, 1);
+    assert.equal(requests.length, 3);
+    assert.ok(requests.every(item => item.url === '/api/backends/chat-completions/generate'
+        && JSON.parse(item.options.body).stream === true));
+});
+
+test('streaming and non-streaming connection tests use 16 tokens and expose timing plus final text', async t => {
+    const { client, root, requests } = fixture(t);
+    root.fetch = async (url, options) => {
+        requests.push({ url, options });
+        const stream = JSON.parse(options.body).stream;
+        return stream ? sseResponse(['data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n'])
+            : new Response('{"choices":[{"message":{"content":"OK"}}]}', { headers: { 'Content-Type': 'application/json' } });
+    };
+    const streamed = await client.test({ stream: true });
+    const nonStreamed = await client.test({ stream: false });
+    assert.equal(streamed.content, 'OK');
+    assert.equal(nonStreamed.content, 'OK');
+    assert.equal(streamed.stream, true);
+    assert.equal(nonStreamed.stream, false);
+    assert.equal(typeof streamed.ttfcMs, 'number');
+    assert.equal(nonStreamed.ttfcMs, null);
+    const bodies = requests.map(item => JSON.parse(item.options.body));
+    assert.ok(bodies.every(body => body.max_tokens === 16 && body.temperature === 0
+        && body.messages[0].content === 'Reply with exactly OK.' && body.messages[1].content === 'OK'));
 });

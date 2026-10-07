@@ -79,3 +79,13 @@ Cache Debug 仅在启用时读主 RP 的发送前事件；独立记忆 API 不�
 - 单请求 AbortSignal 只中止该请求；批次取消不影响独立连接测试。诊断区分客户端 timeout、ST 后端／其网关失败以及代理明确透传的上游 504，未提供上游状态时不编造来源。
 - 78 项测试通过，涵盖原有 105 层缓存回归和新增 50 层历史补齐验收；浏览器模拟页面验证桌面 1280×900、手机 390×844、版本标签、无摘要按钮、历史 DOM 延后加载、504 重试、暂停／继续／取消和卸载清理。聊天对象深度比对保持不变。
 - 本轮未访问真实模型账户，不能据此确认部署服务器的 504 已消失；既有 60 秒设置保留，需要用户按实际服务配置调整。
+
+## v1.7.0 流式传输审查（2026-10-08）
+
+- v1.6.0 的 `buildPayload()` 与 ST `proxyPayload` 均硬编码 `stream:false`。v1.7.0 移除双重硬编码，自动模式和 Ark Coding Plan 均优先 `stream:true`。
+- Summary、Checkpoint、Long Memory 和极速连接测试共用同一流式传输与 SSE 解析器；最终完整文本仍进入原有记忆解析流程。
+- SSE 按 Content-Type 分流，支持跨网络 chunk 的 JSON 行、CRLF、`[DONE]`、普通 content 与 reasoning/thinking 字段。只有普通 content 在流结束后仍为空才失败。
+- 自动回退要求受控 4xx 和明确的 stream 不支持错误同时成立；504、timeout、路由缺失、鉴权错误不回退。
+- 所有生成继续只请求 ST 相对代理路径，不存在浏览器直连 Ark 的 fallback。Strict Cache、Checkpoint Boundary、聊天正文和注入刷新规则未改动。
+- 对照的 shujuku `spv5.5.7` 独立 API 路径同样通过 ST `/generate`，其 `streamingEnabled` 开启时发送流式请求并用 reader/decoder 拼接 `delta.content`；该版本默认配置的流式开关为关闭。它还提供 TavernHelper 主 API和连接预设路径，这两种模式不适合直接复制到独立 Cache Memory 配置。
+- 自动测试使用模拟 SSE/JSON 响应验证两种传输和计时字段，没有使用用户真实 Ark Key，无法代替部署环境中的同模型 504 对照测试。
