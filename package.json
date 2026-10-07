@@ -1,0 +1,14 @@
+{
+  "name": "sillytavern-cache-memory",
+  "version": "1.0.0",
+  "description": "Cache-friendly append-only story memory for SillyTavern.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check index.js && node --check src/api-client.js && node --check src/memory-store.js && node --check src/summarizer.js && node --check src/injection.js && node --check src/ui.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "AGPL-3.0-only"
+}

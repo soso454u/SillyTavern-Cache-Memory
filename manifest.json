@@ -1,0 +1,12 @@
+{
+  "display_name": "Cache Memory / Layer Memory",
+  "loading_order": 20,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "SillyTavern Community",
+  "version": "1.0.0",
+  "homePage": "https://github.com/soso454u/SillyTavern-Cache-Memory",
+  "auto_update": true
+}
