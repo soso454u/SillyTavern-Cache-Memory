@@ -2,6 +2,29 @@ export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
 export const INJECTION_KEY = 'cache_memory_injection';
 export const API_KEY_STORAGE_KEY = 'cache_memory_api_key_v1';
+export const DOUBAO_CODING_BASE_URL = 'https://ark.cn-beijing.volces.com/api/coding/v3';
+
+export const API_PROVIDERS = Object.freeze({
+    OPENAI_COMPATIBLE: 'openai-compatible',
+    DOUBAO_CODING: 'doubao-coding',
+});
+
+// 方舟 Coding Plan 的模型列表接口并非在所有套餐中都可用。这里保留官方
+// 推荐的稳定别名和当前文档列出的模型，远端获取失败时仍可直接选择。
+export const DOUBAO_CODING_MODELS = Object.freeze([
+    'ark-code-latest',
+    'doubao-seed-2.1-pro',
+    'doubao-seed-2.1-lite',
+    'doubao-seed-2.0-mini',
+    'doubao-seed-evolving',
+    'glm-5.3',
+    'glm-5.3-flash',
+    'kimi-k3',
+    'kimi-k2.8-preview',
+    'deepseek-v4.1-flash',
+    'deepseek-v4-flash',
+    'deepseek-v4-pro',
+]);
 
 export const INJECTION_MODES = Object.freeze({
     NONE: 'none',
@@ -78,7 +101,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     recentCheckpointCount: 2,
     strictCacheMode: true,
     injectionMode: INJECTION_MODES.NONE,
-    provider: 'openai-compatible',
+    provider: API_PROVIDERS.OPENAI_COMPATIBLE,
     apiBaseUrl: '',
     model: '',
     temperature: 0.2,
@@ -90,7 +113,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
 export function normalizeSettings(saved = {}) {
     const source = saved && typeof saved === 'object' ? saved : {};
     const prompts = { ...DEFAULT_PROMPTS, ...(source.prompts ?? {}) };
-    const number = (value, fallback, min, max) => Math.min(max, Math.max(min, Number(value) || fallback));
+    const number = (value, fallback, min, max) => {
+        const parsed = value === '' || value === null || value === undefined ? Number.NaN : Number(value);
+        return Math.min(max, Math.max(min, Number.isFinite(parsed) ? parsed : fallback));
+    };
     const checkpointInterval = Math.round(number(source.checkpointInterval, 20, 1, 1000));
     let longMemoryInterval = Math.round(number(source.longMemoryInterval, 100, checkpointInterval, 10000));
     if (longMemoryInterval % checkpointInterval !== 0) {
@@ -99,6 +125,9 @@ export function normalizeSettings(saved = {}) {
     const injectionMode = Object.values(INJECTION_MODES).includes(source.injectionMode)
         ? source.injectionMode
         : INJECTION_MODES.NONE;
+    const provider = Object.values(API_PROVIDERS).includes(source.provider)
+        ? source.provider
+        : API_PROVIDERS.OPENAI_COMPATIBLE;
 
     return {
         ...DEFAULT_SETTINGS,
@@ -118,6 +147,7 @@ export function normalizeSettings(saved = {}) {
         temperature: number(source.temperature, 0.2, 0, 2),
         maxTokens: Math.round(number(source.maxTokens, 1200, 32, 32000)),
         timeoutMs: Math.round(number(source.timeoutMs, 60000, 1000, 300000)),
+        provider,
         injectionMode,
         prompts,
     };

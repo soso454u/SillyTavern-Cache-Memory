@@ -1,4 +1,4 @@
-import { INJECTION_MODES } from './defaults.js';
+import { INJECTION_MODES } from './defaults.js?v=1.2.0';
 
 function byRange(a, b) {
     return Number(a.startFloor ?? a.floor) - Number(b.startFloor ?? b.floor);

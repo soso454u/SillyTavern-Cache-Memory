@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SummaryApiClient } from '../src/api-client.js';
-import { INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
+import { normalizeModelsUrl, SummaryApiClient } from '../src/api-client.js';
+import { API_PROVIDERS, DOUBAO_CODING_BASE_URL, INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
 import { buildInjection } from '../src/injection.js';
 import { MemoryStore } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
@@ -37,6 +37,13 @@ test('normalizes long interval to checkpoint boundaries', () => {
     assert.equal(settings.strictCacheMode, true);
     assert.equal(settings.showWandButton, true);
     assert.equal(normalizeSettings({ showWandButton: false }).showWandButton, false);
+    assert.equal(normalizeSettings({ temperature: 0 }).temperature, 0);
+    assert.equal(normalizeSettings({ recentSummaryCount: 0 }).recentSummaryCount, 0);
+});
+
+test('builds a model-list endpoint from base or completion URLs', () => {
+    assert.equal(normalizeModelsUrl('https://example.com/v1/'), 'https://example.com/v1/models');
+    assert.equal(normalizeModelsUrl('https://example.com/v1/chat/completions'), 'https://example.com/v1/models');
 });
 
 test('assistant floor scan excludes user, system, narrator and tool messages', () => {
@@ -266,6 +273,49 @@ test('independent API client posts directly with its own browser-stored bearer k
         const payload = JSON.parse(request.options.body);
         assert.equal(payload.model, 'small-model');
         assert.deepEqual(payload.messages.map(item => item.role), ['system', 'user']);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('model listing reads OpenAI responses and falls back to Doubao presets', async () => {
+    const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
+    let settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'test-model' });
+    const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ data: [{ id: 'model-b' }, { id: 'model-a' }] }), { status: 200 });
+    try {
+        const remote = await client.listModels();
+        assert.deepEqual(remote.models, ['model-a', 'model-b']);
+        assert.equal(remote.source, 'remote');
+
+        settings = normalizeSettings({
+            provider: API_PROVIDERS.DOUBAO_CODING,
+            apiBaseUrl: DOUBAO_CODING_BASE_URL,
+            model: 'ark-code-latest',
+        });
+        globalThis.fetch = async () => new Response('not found', { status: 404 });
+        const fallback = await client.listModels();
+        assert.equal(fallback.source, 'preset');
+        assert.ok(fallback.models.includes('ark-code-latest'));
+        assert.match(fallback.warning, /HTTP 404/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('hot unload cancellation is distinguishable from an API timeout', async () => {
+    const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
+    const settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'test-model' });
+    const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    });
+    try {
+        const pending = client.complete({ systemPrompt: 'system', userContent: 'body' });
+        client.abortAll();
+        await assert.rejects(pending, error => error.code === 'REQUEST_ABORTED');
     } finally {
         globalThis.fetch = originalFetch;
     }

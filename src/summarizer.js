@@ -1,4 +1,4 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.2.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -109,7 +109,7 @@ export class MemorySummarizer {
             this.onStatus('success', `第 ${entry.floor} 层摘要已冻结`);
             return record;
         } catch (error) {
-            if (error.code === 'CHAT_CHANGED') {
+            if (error.code === 'CHAT_CHANGED' || error.code === 'REQUEST_ABORTED') {
                 this.onStatus('warning', error.message);
                 throw error;
             }
@@ -118,7 +118,7 @@ export class MemorySummarizer {
                 messageIndex: entry.messageIndex,
                 messageId: entry.messageId,
                 sourceFingerprint: entry.fingerprint,
-                title: 'Summary failed',
+                title: '生成失败',
                 characters: '',
                 event: '',
                 raw: '',
@@ -195,7 +195,7 @@ export class MemorySummarizer {
             this.store.addCheckpoint(record, { overwrite });
             return record;
         } catch (error) {
-            if (error.code === 'CHAT_CHANGED') throw error;
+            if (error.code === 'CHAT_CHANGED' || error.code === 'REQUEST_ABORTED') throw error;
             this.store.addCheckpoint({
                 id,
                 startFloor,
@@ -268,7 +268,7 @@ export class MemorySummarizer {
             this.store.addLongMemory(record, { overwrite });
             return record;
         } catch (error) {
-            if (error.code === 'CHAT_CHANGED') throw error;
+            if (error.code === 'CHAT_CHANGED' || error.code === 'REQUEST_ABORTED') throw error;
             this.store.addLongMemory({
                 id,
                 startFloor,

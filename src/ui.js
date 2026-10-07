@@ -1,5 +1,5 @@
-import { DEFAULT_PROMPTS, INJECTION_MODES } from './defaults.js';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js';
+import { API_PROVIDERS, DEFAULT_PROMPTS, DOUBAO_CODING_BASE_URL, INJECTION_MODES } from './defaults.js?v=1.2.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.2.0';
 
 const ROOT_ID = 'cache-memory-settings';
 const CONFIG_ID = 'cache-memory-config';
@@ -23,13 +23,13 @@ function settingsTemplate() {
     return `
         <div id="${ROOT_ID}" class="inline-drawer cache-memory-settings">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Cache Memory</b>
+                <b>缓存记忆</b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
                 <div class="cache-memory-status" data-cache-status data-state="idle">等待生成</div>
                 <div class="cache-memory-launcher-options">
-                    <label class="checkbox_label"><input type="checkbox" data-setting="enabled"><span>启用 Cache Memory</span></label>
+                    <label class="checkbox_label"><input type="checkbox" data-setting="enabled"><span>启用缓存记忆</span></label>
                     <label class="checkbox_label"><input type="checkbox" data-setting="showWandButton"><span>在魔法棒菜单中显示</span></label>
                 </div>
                 <div class="cache-memory-actions cache-memory-launcher-actions">
@@ -47,16 +47,16 @@ function configTemplate() {
                 <header class="cache-memory-dialog-header">
                     <div class="cache-memory-dialog-title">
                         <i class="fa-solid fa-brain" aria-hidden="true"></i>
-                        <div><h3 id="cache-memory-config-title">Cache Memory</h3><small>缓存友好型剧情记忆</small></div>
+                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节</small></div>
                     </div>
                     <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button>
                 </header>
                 <div class="cache-memory-config-status cache-memory-status" data-cache-status data-state="idle">等待生成</div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
                     <button type="button" class="cache-memory-tab is-active" role="tab" aria-selected="true" data-settings-tab="general"><i class="fa-solid fa-layer-group"></i><span>常规</span></button>
-                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="api"><i class="fa-solid fa-key"></i><span>独立 API</span></button>
+                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="api"><i class="fa-solid fa-key"></i><span>模型接口</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="injection"><i class="fa-solid fa-syringe"></i><span>记忆注入</span></button>
-                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="prompts"><i class="fa-solid fa-file-lines"></i><span>Prompts</span></button>
+                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="prompts"><i class="fa-solid fa-file-lines"></i><span>提示词</span></button>
                 </nav>
                 <div class="cache-memory-config-content">
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="general">
@@ -64,53 +64,56 @@ function configTemplate() {
                         <div class="cache-memory-switches">
                             <label class="cache-memory-toggle"><span><strong>启用插件</strong><small>显示楼层记忆并启用处理流程</small></span><input type="checkbox" data-setting="enabled"></label>
                             <label class="cache-memory-toggle"><span><strong>自动生成小总结</strong><small>正常回复结束后自动排队</small></span><input type="checkbox" data-setting="autoSummarize"></label>
-                            <label class="cache-memory-toggle"><span><strong>使用独立总结 API</strong><small>不调用 SillyTavern 内置生成接口</small></span><input type="checkbox" data-setting="independentApi"></label>
-                            <label class="cache-memory-toggle"><span><strong>Strict Cache Mode</strong><small>保持追加式、确定性的记忆行为</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
+                            <label class="cache-memory-toggle"><span><strong>使用独立模型接口</strong><small>不占用 SillyTavern 当前聊天模型</small></span><input type="checkbox" data-setting="independentApi"></label>
+                            <label class="cache-memory-toggle"><span><strong>严格缓存模式</strong><small>只追加新记忆，不自动改写旧内容</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
                         <div class="cache-memory-grid">
-                            <label>Checkpoint 间隔<input type="number" min="1" max="1000" data-setting="checkpointInterval"></label>
-                            <label>Long Memory 间隔<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
+                            <label>阶段记忆间隔（层）<input type="number" min="1" max="1000" data-setting="checkpointInterval"></label>
+                            <label>长期记忆间隔（层）<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
                             <label>小总结最大长度<input type="number" min="50" data-setting="summaryMaxLength"></label>
-                            <label>Checkpoint 最大长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
-                            <label>Long Memory 最大长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
+                            <label>阶段记忆最大长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
+                            <label>长期记忆最大长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
                             <label>近期小总结数量<input type="number" min="0" data-setting="recentSummaryCount"></label>
-                            <label>近期 Checkpoint 数量<input type="number" min="0" data-setting="recentCheckpointCount"></label>
+                            <label>近期阶段记忆数量<input type="number" min="0" data-setting="recentCheckpointCount"></label>
                         </div>
-                        <small class="cache-memory-help">Long Memory 间隔会自动向上调整为 Checkpoint 间隔的整数倍。</small>
+                        <small class="cache-memory-help">长期记忆间隔会自动调整为阶段记忆间隔的整数倍。</small>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
-                        <div class="cache-memory-section-heading"><div><h4>独立总结 API</h4><p>请求直接发送到 OpenAI-compatible 接口。</p></div></div>
+                        <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>选择豆包可自动填写地址；其他服务请选择 OpenAI 兼容接口。</p></div></div>
+                        <div class="cache-memory-api-guide"><i class="fa-solid fa-circle-info"></i><span><strong>推荐顺序：</strong>选择接口类型 → 填写并保存密钥 → 获取模型 → 测试连接。密钥只保存在当前浏览器。</span></div>
                         <div class="cache-memory-grid">
-                            <label>API Provider<select data-setting="provider"><option value="openai-compatible">OpenAI Compatible</option><option value="custom">Custom</option></select></label>
-                            <label>API Base URL<input type="url" data-setting="apiBaseUrl" placeholder="https://example.com/v1"></label>
-                            <label>API Key<input type="password" data-api-key autocomplete="off" placeholder="未配置"></label>
-                            <label>Model<input type="text" data-setting="model" placeholder="model-name"></label>
-                            <label>Temperature<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
-                            <label>Max Tokens<input type="number" min="32" data-setting="maxTokens"></label>
-                            <label>Timeout (ms)<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
+                            <label>接口类型<select data-setting="provider"><option value="${API_PROVIDERS.OPENAI_COMPATIBLE}">OpenAI 兼容接口</option><option value="${API_PROVIDERS.DOUBAO_CODING}">豆包方舟 Coding Plan</option></select></label>
+                            <label>接口地址<input type="url" data-setting="apiBaseUrl" placeholder="例如：https://example.com/v1"></label>
+                            <label>API 密钥<input type="password" data-api-key autocomplete="off" placeholder="未配置"></label>
+                            <label>摘要模型<input type="text" data-setting="model" list="cache-memory-model-list" placeholder="先点击“获取模型列表”"><datalist id="cache-memory-model-list" data-model-list></datalist></label>
+                            <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
+                            <label>最大输出长度<input type="number" min="32" data-setting="maxTokens"></label>
+                            <label>超时时间（毫秒）<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
                         </div>
                         <div class="cache-memory-actions">
-                            <button type="button" class="menu_button" data-save-api-key><i class="fa-solid fa-key"></i> 保存 Key</button>
-                            <button type="button" class="menu_button" data-clear-api-key><i class="fa-solid fa-trash"></i> 清除 Key</button>
-                            <button type="button" class="menu_button" data-test-api><i class="fa-solid fa-plug"></i> 测试 API</button>
+                            <button type="button" class="menu_button" data-save-api-key><i class="fa-solid fa-key"></i> 保存密钥</button>
+                            <button type="button" class="menu_button cache-memory-primary" data-list-models><i class="fa-solid fa-arrows-rotate"></i> 获取模型列表</button>
+                            <button type="button" class="menu_button" data-test-api><i class="fa-solid fa-plug"></i> 测试连接</button>
+                            <button type="button" class="menu_button" data-clear-api-key><i class="fa-solid fa-trash"></i> 清除密钥</button>
                         </div>
                         <small class="cache-memory-key-state" data-api-key-state></small>
-                        <small class="cache-memory-warning">API Key 只保存在当前浏览器 localStorage，不写入聊天或 SillyTavern 自带 API 设置。目标 API 必须允许跨域请求。</small>
+                        <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。接口还需要允许浏览器跨域访问。</small>
+                        <small class="cache-memory-warning">豆包提示：方舟官方说明 Coding Plan 个人版仅限 AI 编程工具使用；请确认你的账号与套餐允许在本插件中调用。</small>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
                         <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择发送请求时附加到上下文的冻结记忆层。</p></div></div>
-                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入</option><option value="${INJECTION_MODES.LONG}">Long Memory</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">Long + Checkpoint</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">Long + Checkpoint + Recent</option></select></label>
+                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">长期记忆 + 阶段记忆 + 近期小总结</option></select></label>
                         <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>内容使用固定位置和固定楼层顺序，不做语义检索、相关度选择或随机召回。</span></div>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
-                        <div class="cache-memory-section-heading"><div><h4>Prompts</h4><p>分别编辑每一种记忆层使用的系统提示词。</p></div></div>
-                        <details><summary>小总结 Prompt</summary><textarea rows="12" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
-                        <details><summary>Checkpoint Prompt</summary><textarea rows="12" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
-                        <details><summary>Long Memory Prompt</summary><textarea rows="10" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
+                        <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>分别编辑每一种记忆层使用的系统提示词；不熟悉时保持默认即可。</p></div></div>
+                        <details><summary>小总结提示词</summary><textarea rows="12" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
+                        <details><summary>阶段记忆提示词</summary><textarea rows="12" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
+                        <details><summary>长期记忆提示词</summary><textarea rows="10" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
                     </section>
                 </div>
             </div>
@@ -131,6 +134,8 @@ export class CacheMemoryUI {
         this.wandObserver = null;
         this.wandSyncQueued = false;
         this.lastFocusedElement = null;
+        this.controller = new AbortController();
+        this.destroyed = false;
     }
 
     mountSettings() {
@@ -154,7 +159,7 @@ export class CacheMemoryUI {
         this.config = document.getElementById(CONFIG_ID);
         document.addEventListener('keydown', event => {
             if (event.key === 'Escape' && this.config && !this.config.hidden) this.closeSettings();
-        });
+        }, { signal: this.controller.signal });
     }
 
     settingsScopes() {
@@ -174,7 +179,7 @@ export class CacheMemoryUI {
                 element.value = settings.prompts[element.dataset.prompt] ?? '';
             }
             const keyState = scope.querySelector('[data-api-key-state]');
-            if (keyState) keyState.textContent = this.apiClient.hasApiKey() ? 'API Key 已在本浏览器配置' : 'API Key 未配置';
+            if (keyState) keyState.textContent = this.apiClient.hasApiKey() ? 'API 密钥已保存在本浏览器' : '尚未保存 API 密钥';
             const keyInput = scope.querySelector('[data-api-key]');
             if (keyInput) keyInput.placeholder = this.apiClient.hasApiKey() ? '已保存，留空表示不更改' : '未配置';
         }
@@ -189,17 +194,21 @@ export class CacheMemoryUI {
             const key = element.dataset.setting;
             const numeric = ['checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'maxTokens', 'timeoutMs'];
             const value = element.type === 'checkbox' ? element.checked : numeric.includes(key) ? Number(element.value) : element.value;
-            this.updateSettings({ [key]: value });
+            if (key === 'provider' && value === API_PROVIDERS.DOUBAO_CODING) {
+                this.updateSettings({ provider: value, apiBaseUrl: DOUBAO_CODING_BASE_URL, model: 'ark-code-latest' });
+            } else {
+                this.updateSettings({ [key]: value });
+            }
             this.populateSettings();
             if (key === 'showWandButton') this.syncWandEntry();
             this.updateInjection();
             this.renderMessageMemories();
-        });
+        }, { signal: this.controller.signal });
         root.addEventListener('input', event => {
             const element = event.target.closest('[data-prompt]');
             if (!element) return;
             this.updateSettings({ prompts: { ...this.getSettings().prompts, [element.dataset.prompt]: element.value } });
-        });
+        }, { signal: this.controller.signal });
         root.addEventListener('click', async event => {
             if (event.target === this.config || event.target.closest('[data-settings-close]')) {
                 this.closeSettings();
@@ -227,23 +236,49 @@ export class CacheMemoryUI {
                     await this.apiClient.saveApiKey(input.value);
                     input.value = '';
                     this.populateSettings();
-                    notify('success', '独立 API Key 已保存在当前浏览器');
+                    notify('success', 'API 密钥已保存在当前浏览器');
                 } catch (error) {
                     notify('error', error.message);
                 }
                 return;
             }
             if (event.target.closest('[data-clear-api-key]')) {
-                if (!confirm('清除当前浏览器保存的 Cache Memory API Key？')) return;
+                if (!confirm('清除当前浏览器保存的缓存记忆 API 密钥？')) return;
                 this.apiClient.clearApiKey();
                 this.populateSettings();
-                notify('success', 'API Key 已清除');
+                notify('success', 'API 密钥已清除');
+                return;
+            }
+            if (event.target.closest('[data-list-models]')) {
+                const button = event.target.closest('button');
+                button.disabled = true;
+                this.setStatus('busy', '正在获取模型列表…');
+                try {
+                    const inputKey = root.querySelector('[data-api-key]')?.value ?? '';
+                    const result = await this.apiClient.listModels(inputKey);
+                    this.renderModelOptions(result.models);
+                    const current = this.getSettings().model;
+                    if (!current && result.models.length) {
+                        this.updateSettings({ model: result.models[0] });
+                        this.populateSettings();
+                    }
+                    const suffix = result.source === 'preset'
+                        ? '接口未返回列表，已加载豆包官方预设模型'
+                        : result.source === 'remote-and-preset'
+                            ? '已合并接口模型与豆包预设模型'
+                            : '已从接口获取';
+                    this.setStatus(result.warning ? 'warning' : 'success', `${suffix} · 共 ${result.models.length} 个`);
+                } catch (error) {
+                    this.setStatus('error', `获取模型失败 · ${error.message}`);
+                } finally {
+                    button.disabled = false;
+                }
                 return;
             }
             if (event.target.closest('[data-test-api]')) {
                 const button = event.target.closest('button');
                 button.disabled = true;
-                this.setStatus('busy', '正在测试独立 API');
+                this.setStatus('busy', '正在测试模型连接…');
                 try {
                     const result = await this.apiClient.test();
                     this.setStatus('success', `连接成功 · 模型 ${result.model} · HTTP ${result.status} · ${result.latencyMs} ms`);
@@ -258,7 +293,17 @@ export class CacheMemoryUI {
                 this.closeSettings();
                 this.openManager();
             }
-        });
+        }, { signal: this.controller.signal });
+    }
+
+    renderModelOptions(models) {
+        for (const list of document.querySelectorAll('[data-model-list]')) {
+            list.replaceChildren(...models.map(model => {
+                const option = document.createElement('option');
+                option.value = model;
+                return option;
+            }));
+        }
     }
 
     openSettings() {
@@ -304,6 +349,7 @@ export class CacheMemoryUI {
     }
 
     syncWandEntry() {
+        if (this.destroyed) return;
         const existing = document.getElementById(WAND_CONTAINER_ID);
         if (!this.getSettings().showWandButton) {
             existing?.remove();
@@ -320,14 +366,14 @@ export class CacheMemoryUI {
         entry.className = 'list-group-item flex-container flexGap5 interactable';
         entry.role = 'button';
         entry.tabIndex = 0;
-        entry.innerHTML = '<div class="fa-fw fa-solid fa-brain extensionsMenuExtensionButton" aria-hidden="true"></div><span>Cache Memory</span>';
+        entry.innerHTML = '<div class="fa-fw fa-solid fa-brain extensionsMenuExtensionButton" aria-hidden="true"></div><span>缓存记忆</span>';
         const open = () => this.openSettings();
-        entry.addEventListener('click', open);
+        entry.addEventListener('click', open, { signal: this.controller.signal });
         entry.addEventListener('keydown', event => {
             if (event.key !== 'Enter' && event.key !== ' ') return;
             event.preventDefault();
             open();
-        });
+        }, { signal: this.controller.signal });
         container.append(entry);
         host.append(container);
     }
@@ -358,7 +404,7 @@ export class CacheMemoryUI {
             widget.dataset.messageId = entry.messageId;
             const summary = document.createElement('summary');
             summary.textContent = record.status === 'failed'
-                ? `本层记忆 · Summary failed`
+                ? `本层记忆 · 生成失败`
                 : `本层记忆 · ${record.title}`;
             const body = document.createElement('div');
             body.className = 'cache-memory-message-body';
@@ -366,7 +412,7 @@ export class CacheMemoryUI {
                 body.append(this.line('错误', record.error || '未知错误'));
             } else {
                 body.append(this.line('人物', record.characters), this.line('事件', record.event));
-                if (record.status === 'stale') body.append(this.line('状态', '原消息已编辑或切换 swipe，请手动重新生成'));
+                if (record.status === 'stale') body.append(this.line('状态', '原消息已编辑或切换了备选回复，请手动重新生成'));
             }
             const actions = document.createElement('div');
             actions.className = 'cache-memory-actions';
@@ -409,7 +455,7 @@ export class CacheMemoryUI {
             this.renderMessageMemories();
             this.renderManager();
             this.updateInjection();
-        });
+        }, { signal: this.controller.signal });
     }
 
     editSummary(messageId) {
@@ -450,8 +496,8 @@ export class CacheMemoryUI {
         overlay.id = MANAGER_ID;
         overlay.hidden = true;
         overlay.innerHTML = `
-            <div class="cache-memory-manager-panel" role="dialog" aria-modal="true" aria-label="Memory Manager">
-                <header><div><h3>Memory Manager</h3><small>当前聊天的冻结记忆</small></div><button type="button" class="menu_button" data-manager-close title="关闭"><i class="fa-solid fa-xmark"></i></button></header>
+            <div class="cache-memory-manager-panel" role="dialog" aria-modal="true" aria-label="记忆管理">
+                <header><div><h3>记忆管理</h3><small>查看和整理当前聊天的冻结记忆</small></div><button type="button" class="menu_button" data-manager-close title="关闭" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button></header>
                 <div class="cache-memory-manager-toolbar">
                     <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
                     <button type="button" class="menu_button" data-import><i class="fa-solid fa-upload"></i> 导入 JSON</button>
@@ -461,8 +507,8 @@ export class CacheMemoryUI {
             </div>`;
         document.body.append(overlay);
         this.manager = overlay;
-        overlay.addEventListener('click', event => this.handleManagerClick(event));
-        overlay.querySelector('[data-import-file]').addEventListener('change', event => this.importFile(event));
+        overlay.addEventListener('click', event => this.handleManagerClick(event), { signal: this.controller.signal });
+        overlay.querySelector('[data-import-file]').addEventListener('change', event => this.importFile(event), { signal: this.controller.signal });
     }
 
     renderManager() {
@@ -473,8 +519,8 @@ export class CacheMemoryUI {
         const summaries = Object.values(store.summaries).sort((a, b) => a.floor - b.floor);
         content.append(this.managerSection('楼层小总结', summaries, 'summary'));
         content.append(this.pendingCheckpoint());
-        content.append(this.managerSection('Checkpoints', store.checkpoints, 'checkpoint'));
-        content.append(this.managerSection('Long Memories', store.longMemories, 'long'));
+        content.append(this.managerSection('阶段记忆', store.checkpoints, 'checkpoint'));
+        content.append(this.managerSection('长期记忆', store.longMemories, 'long'));
     }
 
     managerSection(title, items, type) {
@@ -505,7 +551,7 @@ export class CacheMemoryUI {
         const name = document.createElement('strong');
         name.textContent = title;
         const status = document.createElement('span');
-        status.textContent = item.status === 'manual-edited' || item.manualEdited ? 'Manual Edited' : item.status === 'failed' ? 'Failed' : item.status === 'stale' ? 'Stale' : item.status === 'orphaned' ? 'Orphaned' : 'Frozen';
+        status.textContent = item.status === 'manual-edited' || item.manualEdited ? '手动编辑' : item.status === 'failed' ? '生成失败' : item.status === 'stale' ? '需要更新' : item.status === 'orphaned' ? '原文已删除' : '已冻结';
         header.append(name, status);
         const meta = document.createElement('small');
         meta.textContent = `${range} · ${formatDate(item.createdAt)}`;
@@ -539,7 +585,7 @@ export class CacheMemoryUI {
         text.textContent = `第 ${range.startFloor}-${range.endFloor} 层存在 ${missing.length} 条缺失摘要：${missing.join('、')}`;
         const actions = document.createElement('div');
         actions.className = 'cache-memory-actions';
-        actions.innerHTML = `<button type="button" class="menu_button" data-fill-missing="${missing.join(',')}">先补齐缺失摘要</button><button type="button" class="menu_button" data-continue-checkpoint="${range.startFloor}:${range.endFloor}">继续生成 Checkpoint</button>`;
+        actions.innerHTML = `<button type="button" class="menu_button" data-fill-missing="${missing.join(',')}">先补齐缺失摘要</button><button type="button" class="menu_button" data-continue-checkpoint="${range.startFloor}:${range.endFloor}">继续生成阶段记忆</button>`;
         holder.append(text, actions);
         return holder;
     }
@@ -643,5 +689,20 @@ export class CacheMemoryUI {
         } catch (error) {
             notify('error', `导入失败：${error.message}`);
         }
+    }
+
+    destroy() {
+        this.destroyed = true;
+        this.controller.abort();
+        this.wandObserver?.disconnect();
+        this.wandObserver = null;
+        document.getElementById(ROOT_ID)?.remove();
+        document.getElementById(CONFIG_ID)?.remove();
+        document.getElementById(MANAGER_ID)?.remove();
+        document.getElementById(WAND_CONTAINER_ID)?.remove();
+        document.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
+        document.body.classList.remove('cache-memory-config-open', 'cache-memory-manager-open');
+        this.config = null;
+        this.manager = null;
     }
 }

@@ -1,12 +1,21 @@
 {
-  "display_name": "Cache Memory / Layer Memory",
+  "display_name": "缓存记忆 / Cache Memory",
   "loading_order": 20,
   "requires": [],
   "optional": [],
   "js": "index.js",
   "css": "style.css",
   "author": "SillyTavern Community",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "homePage": "https://github.com/soso454u/SillyTavern-Cache-Memory",
-  "auto_update": true
+  "auto_update": true,
+  "extension_hot_reload": {
+    "self_managed_modules": true
+  },
+  "hooks": {
+    "activate": "onActivate",
+    "update": "onUpdate",
+    "disable": "onDisable",
+    "hot_reload": "onHotUnload"
+  }
 }

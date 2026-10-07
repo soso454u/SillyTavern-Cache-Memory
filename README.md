@@ -1,4 +1,4 @@
-# Cache Memory / Layer Memory
+# 缓存记忆 / Cache Memory
 
 面向长篇 RP 的缓存友好型、追加式剧情记忆扩展。它在正常 assistant 回复完成后，通过完全独立的 OpenAI-compatible 接口生成楼层摘要，再逐层生成冻结的 Checkpoint 和 Long Memory。
 
@@ -13,7 +13,7 @@
 - `extension_settings` + `saveSettingsDebounced()`：保存全局扩展设置。
 - `setExtensionPrompt()` + `extension_prompt_types.IN_PROMPT`：仅在用户开启注入时添加一个固定位置的 system 记忆块。
 
-正常 assistant 楼层按 `!is_user && !is_system` 识别，并额外排除未经过生成的首条角色卡 greeting、narrator、小型系统消息和 tool invocation。SillyTavern 消息目前没有通用稳定 UUID，因此插件用角色、发送时间、生成开始时间和群聊生成 ID 组成稳定指纹，旧聊天缺少这些字段时才回退到内容指纹；编辑会标记 `Stale`，切换 swipe 会按事件给出的消息位置重新绑定，删除后的记录标记 `Orphaned`，不会误配给下一条消息。
+正常助手楼层按 `!is_user && !is_system` 识别，并额外排除未经过生成的首条角色卡开场白、旁白、小型系统消息和工具调用。SillyTavern 消息目前没有通用稳定 UUID，因此插件用角色、发送时间、生成开始时间和群聊生成 ID 组成稳定指纹，旧聊天缺少这些字段时才回退到内容指纹；编辑会标记为“需要更新”，切换备选回复会按事件给出的消息位置重新绑定，删除后的记录标记为“原文已删除”，不会误配给下一条消息。
 
 ## 安装
 
@@ -23,9 +23,9 @@
 SillyTavern/public/scripts/extensions/third-party/cache-memory/
 ```
 
-目录内应直接包含 `manifest.json`、`index.js`、`style.css` 和 `src/`。刷新 SillyTavern 后，在“扩展”设置中展开 **Cache Memory**。
+目录内应直接包含 `manifest.json`、`index.js`、`style.css` 和 `src/`。刷新 SillyTavern 后，在“扩展”设置中展开 **缓存记忆**。
 
-扩展设置页只保留启用开关、魔法棒入口开关和两个启动按钮。完整配置使用独立弹窗，可从扩展设置页的“打开设置”进入，也可从输入框旁的魔法棒扩展菜单点击 **Cache Memory** 进入。“在魔法棒菜单中显示”关闭后，该入口会立即隐藏。
+扩展设置页只保留启用开关、魔法棒入口开关和两个启动按钮。完整配置使用独立的高对比度中文弹窗，可从扩展设置页的“打开设置”进入，也可从输入框旁的魔法棒扩展菜单点击 **缓存记忆** 进入。“在魔法棒菜单中显示”关闭后，该入口会立即隐藏。
 
 也可以在 SillyTavern 的“下载扩展并安装”中填写：
 
@@ -35,21 +35,20 @@ https://github.com/soso454u/SillyTavern-Cache-Memory
 
 扩展 manifest 已启用仓库自动更新。
 
-## 独立 API
+## 模型接口
 
-在 **Cache Memory 设置弹窗 → 独立 API** 中填写：
+在 **缓存记忆设置弹窗 → 模型接口** 中按以下顺序设置：
 
-- API Provider
-- API Base URL，例如 `https://example.com/v1`
-- API Key
-- Model
-- Temperature
-- Max Tokens
-- Timeout
+- 选择“OpenAI 兼容接口”或“豆包方舟 Coding Plan”；
+- 填写接口地址和 API 密钥；选择豆包时会自动填写 `https://ark.cn-beijing.volces.com/api/coding/v3`；
+- 点击“获取模型列表”，然后选择或手动填写摘要模型；
+- 点击“测试连接”。
 
-请求直接发送到 `POST {API Base URL}/chat/completions`。如果填写的是完整 `/chat/completions` 地址，插件不会重复追加路径。请求体采用 OpenAI-compatible `model/messages/temperature/max_tokens` 格式，Key 通过 `Authorization: Bearer ...` 发送。
+生成请求直接发送到 `POST {接口地址}/chat/completions`，模型列表从 `GET {接口地址}/models` 获取。如果填写的是完整 `/chat/completions` 地址，插件不会重复追加路径。请求体采用 OpenAI 兼容的 `model/messages/temperature/max_tokens` 格式，密钥通过 `Authorization: Bearer ...` 发送。
 
-API Key 使用独立的浏览器 `localStorage` 项 `cache_memory_api_key_v1`，不写入聊天、`chat_metadata`、扩展设置，也不复用 SillyTavern 自带 API。这个方案与参考插件一致，但不是安全密钥库：同源网页脚本和能访问该浏览器配置的人可以读取它。目标接口还必须允许 SillyTavern 页面来源的 CORS。面板中的“测试 API”会返回连接状态、模型、HTTP 状态和耗时。
+方舟 Coding Plan 的模型列表接口并非在所有套餐中开放。远端列表不可用时，插件会自动提供一组官方文档中的预设模型，并优先推荐稳定别名 `ark-code-latest`。火山方舟官方同时说明，Coding Plan 个人版权益仅限 AI 编程工具使用；请先确认你的账号与套餐允许在 SillyTavern 插件中调用，避免产生额外费用或账号风险。
+
+API 密钥使用独立的浏览器 `localStorage` 项 `cache_memory_api_key_v1`，不写入聊天、`chat_metadata`、扩展设置，也不复用 SillyTavern 自带 API。它不是安全密钥库：同源网页脚本和能访问该浏览器配置的人可以读取它。目标接口还必须允许 SillyTavern 页面来源的跨域请求。面板中的“测试连接”会返回连接状态、模型、HTTP 状态和耗时。
 
 ## 数据位置
 
@@ -65,20 +64,24 @@ chat_metadata.cache_memory
 extension_settings.cache_memory
 ```
 
-Memory Manager 支持浏览、手动编辑、删除、重新生成、导出 JSON 和导入 JSON。所有替换操作都要求用户点击；后台不会自动重写已经冻结的历史块。
+“记忆管理”支持浏览、手动编辑、删除、重新生成、导出 JSON 和导入 JSON。所有替换操作都要求用户点击；后台不会自动重写已经冻结的历史块。
 
 ## 缓存与注入行为
 
-默认 `Strict Cache Mode` 开启，记忆注入关闭。实现中没有 embedding、向量检索、语义相关度筛选、随机顺序或每轮总总结。
+默认“严格缓存模式”开启，记忆注入关闭。实现中没有向量嵌入、向量检索、语义相关度筛选、随机顺序或每轮总总结。
 
 可选注入模式为：
 
 - 不注入
-- Long Memory
-- Long + Checkpoint
-- Long + Checkpoint + Recent
+- 仅长期记忆
+- 长期记忆 + 阶段记忆
+- 长期记忆 + 阶段记忆 + 近期小总结
 
-注入内容始终按楼层从旧到新生成，并固定使用一个 `<CACHE_MEMORY>` 块。已被 Long Memory 覆盖的 Checkpoint 不重复注入。所有自动生成只追加新范围；旧摘要、旧 Checkpoint 和旧 Long Memory 不会因后续剧情变化而自动重写。
+注入内容始终按楼层从旧到新生成，并固定使用一个 `<CACHE_MEMORY>` 块。已被长期记忆覆盖的阶段记忆不会重复注入。所有自动生成只追加新范围；旧摘要、旧阶段记忆和旧长期记忆不会因后续剧情变化而自动重写。
+
+## 热更新兼容
+
+版本 1.2.0 起实现了 `SillyTavern-Extension-Hot-Reload` 的生命周期协议。更新或禁用时会取消事件监听、计时器、观察器、未完成的接口请求并移除插件界面；所有本地 ES Module 导入也使用版本化地址，避免热更新后混用新旧模块。
 
 ## 验证
 
