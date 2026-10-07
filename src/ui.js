@@ -1,9 +1,9 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.7.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.7.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION } from './defaults.js?v=1.7.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.7.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.7.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.7.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.8.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.8.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION } from './defaults.js?v=1.8.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.8.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.8.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.8.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -75,7 +75,7 @@ function settingsTemplate() {
     return `
         <div id="${ROOT_ID}" class="inline-drawer cache-memory-settings">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>缓存记忆 <small class="cache-memory-version">v${PLUGIN_VERSION}</small></b>
+                <b>缓存记忆</b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
@@ -88,6 +88,7 @@ function settingsTemplate() {
                     <button type="button" class="menu_button" data-open-settings><i class="fa-solid fa-sliders"></i> 打开设置</button>
                     <button type="button" class="menu_button" data-open-manager><i class="fa-solid fa-box-archive"></i> 记忆管理</button>
                 </div>
+                <small class="cache-memory-version">v${PLUGIN_VERSION}</small>
             </div>
         </div>`;
 }
@@ -99,7 +100,7 @@ function configTemplate() {
                 <header class="cache-memory-dialog-header">
                     <div class="cache-memory-dialog-title" title="拖动标题栏移动弹窗">
                         <i class="fa-solid fa-brain" aria-hidden="true"></i>
-                        <div><h3 id="cache-memory-config-title">缓存记忆 <small class="cache-memory-version">v${PLUGIN_VERSION}</small></h3><small>自动整理剧情，保留关键细节 · 可拖动标题栏</small></div>
+                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节 · 可拖动标题栏</small></div>
                     </div>
                     <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button>
                 </header>
@@ -212,7 +213,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.7.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.8.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -446,7 +447,6 @@ export class CacheMemoryUI {
                 return;
             }
             if (event.target.closest('[data-open-manager]')) {
-                this.closeSettings();
                 this.openManager();
             }
         }, { signal: this.controller.signal });
@@ -662,6 +662,9 @@ export class CacheMemoryUI {
 
     openManager() {
         if (!this.manager) this.createManager();
+        this.managerReturnFocus = this.doc.activeElement;
+        const backButton = this.manager.querySelector('[data-manager-back]');
+        backButton.hidden = !this.config || this.config.hidden;
         this.manager.hidden = false;
         this.doc.body.classList.add('cache-memory-manager-open');
         this.renderManager();
@@ -670,6 +673,8 @@ export class CacheMemoryUI {
     closeManager() {
         if (this.manager) this.manager.hidden = true;
         this.doc.body.classList.remove('cache-memory-manager-open');
+        this.managerReturnFocus?.focus?.();
+        this.managerReturnFocus = null;
     }
 
     createManager() {
@@ -679,7 +684,7 @@ export class CacheMemoryUI {
         overlay.hidden = true;
         overlay.innerHTML = `
             <div class="cache-memory-manager-panel" role="dialog" aria-modal="true" aria-label="记忆管理">
-                <header><div><h3>记忆管理</h3><small>查看和整理当前聊天的冻结记忆</small></div><button type="button" class="menu_button" data-manager-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button></header>
+                <header><div><h3>记忆管理</h3><small>查看和整理当前聊天的冻结记忆</small></div><div class="cache-memory-manager-header-actions"><button type="button" class="menu_button" data-manager-back><i class="fa-solid fa-arrow-left"></i> 返回设置</button><button type="button" class="menu_button" data-manager-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button></div></header>
                 <div class="cache-memory-manager-toolbar">
                     <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
                     <button type="button" class="menu_button" data-import><i class="fa-solid fa-upload"></i> 导入 JSON</button>
@@ -847,6 +852,7 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
+        if (event.target.closest('[data-manager-back]')) return this.closeManager();
         if (event.target === this.manager || event.target.closest('[data-manager-close]')) return this.closeManager();
         if (event.target.closest('[data-export]')) {
             const chatId = this.store.current().chatId || 'chat';

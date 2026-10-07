@@ -1,10 +1,13 @@
-.cache-memory-settings { margin: 8px 0; }
-.cache-memory-settings .inline-drawer-content { display: grid; gap: 10px; }
+.cache-memory-settings { margin: 0; }
+.cache-memory-settings .inline-drawer-content { display: none; }
+.cache-memory-settings .inline-drawer-content.open { display: grid; gap: 8px; }
 .cache-memory-launcher-options { display: grid; gap: 8px; }
 .cache-memory-launcher-options .checkbox_label { align-items: center; width: fit-content; }
 .cache-memory-launcher-options input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; margin: 0 7px 0 0; }
 .cache-memory-launcher-actions { margin-top: 0; }
-.cache-memory-version { display: inline-block !important; margin: 0 0 0 8px !important; font-size: 12px; font-weight: 500; opacity: 0.75; white-space: nowrap; vertical-align: middle; }
+.cache-memory-settings > .inline-drawer-content > .cache-memory-version { justify-self: end; margin: 0 2px 0 0; font-size: 11px; font-weight: 500; opacity: 0.65; white-space: nowrap; }
+.cache-memory-manager-header-actions { display: flex; align-items: center; gap: 8px; }
+.cache-memory-manager-header-actions [hidden] { display: none !important; }
 
 .cache-memory-overlay[hidden], #cache-memory-manager[hidden] { display: none !important; }
 .cache-memory-overlay, #cache-memory-manager {

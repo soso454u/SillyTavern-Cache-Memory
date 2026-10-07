@@ -249,12 +249,13 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.7.0');
+    assert.equal(PLUGIN_VERSION, '1.8.0');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
-    assert.match(DEFAULT_PROMPTS.summary, /0–3句/);
-    assert.match(DEFAULT_PROMPTS.checkpoint, /不得使用 PREVIOUS_STATE 或 LONG_FACTS/);
-    assert.match(DEFAULT_PROMPTS.longMemory, /不要自己创建 fact-id/);
+    assert.match(DEFAULT_PROMPTS.summary, /\[State\][\s\S]*\[Open\]/);
+    assert.match(DEFAULT_PROMPTS.summary, /keep-id 由插件分配/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /\[RESOLVED_KEEP\][\s\S]*从 NEW_SUMMARIES 中逐字复制/);
+    assert.match(DEFAULT_PROMPTS.longMemory, /\[UPDATED_FACTS\][\s\S]*\[RETIRED_FACTS\]/);
     const custom = normalizeSettings({ timeoutMs: 60000, prompts: { summary: '自定义模板' } });
     assert.equal(custom.timeoutMs, 60000);
     assert.equal(custom.prompts.summary, '自定义模板');
