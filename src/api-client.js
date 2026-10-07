@@ -129,14 +129,18 @@ export class SummaryApiClient {
 
     async listModels(apiKeyOverride = '') {
         const settings = this.getSettings();
-        if (!settings.apiBaseUrl) return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING };
+        if (!settings.apiBaseUrl) {
+            return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, detail: '请先填写接口地址' };
+        }
         try {
             const { data } = await this.fetchJson(normalizeModelsUrl(settings.apiBaseUrl), {
                 method: 'GET',
                 headers: this.headers(apiKeyOverride),
             });
             const models = readModels(data);
-            if (!models.length) return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING };
+            if (!models.length) {
+                return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, detail: '接口返回成功，但响应中没有可识别的模型数组' };
+            }
             return { models, source: 'remote', warning: '' };
         } catch (error) {
             if (error?.code === 'REQUEST_ABORTED') throw error;

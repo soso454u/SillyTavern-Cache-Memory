@@ -2,15 +2,9 @@ export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
 export const INJECTION_KEY = 'cache_memory_injection';
 export const API_KEY_STORAGE_KEY = 'cache_memory_api_key_v1';
-export const DOUBAO_CODING_BASE_URL = 'https://ark.cn-beijing.volces.com/api/coding/v3';
 
 export const API_PROVIDERS = Object.freeze({
     OPENAI_COMPATIBLE: 'openai-compatible',
-});
-
-export const API_PRESETS = Object.freeze({
-    CUSTOM: 'custom',
-    DOUBAO_CODING: 'doubao-coding',
 });
 
 export const INJECTION_MODES = Object.freeze({

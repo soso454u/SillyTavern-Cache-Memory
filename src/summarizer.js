@@ -1,4 +1,4 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.3.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.3.1';
 
 function pad(value) {
     return String(value).padStart(3, '0');

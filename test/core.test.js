@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeModelsUrl, SummaryApiClient } from '../src/api-client.js';
-import { API_PROVIDERS, DOUBAO_CODING_BASE_URL, INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
+import { API_PROVIDERS, INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
 import { buildInjection } from '../src/injection.js';
 import { MemoryStore } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
@@ -45,11 +45,11 @@ test('migrates legacy provider values without changing API settings', () => {
     for (const provider of ['doubao', 'ark', 'coding_plan', 'doubao-coding']) {
         const settings = normalizeSettings({
             provider,
-            apiBaseUrl: DOUBAO_CODING_BASE_URL,
+            apiBaseUrl: 'https://legacy.example/v1',
             model: 'my-custom-model',
         });
         assert.equal(settings.provider, API_PROVIDERS.OPENAI_COMPATIBLE);
-        assert.equal(settings.apiBaseUrl, DOUBAO_CODING_BASE_URL);
+        assert.equal(settings.apiBaseUrl, 'https://legacy.example/v1');
         assert.equal(settings.model, 'my-custom-model');
     }
 });
@@ -302,18 +302,20 @@ test('model listing reads OpenAI responses and never injects provider-specific p
         assert.deepEqual(remote.models, ['model-a', 'model-b']);
         assert.equal(remote.source, 'remote');
 
-        settings = normalizeSettings({ apiBaseUrl: DOUBAO_CODING_BASE_URL, model: 'my-custom-model' });
+        settings = normalizeSettings({ apiBaseUrl: 'https://example.com/v1', model: 'my-custom-model' });
         globalThis.fetch = async () => new Response('not found', { status: 404 });
         const fallback = await client.listModels();
         assert.equal(fallback.source, 'unavailable');
         assert.deepEqual(fallback.models, []);
         assert.equal(fallback.warning, '无法获取模型列表，请手动填写模型名称。');
+        assert.match(fallback.detail, /HTTP 404/);
         assert.equal(settings.model, 'my-custom-model');
 
         globalThis.fetch = async () => new Response(JSON.stringify({ data: { invalid: true } }), { status: 200 });
         const malformed = await client.listModels();
         assert.equal(malformed.source, 'unavailable');
         assert.equal(malformed.warning, '无法获取模型列表，请手动填写模型名称。');
+        assert.match(malformed.detail, /没有可识别的模型数组/);
     } finally {
         globalThis.fetch = originalFetch;
     }

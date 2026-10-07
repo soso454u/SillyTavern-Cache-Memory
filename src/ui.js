@@ -1,5 +1,5 @@
-import { API_PRESETS, API_PROVIDERS, DEFAULT_PROMPTS, DOUBAO_CODING_BASE_URL, INJECTION_MODES } from './defaults.js?v=1.3.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.3.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, INJECTION_MODES } from './defaults.js?v=1.3.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.3.1';
 
 const ROOT_ID = 'cache-memory-settings';
 const CONFIG_ID = 'cache-memory-config';
@@ -81,10 +81,10 @@ function configTemplate() {
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
-                        <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>所有服务都按 OpenAI 兼容格式请求；方舟只是一个地址快捷预设。</p></div></div>
-                        <div class="cache-memory-api-guide"><i class="fa-solid fa-circle-info"></i><span><strong>推荐顺序：</strong>选择接口预设 → 填写并保存密钥 → 获取模型 → 测试连接。密钥只保存在当前浏览器。</span></div>
+                        <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>统一使用 OpenAI 兼容接口。</p></div></div>
+                        <div class="cache-memory-api-guide"><i class="fa-solid fa-circle-info"></i><span><strong>设置顺序：</strong>填写接口地址 → 保存密钥 → 获取模型或手动填写 → 测试连接。密钥只保存在当前浏览器。</span></div>
                         <div class="cache-memory-grid">
-                            <label>接口预设<select data-api-preset><option value="${API_PRESETS.CUSTOM}">自定义</option><option value="${API_PRESETS.DOUBAO_CODING}">火山方舟 Coding Plan</option></select></label>
+                            <label>接口类型<input type="text" value="OpenAI 兼容接口" readonly></label>
                             <label>接口地址<input type="url" data-setting="apiBaseUrl" placeholder="例如：https://example.com/v1"></label>
                             <label>API 密钥<input type="password" data-api-key autocomplete="off" placeholder="未配置"></label>
                             <label>摘要模型<input type="text" data-setting="model" list="cache-memory-model-list" placeholder="可手动填写，或先获取模型列表"><datalist id="cache-memory-model-list" data-model-list></datalist></label>
@@ -175,8 +175,6 @@ export class CacheMemoryUI {
                 if (element.type === 'checkbox') element.checked = Boolean(settings[key]);
                 else element.value = settings[key] ?? '';
             }
-            const preset = scope.querySelector('[data-api-preset]');
-            if (preset) preset.value = settings.apiBaseUrl === DOUBAO_CODING_BASE_URL ? API_PRESETS.DOUBAO_CODING : API_PRESETS.CUSTOM;
             for (const element of scope.querySelectorAll('[data-prompt]')) {
                 element.value = settings.prompts[element.dataset.prompt] ?? '';
             }
@@ -191,17 +189,6 @@ export class CacheMemoryUI {
         if (!root || root.dataset.cacheMemoryBound === 'true') return;
         root.dataset.cacheMemoryBound = 'true';
         root.addEventListener('change', event => {
-            const preset = event.target.closest('[data-api-preset]');
-            if (preset) {
-                this.updateSettings({
-                    provider: API_PROVIDERS.OPENAI_COMPATIBLE,
-                    apiBaseUrl: preset.value === API_PRESETS.DOUBAO_CODING
-                        ? DOUBAO_CODING_BASE_URL
-                        : this.getSettings().apiBaseUrl === DOUBAO_CODING_BASE_URL ? '' : this.getSettings().apiBaseUrl,
-                });
-                this.populateSettings();
-                return;
-            }
             const element = event.target.closest('[data-setting]');
             if (!element) return;
             const key = element.dataset.setting;
@@ -273,6 +260,13 @@ export class CacheMemoryUI {
                     this.renderModelOptions(result.models);
                     const suffix = result.source === 'unavailable' ? result.warning : `已从接口获取 · 共 ${result.models.length} 个`;
                     this.setStatus(result.warning ? 'warning' : 'success', suffix);
+                    if (result.detail) {
+                        const detail = String(result.detail).slice(0, 300);
+                        console.warn('[Cache Memory] Model list request failed:', detail);
+                        for (const output of document.querySelectorAll('[data-cache-status]')) output.title = `获取模型列表失败：${detail}`;
+                    } else {
+                        for (const output of document.querySelectorAll('[data-cache-status]')) output.removeAttribute('title');
+                    }
                 } catch (error) {
                     this.setStatus('error', `获取模型失败 · ${error.message}`);
                 } finally {
@@ -387,6 +381,7 @@ export class CacheMemoryUI {
         for (const output of document.querySelectorAll('[data-cache-status]')) {
             output.dataset.state = state;
             output.textContent = text;
+            output.removeAttribute('title');
         }
     }
 

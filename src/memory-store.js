@@ -1,4 +1,4 @@
-import { getAssistantMessages } from './utils.js?v=1.3.0';
+import { getAssistantMessages } from './utils.js?v=1.3.1';
 
 export const STORE_VERSION = 1;
 
