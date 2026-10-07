@@ -31,6 +31,10 @@ test('fresh defaults are strict, no injection, CP5/Long50; existing custom inter
     assert.equal(normalizeSettings({ generationTransport: 'stream' }).generationTransport, 'stream');
     assert.equal(normalizeSettings({ generationTransport: 'non-stream' }).generationTransport, 'non-stream');
     assert.equal(normalizeSettings({ generationTransport: 'invalid' }).generationTransport, 'auto');
+    assert.equal(settings.thinkingMode, 'disabled');
+    assert.equal(normalizeSettings({ thinkingMode: 'auto' }).thinkingMode, 'auto');
+    assert.equal(normalizeSettings({ thinkingMode: 'enabled' }).thinkingMode, 'enabled');
+    assert.equal(normalizeSettings({ thinkingMode: 'invalid' }).thinkingMode, 'disabled');
     assert.equal(settings.cacheDebug, false);
     assert.equal(normalizeSettings({ checkpointInterval: 10, longMemoryInterval: 100 }).longMemoryInterval, 100);
 });

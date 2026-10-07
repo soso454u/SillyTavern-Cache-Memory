@@ -1,9 +1,9 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.8.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.8.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION } from './defaults.js?v=1.8.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.8.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.8.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.8.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.8.1';
+import { effectiveInjectionMode } from './cache-control.js?v=1.8.1';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.8.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.8.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.8.1';
+import { collectKeepItems, formatKeepItems, formatLongFacts, projectLongFacts } from './continuity.js?v=1.8.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -147,6 +147,7 @@ function configTemplate() {
                             <label>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
                             <label>超时时间（毫秒）<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
                             <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
+                            <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
                         </div>
                         <div class="cache-memory-actions">
                             <button type="button" class="menu_button" data-save-api-key><i class="fa-solid fa-key"></i> 保存密钥</button>
@@ -213,7 +214,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.8.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.8.1', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 

@@ -379,6 +379,7 @@ export class SummaryApiClient {
             ],
             temperature: Number(request.temperature ?? settings.temperature),
             [tokenParameter]: Number(explicitTokenLimit ?? settings.maxTokens),
+            thinking: { type: settings.thinkingMode ?? 'disabled' },
         };
     }
 

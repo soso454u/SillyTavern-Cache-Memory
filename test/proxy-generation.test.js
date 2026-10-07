@@ -167,11 +167,12 @@ test('a selected max_completion_tokens budget is forwarded by both actual genera
     assert.ok(bodies.every(body => !Object.hasOwn(body, 'max_tokens')));
 });
 
-test('OpenAI-compatible response_format and thinking fields survive the ST transport', async t => {
-    const { client, requests } = fixture(t);
+test('OpenAI-compatible response_format and the configured thinking mode reach the ST transport', async t => {
+    const { client, requests, settings } = fixture(t);
+    settings.thinkingMode = 'enabled';
     await client.complete({
         messages: [{ role: 'user', content: 'structured' }], maxTokens: 64,
-        response_format: { type: 'json_object' }, thinking: { type: 'enabled' }, enable_thinking: true,
+        response_format: { type: 'json_object' }, enable_thinking: true,
         top_p: 0.8, extraBody: { provider_extension: 'kept' },
     });
     const body = JSON.parse(requests[0].options.body);
@@ -327,7 +328,9 @@ test('Summary, Checkpoint and Long Memory all consume SSE through the ST backend
     assert.equal(store.current().longMemories.length, 1);
     assert.equal(requests.length, 3);
     assert.ok(requests.every(item => item.url === '/api/backends/chat-completions/generate'
-        && JSON.parse(item.options.body).stream === true));
+        && JSON.parse(item.options.body).stream === true
+        && JSON.parse(item.options.body).thinking.type === 'disabled'
+        && JSON.parse(JSON.parse(item.options.body).custom_include_body).thinking.type === 'disabled'));
 });
 
 test('streaming and non-streaming connection tests use 16 tokens and expose timing plus final text', async t => {
@@ -348,5 +351,7 @@ test('streaming and non-streaming connection tests use 16 tokens and expose timi
     assert.equal(nonStreamed.ttfcMs, null);
     const bodies = requests.map(item => JSON.parse(item.options.body));
     assert.ok(bodies.every(body => body.max_tokens === 16 && body.temperature === 0
+        && body.thinking.type === 'disabled'
+        && JSON.parse(body.custom_include_body).thinking.type === 'disabled'
         && body.messages[0].content === 'Reply with exactly OK.' && body.messages[1].content === 'OK'));
 });

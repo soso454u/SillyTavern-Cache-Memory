@@ -1,5 +1,5 @@
-import { getAssistantMessages } from './utils.js?v=1.8.0';
-import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.8.0';
+import { getAssistantMessages } from './utils.js?v=1.8.1';
+import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.8.1';
 
 export const STORE_VERSION = 2;
 

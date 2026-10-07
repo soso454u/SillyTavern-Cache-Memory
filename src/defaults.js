@@ -1,4 +1,4 @@
-export const PLUGIN_VERSION = '1.8.0';
+export const PLUGIN_VERSION = '1.8.1';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -13,6 +13,12 @@ export const GENERATION_TRANSPORTS = Object.freeze({
     AUTO: 'auto',
     STREAM: 'stream',
     NON_STREAM: 'non-stream',
+});
+
+export const THINKING_MODES = Object.freeze({
+    DISABLED: 'disabled',
+    AUTO: 'auto',
+    ENABLED: 'enabled',
 });
 
 export const INJECTION_MODES = Object.freeze({
@@ -899,6 +905,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     maxTokens: 4096,
     tokenLimitParameter: 'max_tokens',
     generationTransport: GENERATION_TRANSPORTS.AUTO,
+    thinkingMode: THINKING_MODES.DISABLED,
     timeoutMs: 180000,
     prompts: DEFAULT_PROMPTS,
 });
@@ -931,6 +938,9 @@ export function normalizeSettings(saved = {}) {
     const generationTransport = Object.values(GENERATION_TRANSPORTS).includes(source.generationTransport)
         ? source.generationTransport
         : GENERATION_TRANSPORTS.AUTO;
+    const thinkingMode = Object.values(THINKING_MODES).includes(source.thinkingMode)
+        ? source.thinkingMode
+        : THINKING_MODES.DISABLED;
 
     return {
         ...DEFAULT_SETTINGS,
@@ -952,6 +962,7 @@ export function normalizeSettings(saved = {}) {
         temperature: number(source.temperature, 0.2, 0, 2),
         tokenLimitParameter: source.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens',
         generationTransport,
+        thinkingMode,
         maxTokens: Math.round(number(source.maxTokens, DEFAULT_SETTINGS.maxTokens, 32, 32000)),
         timeoutMs: Math.round(number(source.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 300000)),
         provider,
