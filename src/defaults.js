@@ -1,6 +1,6 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.16.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.16.1';
 
-export const PLUGIN_VERSION = '1.16.0';
+export const PLUGIN_VERSION = '1.16.1';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -898,7 +898,7 @@ const THIRD_PARTY_OBJECTIVE_RULES = `以旁观事实记录员视角记录，只�
 核心原则：
 记录证据和已成立事实，不替剧情解释人物。`;
 
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V1160_DEFAULT_PROMPTS = Object.freeze({
     summary: `你是长期 RP 剧情连续性的事实记录员。
 
 任务：
@@ -1308,6 +1308,42 @@ ${THIRD_PARTY_OBJECTIVE_RULES}
 无退休写无。`,
 });
 
+function insertPromptSection(prompt, anchor, section) {
+    const index = prompt.indexOf(anchor);
+    if (index < 0) throw new Error(`Default prompt anchor not found: ${anchor}`);
+    return `${prompt.slice(0, index)}${section}\n\n${prompt.slice(index)}`;
+}
+
+const IMPORTANT_NPC_SUMMARY_RULES = `【重要 NPC 连续性】
+
+- 本层明确建立或改变重要 NPC 的稳定身份、明确关系、立场、已确认认知、重大行为及持续后果时，准确写入对应 Event / State；具备长期追踪价值的未完成任务、持续调查、重要承诺、秘密与认知差按 KEEP 规则处理，供后续 Long Fact 维护。
+- 重要 NPC 的认知范围必须按正文证据记录；不得让 NPC 凭空知道其尚未获知的秘密。
+- 普通路人、一次性服务人员或没有明确持续剧情作用的人物，不因短暂登场自动升级为长期人物。
+- 重要程度依据正文明确的剧情作用判断；继续保持第三方客观记录，不推断 NPC 的心理、感情或关系变化。`;
+
+const IMPORTANT_NPC_CHECKPOINT_RULES = `【重要 NPC 连续性】
+
+- [Characters] 保留当前登场、通过通讯参与，或虽未在场但仍明确影响当前剧情的 NPC。
+- 暂时退场但具有重要长期意义的 NPC，其稳定身份、关系、立场、已确认认知、重大行为与持续后果交由 [LONG_FACTS] 保存；不得仅因本阶段或连续多阶段未提及就删除、覆盖或判定不再重要。
+- 重要 NPC 再次登场时，继承 PREVIOUS_STATE / LONG_FACTS 中已经成立的身份、关系和认知，不得当作初次登场，也不得让其凭空知道此前未获知的秘密。
+- NPC 的未完成任务、持续调查、重要承诺、秘密与认知差继续由 ACTIVE_KEEP 及现有 KEEP 状态变化规则追踪。
+- 普通路人、一次性服务人员不因短暂登场自动进入长期事实；只依据明确剧情作用判断重要程度。`;
+
+const IMPORTANT_NPC_LONG_RULES = `【重要 NPC 长期保护】
+
+- 重要 NPC 的稳定身份、明确关系、长期立场、已确认认知、重大行为及持续后果具有长期剧情价值时，应进入或更新 Long Fact。
+- NPC 长期未登场、连续多层未提及或暂时退出当前场景，不等于不再重要；不得仅以“未提及”为依据输出 UPDATED_FACTS 或 RETIRED_FACTS，也不得用较短的新描述覆盖其仍有效的长期事实。
+- 重要 NPC 再次登场时，必须继承 EXISTING_LONG_FACTS 中已经成立的身份、关系、立场与认知；不得当作初次登场，不得让其凭空知道此前未获知的秘密。只有 NEW_SUMMARIES 的明确证据才能改变其认知范围。
+- NPC 的未完成任务、持续调查、重要承诺、秘密与认知差按现有 KEEP 规则追踪；已经形成的稳定长期事实仍按 Long Fact 维护，避免重复新增。
+- 普通路人、一次性服务人员不自动进入 Long Fact；只有正文明确赋予其持续剧情作用时才视为重要 NPC。
+- 继续使用第三方客观记录：只保存明确证据与已成立事实，不自行推断 NPC 的心理、感情或关系变化。`;
+
+export const DEFAULT_PROMPTS = Object.freeze({
+    summary: insertPromptSection(V1160_DEFAULT_PROMPTS.summary, '【时间与地点】', IMPORTANT_NPC_SUMMARY_RULES),
+    checkpoint: insertPromptSection(V1160_DEFAULT_PROMPTS.checkpoint, '【历史因果】', IMPORTANT_NPC_CHECKPOINT_RULES),
+    longMemory: insertPromptSection(V1160_DEFAULT_PROMPTS.longMemory, '【剧情日期/时间】', IMPORTANT_NPC_LONG_RULES),
+});
+
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
     'f0e493be', '5cff9164', '92f409f1',
@@ -1365,7 +1401,8 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V190_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+            || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];
     }

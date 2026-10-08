@@ -12,14 +12,14 @@ import {
 } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.16.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.16.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.16.0';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.16.0';
-import { getAssistantMessages } from './src/utils.js?v=1.16.0';
-import { MemoryStore } from './src/memory-store.js?v=1.16.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.16.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.16.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.16.1';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.16.1';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.16.1';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.16.1';
+import { getAssistantMessages } from './src/utils.js?v=1.16.1';
+import { MemoryStore } from './src/memory-store.js?v=1.16.1';
+import { MemorySummarizer } from './src/summarizer.js?v=1.16.1';
+import { CacheMemoryUI } from './src/ui.js?v=1.16.1';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;

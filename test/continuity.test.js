@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PROMPTS, LEGACY_PROMPTS, INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
+import { DEFAULT_PROMPTS, LEGACY_PROMPTS, V1160_DEFAULT_PROMPTS, INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
 import { collectKeepItems, formatLongFacts, parseFactUpdates, projectLongFacts, resolveKeepItems } from '../src/continuity.js';
 import { MemoryStore, normalizeStore } from '../src/memory-store.js';
 import { MemorySummarizer, parseFloorSummary } from '../src/summarizer.js';
@@ -36,6 +36,27 @@ test('old stores and custom prompts survive migration while former default promp
     assert.equal(normalizeSettings().summaryMaxLength, 350);
     assert.equal(migrated.version, 4);
     assert.deepEqual(migrated.keepRegistry, {});
+});
+
+test('official v1.16 prompts migrate to NPC-safe defaults while customized prompts remain untouched', () => {
+    const migrated = normalizeSettings({ prompts: V1160_DEFAULT_PROMPTS });
+    assert.deepEqual(migrated.prompts, DEFAULT_PROMPTS);
+    assert.notEqual(DEFAULT_PROMPTS.longMemory, V1160_DEFAULT_PROMPTS.longMemory);
+
+    const customSummary = `${V1160_DEFAULT_PROMPTS.summary}\n我的自定义规则`;
+    const customized = normalizeSettings({ prompts: { ...V1160_DEFAULT_PROMPTS, summary: customSummary } });
+    assert.equal(customized.prompts.summary, customSummary);
+    assert.equal(customized.prompts.checkpoint, DEFAULT_PROMPTS.checkpoint);
+    assert.equal(customized.prompts.longMemory, DEFAULT_PROMPTS.longMemory);
+
+    assert.match(DEFAULT_PROMPTS.summary, /重要 NPC 的稳定身份[\s\S]*供后续 Long Fact 维护/);
+    assert.match(DEFAULT_PROMPTS.summary, /普通路人、一次性服务人员[\s\S]*不因短暂登场自动升级/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /当前登场[\s\S]*仍明确影响当前剧情的 NPC/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /暂时退场[\s\S]*\[LONG_FACTS\] 保存/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /不得当作初次登场[\s\S]*不得让其凭空知道/);
+    assert.match(DEFAULT_PROMPTS.longMemory, /长期未登场[\s\S]*不得仅以“未提及”为依据输出 UPDATED_FACTS 或 RETIRED_FACTS/);
+    assert.match(DEFAULT_PROMPTS.longMemory, /只有 NEW_SUMMARIES 的明确证据才能改变其认知范围/);
+    assert.match(DEFAULT_PROMPTS.longMemory, /普通路人、一次性服务人员不自动进入 Long Fact/);
 });
 
 test('structured summaries preserve complete state, open threads and KEEP beyond the soft target', () => {
