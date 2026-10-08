@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.15.1';
-import { effectiveInjectionMode } from './cache-control.js?v=1.15.1';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.15.1';
-import { HistoryBackfill } from './history-backfill.js?v=1.15.1';
-import { downloadJson, getAssistantMessages } from './utils.js?v=1.15.1';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.15.1';
-import { buildStructuredSummary } from './summary-format.js?v=1.15.1';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.15.1';
-import { parseFloorSummary } from './summarizer.js?v=1.15.1';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.16.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.16.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.16.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.16.0';
+import { downloadJson, getAssistantMessages } from './utils.js?v=1.16.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.16.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.16.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.16.0';
+import { parseFloorSummary } from './summarizer.js?v=1.16.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -304,16 +304,21 @@ export function configTemplate() {
                     </section>
                     ${managerPanelTemplate()}
                 </div>
+                <footer class="cache-memory-settings-save">
+                    <span data-settings-save-state data-state="saved">已保存</span>
+                    <button type="button" class="menu_button cache-memory-primary" data-save-settings><i class="fa-solid fa-floppy-disk"></i> 保存设置</button>
+                </footer>
             </div>
         </div>`;
 }
 
 export class CacheMemoryUI {
-    constructor({ getSettings, updateSettings, apiClient, store, summarizer, getChat, updateInjection }) {
+    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, updateInjection }) {
         this.root = resolveUIRoot();
         this.doc = this.root.document;
         this.getSettings = getSettings;
         this.updateSettings = updateSettings;
+        this.persistSettings = persistSettings;
         this.apiClient = apiClient;
         this.store = store;
         this.summarizer = summarizer;
@@ -333,6 +338,10 @@ export class CacheMemoryUI {
         this.managerExpanded = { summaries: new Set(), checkpoints: new Set(), facts: new Set(), keeps: new Set() };
         this.managerEditing = null;
         this.keepBatchMode = false;
+        this.settingsDirty = false;
+        this.missingCheckpointController = null;
+        this.missingCheckpointRunId = 0;
+        this.missingCheckpointState = { status: 'idle', total: 0, processed: 0, created: 0, skipped: 0, failed: 0, currentRange: null, blocked: [], errors: [] };
         if (summarizer && store && getChat) this.backfill = new HistoryBackfill({
             summarizer, store, getChat, onProgress: () => this.renderBackfillProgress(),
         });
@@ -346,7 +355,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.15.1', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.16.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -461,6 +470,27 @@ export class CacheMemoryUI {
             const keyInput = scope.querySelector('[data-api-key]');
             if (keyInput) keyInput.placeholder = this.apiClient.hasApiKey() ? '已保存，留空表示不更改' : '未配置';
         }
+        this.renderSettingsSaveState();
+    }
+
+    renderSettingsSaveState() {
+        for (const output of this.config?.querySelectorAll?.('[data-settings-save-state]') ?? []) {
+            output.dataset.state = this.settingsDirty ? 'dirty' : 'saved';
+            output.textContent = this.settingsDirty ? '有未保存修改' : '已保存';
+        }
+    }
+
+    markSettingsDirty() {
+        this.settingsDirty = true;
+        this.renderSettingsSaveState();
+    }
+
+    async saveSettingsNow() {
+        if (this.persistSettings) await this.persistSettings();
+        else this.updateSettings?.({});
+        this.settingsDirty = false;
+        this.renderSettingsSaveState();
+        notify('success', 'Cache Memory 设置已保存');
     }
 
     bindSettings(root) {
@@ -473,6 +503,7 @@ export class CacheMemoryUI {
                 const input = root.querySelector('[data-setting="model"]');
                 input.value = modelSelect.value;
                 this.updateSettings({ model: input.value });
+                this.markSettingsDirty();
                 modelSelect.value = '';
                 return;
             }
@@ -482,6 +513,7 @@ export class CacheMemoryUI {
             const numeric = ['checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'timeoutMs'];
             const value = element.type === 'checkbox' ? element.checked : numeric.includes(key) ? Number(element.value) : element.value;
             this.updateSettings({ [key]: value, ...(key === 'apiBaseUrl' ? { provider: API_PROVIDERS.OPENAI_COMPATIBLE } : {}) });
+            this.markSettingsDirty();
             this.populateSettings();
             if (key === 'showWandButton') this.syncWandEntry();
             if (['enabled', 'strictCacheMode', 'injectionMode', 'recentSummaryCount', 'recentCheckpointCount', 'memoryStrategy'].includes(key)) this.updateInjection('settings changed');
@@ -491,11 +523,13 @@ export class CacheMemoryUI {
             const setting = event.target.closest('[data-setting="model"]');
             if (setting) {
                 this.updateSettings({ model: setting.value });
+                this.markSettingsDirty();
                 return;
             }
             const element = event.target.closest('[data-prompt]');
             if (!element) return;
             this.updateSettings({ prompts: { ...this.getSettings().prompts, [element.dataset.prompt]: element.value } });
+            this.markSettingsDirty();
         }, { signal: this.controller.signal });
         root.addEventListener('click', async event => {
             if (event.target === this.config || event.target.closest('[data-settings-close]')) {
@@ -511,11 +545,17 @@ export class CacheMemoryUI {
                 this.activateSettingsTab(tab.dataset.settingsTab);
                 return;
             }
+            if (event.target.closest('[data-save-settings]')) {
+                try { await this.saveSettingsNow(); }
+                catch (error) { notify('error', `保存设置失败：${error.message}`); }
+                return;
+            }
             const reset = event.target.closest('[data-reset-prompt]');
             if (reset) {
                 const name = reset.dataset.resetPrompt;
                 const defaults = this.getSettings().memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
                 this.updateSettings({ prompts: { ...this.getSettings().prompts, [name]: defaults[name] } });
+                this.markSettingsDirty();
                 this.populateSettings();
                 return;
             }
@@ -551,6 +591,7 @@ export class CacheMemoryUI {
                     if (modelInput && !modelInput.value.trim() && result.models.length) {
                         modelInput.value = result.models[0];
                         this.updateSettings({ model: modelInput.value });
+                        this.markSettingsDirty();
                     }
                     const suffix = result.source === 'unavailable'
                         ? formatModelListFailure(result)
@@ -937,10 +978,79 @@ export class CacheMemoryUI {
         section.append(this.element('p', '', range.endFloor <= latest
             ? `已聚合至第 ${range.startFloor - 1} 层；下一段为 ${range.startFloor}–${range.endFloor} 层${failed ? '（上次失败）' : ''}。`
             : `已聚合至第 ${range.startFloor - 1} 层；尚未到下一个 Checkpoint 边界。`));
+        const plan = this.summarizer.getMissingCheckpointPlan();
+        const filling = this.isMissingCheckpointBackfillActive();
         const actions = this.element('div', 'cache-memory-actions cache-memory-aggregate-controls');
-        actions.innerHTML = `<label>从指定楼层继续<input type="number" min="1" max="${latest}" value="${range.startFloor}" data-aggregate-start></label><button type="button" class="menu_button" data-aggregate-continue ${range.endFloor > latest ? 'disabled' : ''}>继续聚合</button>`;
-        section.append(actions);
+        actions.innerHTML = `<label>从指定楼层继续<input type="number" min="1" max="${latest}" value="${range.startFloor}" data-aggregate-start></label><button type="button" class="menu_button" data-aggregate-continue ${range.endFloor > latest || filling || this.backfill?.active ? 'disabled' : ''}>继续聚合</button><button type="button" class="menu_button cache-memory-primary" data-fill-missing-checkpoints title="扫描并补齐当前聊天中缺失的阶段记忆，不覆盖已有内容。" ${!plan.candidates.length || filling || this.backfill?.active ? 'disabled' : ''}>补齐缺失阶段记忆</button><button type="button" class="menu_button" data-cancel-missing-checkpoints ${filling ? '' : 'disabled'}>取消补齐</button>`;
+        const blocked = plan.blocked.map(item => `第 ${item.startFloor}–${item.endFloor} 层缺 Summary：${item.missingFloors.join('、')}`).join('；');
+        const state = this.missingCheckpointState;
+        const status = this.element('p', 'cache-memory-checkpoint-backfill-status');
+        if (filling || ['completed', 'cancelled', 'failed'].includes(state.status)) {
+            const labels = { running: '正在补齐', cancelling: '正在取消', completed: '补齐完成', cancelled: '已取消', failed: '补齐失败' };
+            const current = state.currentRange ? ` · 当前：第 ${state.currentRange.startFloor}–${state.currentRange.endFloor} 层` : '';
+            status.textContent = `${labels[state.status] ?? state.status} · ${state.processed} / ${state.total}${current}\n新增：${state.created} · 跳过：${state.skipped} · 失败：${state.failed}${state.errors?.length ? `\n${state.errors.join('\n')}` : ''}`;
+        } else {
+            status.textContent = `可补齐 ${plan.candidates.length} 个完整分组；已有 ${plan.existing.length} 个分组。`;
+        }
+        if (blocked) status.textContent += `\n跳过：${blocked}`;
+        const help = this.element('small', 'cache-memory-help', '扫描并补齐当前聊天中缺失的阶段记忆，不覆盖已有内容。不会重新计算已有 Long Memory。');
+        section.append(actions, status, help);
         return section;
+    }
+
+    isMissingCheckpointBackfillActive() {
+        return Boolean(this.missingCheckpointController) || ['running', 'cancelling'].includes(this.missingCheckpointState.status);
+    }
+
+    cancelMissingCheckpointBackfill({ discard = false } = {}) {
+        if (!this.isMissingCheckpointBackfillActive()) return;
+        const controller = this.missingCheckpointController;
+        if (discard) {
+            this.missingCheckpointRunId++;
+            this.missingCheckpointController = null;
+            this.missingCheckpointState = { status: 'idle', total: 0, processed: 0, created: 0, skipped: 0, failed: 0, currentRange: null, blocked: [], errors: [] };
+        } else {
+            this.missingCheckpointState.status = 'cancelling';
+        }
+        controller?.abort();
+        if (!discard) this.renderManager();
+    }
+
+    async startMissingCheckpointBackfill() {
+        if (this.isMissingCheckpointBackfillActive() || this.backfill?.active) return;
+        const plan = this.summarizer.getMissingCheckpointPlan();
+        if (!plan.candidates.length) return;
+        const controller = new AbortController();
+        const runId = ++this.missingCheckpointRunId;
+        this.missingCheckpointController = controller;
+        this.missingCheckpointState = { status: 'running', total: plan.candidates.length, processed: 0, created: 0, skipped: 0, failed: 0, currentRange: null, blocked: plan.blocked, errors: [] };
+        this.renderManager();
+        try {
+            const result = await this.summarizer.enqueueForCurrentChat(() => this.summarizer.fillMissingCheckpoints({
+                signal: controller.signal,
+                onProgress: progress => {
+                    if (runId !== this.missingCheckpointRunId) return;
+                    if (this.missingCheckpointState.status !== 'cancelling') this.missingCheckpointState = { ...progress, status: 'running' };
+                    this.renderManager();
+                },
+            }));
+            if (runId !== this.missingCheckpointRunId) return;
+            this.missingCheckpointState = { ...result, status: 'completed' };
+            notify('success', `阶段记忆补齐完成：新增 ${result.created} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条。`);
+        } catch (error) {
+            if (runId !== this.missingCheckpointRunId) return;
+            if (['REQUEST_ABORTED', 'CHAT_CHANGED'].includes(error.code)) this.missingCheckpointState.status = 'cancelled';
+            else {
+                this.missingCheckpointState.status = 'failed';
+                this.missingCheckpointState.errors = [...(this.missingCheckpointState.errors ?? []), error.message];
+                notify('error', `阶段记忆补齐失败：${error.message}`);
+            }
+        } finally {
+            if (runId === this.missingCheckpointRunId) {
+                if (this.missingCheckpointController === controller) this.missingCheckpointController = null;
+                this.renderManager();
+            }
+        }
     }
 
     renderSummaryPage() {
@@ -1291,11 +1401,11 @@ export class CacheMemoryUI {
         for (const button of this.manager.querySelectorAll('[data-backfill-action]')) {
             const action = button.dataset.backfillAction;
             button.disabled = action === 'pause' ? s.status !== 'running' : action === 'resume' ? !['paused', 'pausing'].includes(s.status)
-                : action === 'cancel' ? !['running', 'pausing', 'paused'].includes(s.status) : this.backfill.active || !latest;
+                : action === 'cancel' ? !['running', 'pausing', 'paused'].includes(s.status) : this.backfill.active || this.isMissingCheckpointBackfillActive() || !latest;
         }
-        for (const button of this.manager.querySelectorAll('[data-manager-action], [data-fill-missing], [data-continue-checkpoint], [data-import]')) {
+        for (const button of this.manager.querySelectorAll('[data-manager-action], [data-fill-missing], [data-continue-checkpoint], [data-import], [data-fill-missing-checkpoints], [data-aggregate-continue]')) {
             const messageId = button.closest('[data-memory-type="summary"]')?.dataset.memoryId;
-            button.disabled = this.backfill.active || Boolean(messageId && this.summarizer.isSummarizing(messageId));
+            button.disabled = this.backfill.active || this.isMissingCheckpointBackfillActive() || Boolean(messageId && this.summarizer.isSummarizing(messageId));
         }
     }
 
@@ -1308,6 +1418,14 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
+        if (event.target.closest('[data-cancel-missing-checkpoints]')) {
+            this.cancelMissingCheckpointBackfill();
+            return;
+        }
+        if (event.target.closest('[data-fill-missing-checkpoints]')) {
+            await this.startMissingCheckpointBackfill();
+            return;
+        }
         if (event.target.closest('[data-reinject]')) {
             this.updateInjection('manual reinject');
             notify('success', 'Cache Memory 已重新注入');
@@ -1336,6 +1454,7 @@ export class CacheMemoryUI {
             clearButton.disabled = true;
             try {
                 this.backfill?.cancel({ discard: true });
+                this.cancelMissingCheckpointBackfill({ discard: true });
                 this.summarizer.invalidateContext();
                 this.apiClient.abortAll();
                 this.store.clearCurrentChat();
@@ -1429,6 +1548,7 @@ export class CacheMemoryUI {
             return;
         }
         if (event.target.closest('[data-aggregate-continue]')) {
+            if (this.isMissingCheckpointBackfillActive() || this.backfill?.active) return;
             const start = Number(this.manager.querySelector('[data-aggregate-start]')?.value);
             event.target.closest('[data-aggregate-continue]').disabled = true;
             try { await this.summarizer.enqueueForCurrentChat(() => this.summarizer.generateAggregatesFrom(start)); }
@@ -1447,7 +1567,7 @@ export class CacheMemoryUI {
             const action = batchButton.dataset.backfillAction;
             if (['pause', 'resume', 'cancel'].includes(action)) return this.backfill[action]();
             const latest = getAssistantMessages(this.getChat()).at(-1);
-            if (!latest || this.backfill.active) return;
+            if (!latest || this.backfill.active || this.isMissingCheckpointBackfillActive()) return;
             if (action === 'latest') {
                 const record = this.store.getSummary(latest.messageId);
                 if (record && record.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成最新摘要', message: '重新生成当前最新层摘要？', confirmLabel: '确认重新生成' })) return;
@@ -1662,6 +1782,7 @@ export class CacheMemoryUI {
         if (this.destroyed) return;
         this.destroyed = true;
         this.backfill?.cancel({ discard: true });
+        this.cancelMissingCheckpointBackfill({ discard: true });
         this.controller.abort();
         if (this.wandFrame != null) this.root.cancelAnimationFrame(this.wandFrame);
         this.style?.remove();

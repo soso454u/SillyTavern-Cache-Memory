@@ -1,8 +1,8 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.15.1';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.15.1';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.15.1';
-import { extractSummarySource } from './summary-source.js?v=1.15.1';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.15.1';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.16.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.16.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.16.0';
+import { extractSummarySource } from './summary-source.js?v=1.16.0';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.16.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -253,6 +253,82 @@ export class MemorySummarizer {
             startFloor = next.endFloor + 1;
         }
         return { startFloor, endFloor: startFloor + settings.checkpointInterval - 1 };
+    }
+
+    getMissingCheckpointPlan() {
+        const interval = Math.max(1, Number(this.getSettings().checkpointInterval) || 5);
+        const assistants = getAssistantMessages(this.getChat());
+        const latestFloor = assistants.at(-1)?.floor ?? 0;
+        const byFloor = new Map(assistants.map(entry => [entry.floor, entry]));
+        const store = this.store.current();
+        const candidates = [];
+        const blocked = [];
+        const existing = [];
+        for (let startFloor = 1; startFloor + interval - 1 <= latestFloor; startFloor += interval) {
+            const endFloor = startFloor + interval - 1;
+            const range = { startFloor, endFloor };
+            const checkpoint = store.checkpoints.find(item => item.startFloor === startFloor && item.endFloor === endFloor);
+            if (checkpoint) {
+                existing.push({ ...range, checkpointId: checkpoint.id });
+                continue;
+            }
+            const missingFloors = [];
+            for (let floor = startFloor; floor <= endFloor; floor += 1) {
+                const entry = byFloor.get(floor);
+                const summary = entry ? store.summaries[entry.messageId] : null;
+                if (!summary || !isUsableMemory(summary)) missingFloors.push(floor);
+            }
+            if (missingFloors.length) blocked.push({ ...range, missingFloors });
+            else candidates.push(range);
+        }
+        return { interval, latestFloor, candidates, blocked, existing };
+    }
+
+    async fillMissingCheckpoints({ signal, onProgress = () => {} } = {}) {
+        const chatId = this.store.current().chatId;
+        const revision = this.contextRevision;
+        const plan = this.getMissingCheckpointPlan();
+        const result = {
+            total: plan.candidates.length,
+            processed: 0,
+            created: 0,
+            skipped: 0,
+            failed: 0,
+            currentRange: null,
+            blocked: plan.blocked,
+            errors: [],
+        };
+        const assertActive = () => {
+            if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('阶段记忆补齐');
+            if (signal?.aborted) throw Object.assign(new Error('阶段记忆补齐已取消'), { code: 'REQUEST_ABORTED' });
+        };
+        onProgress({ ...result });
+        return this.store.withAggregateBatch(async () => {
+            for (const range of plan.candidates) {
+                assertActive();
+                result.currentRange = { ...range };
+                onProgress({ ...result });
+                const existing = this.store.current().checkpoints.find(item => item.startFloor === range.startFloor && item.endFloor === range.endFloor);
+                if (existing) {
+                    result.skipped++;
+                } else {
+                    try {
+                        const created = await this.generateCheckpoint(range.startFloor, range.endFloor, { overwrite: false, signal });
+                        if (created) result.created++;
+                        else result.skipped++;
+                    } catch (error) {
+                        if (['CHAT_CHANGED', 'REQUEST_ABORTED'].includes(error.code)) throw error;
+                        result.failed++;
+                        result.errors.push(`第 ${range.startFloor}–${range.endFloor} 层：${error.message}`);
+                    }
+                }
+                result.processed++;
+                onProgress({ ...result });
+            }
+            result.currentRange = null;
+            onProgress({ ...result });
+            return result;
+        });
     }
 
     async generateAggregatesFrom(startFloor, { signal } = {}) {

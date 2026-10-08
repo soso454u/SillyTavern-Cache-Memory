@@ -12,14 +12,14 @@ import {
 } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.15.1';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.15.1';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.15.1';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.15.1';
-import { getAssistantMessages } from './src/utils.js?v=1.15.1';
-import { MemoryStore } from './src/memory-store.js?v=1.15.1';
-import { MemorySummarizer } from './src/summarizer.js?v=1.15.1';
-import { CacheMemoryUI } from './src/ui.js?v=1.15.1';
+import { SummaryApiClient } from './src/api-client.js?v=1.16.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.16.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.16.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.16.0';
+import { getAssistantMessages } from './src/utils.js?v=1.16.0';
+import { MemoryStore } from './src/memory-store.js?v=1.16.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.16.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.16.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -84,6 +84,12 @@ function updateSettings(patch) {
     return settings;
 }
 
+function persistSettings() {
+    extension_settings[MODULE_ID] = settings;
+    saveSettingsDebounced();
+    return saveSettingsDebounced.flush?.();
+}
+
 const store = new MemoryStore({
     getMetadata: () => chat_metadata,
     getChatId: () => getCurrentChatId() ?? '',
@@ -132,6 +138,7 @@ function refreshChatState() {
     if (chatId !== activeChatId) {
         summarizer.invalidateContext();
         ui?.backfill?.cancel({ discard: true });
+        ui?.cancelMissingCheckpointBackfill({ discard: true });
         activeChatId = chatId;
         updateInjection('chat changed');
     } else if (!settings.strictCacheMode) updateInjection('history metadata changed');
@@ -189,6 +196,7 @@ function initialize() {
     ui = new CacheMemoryUI({
         getSettings: () => settings,
         updateSettings,
+        persistSettings,
         apiClient,
         store,
         summarizer,

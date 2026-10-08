@@ -60,6 +60,65 @@ test('50-floor old chat: manual 1–10 creates two checkpoints once after the ba
     assert.deepEqual(f.chat, f.original);
 });
 
+test('missing Checkpoint backfill scans complete 5-floor groups, preserves every existing record and never builds Long Memory', async () => {
+    const f = fixture(20);
+    const entries = getAssistantMessages(f.chat);
+    for (const entry of entries.filter(item => item.floor !== 12)) {
+        f.store.addSummary({
+            messageId: entry.messageId,
+            messageIndex: entry.messageIndex,
+            sourceFingerprint: entry.fingerprint,
+            floor: entry.floor,
+            title: `S${entry.floor}`,
+            event: `E${entry.floor}`,
+            raw: `S${entry.floor}`,
+            status: 'frozen',
+            frozen: true,
+        });
+    }
+    const manual = { id: 'checkpoint-manual', startFloor: 6, endFloor: 10, content: '手动状态', status: 'manual-edited', manualEdited: true, frozen: true };
+    const failed = { id: 'checkpoint-failed', startFloor: 16, endFloor: 20, content: '旧失败', status: 'failed', frozen: false };
+    f.store.addCheckpoint(manual);
+    f.store.addCheckpoint(failed);
+    const before = structuredClone(f.store.current().checkpoints);
+    let longCalls = 0;
+    f.summarizer.generateDueLongMemories = async () => { longCalls++; };
+
+    const plan = f.summarizer.getMissingCheckpointPlan();
+    assert.deepEqual(plan.candidates, [{ startFloor: 1, endFloor: 5 }]);
+    assert.deepEqual(plan.blocked, [{ startFloor: 11, endFloor: 15, missingFloors: [12] }]);
+    assert.deepEqual(plan.existing.map(item => [item.startFloor, item.endFloor]), [[6, 10], [16, 20]]);
+
+    const result = await f.summarizer.fillMissingCheckpoints();
+    assert.equal(result.created, 1);
+    assert.equal(result.failed, 0);
+    assert.equal(longCalls, 0);
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual(f.store.current().checkpoints.find(item => item.id === manual.id), before.find(item => item.id === manual.id));
+    assert.deepEqual(f.store.current().checkpoints.find(item => item.id === failed.id), before.find(item => item.id === failed.id));
+    assert.ok(f.store.current().checkpoints.some(item => item.startFloor === 1 && item.endFloor === 5 && item.status === 'frozen'));
+    assert.ok(!f.store.current().checkpoints.some(item => item.startFloor === 11 && item.endFloor === 15));
+});
+
+test('missing Checkpoint backfill cancellation aborts the active request without writing a failed record', async () => {
+    const f = fixture(5);
+    for (const entry of getAssistantMessages(f.chat)) {
+        f.store.addSummary({ messageId: entry.messageId, messageIndex: entry.messageIndex, sourceFingerprint: entry.fingerprint,
+            floor: entry.floor, title: 'S', event: 'E', raw: 'S', status: 'frozen', frozen: true });
+    }
+    const started = gate();
+    f.apiClient.complete = request => new Promise((resolve, reject) => {
+        started.resolve();
+        request.signal.addEventListener('abort', () => reject(Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' })), { once: true });
+    });
+    const controller = new AbortController();
+    const pending = f.summarizer.fillMissingCheckpoints({ signal: controller.signal });
+    await started.promise;
+    controller.abort();
+    await assert.rejects(pending, error => error.code === 'REQUEST_ABORTED');
+    assert.deepEqual(f.store.current().checkpoints, []);
+});
+
 test('transient failures retry at 2s/5s, persistent errors do not stop later floors; 401 is not retried', async () => {
     const f = fixture(4);
     const attempts = new Map();
@@ -294,7 +353,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.15.1');
+    assert.equal(PLUGIN_VERSION, '1.16.0');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);

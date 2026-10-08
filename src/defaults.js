@@ -1,6 +1,6 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.15.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.16.0';
 
-export const PLUGIN_VERSION = '1.15.1';
+export const PLUGIN_VERSION = '1.16.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';

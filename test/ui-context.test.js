@@ -31,6 +31,21 @@ test('memory manager is a settings tab instead of a second dialog', () => {
     assert.match(html, /data-settings-tab="manager"/);
     assert.match(html, /id="cache-memory-manager"[^>]+data-settings-panel="manager"/);
     assert.doesNotMatch(html, /data-manager-back|data-manager-close|aria-label="记忆管理"/);
+    assert.match(html, /data-save-settings/);
+    assert.match(html, /data-settings-save-state[^>]*>已保存/);
+});
+
+test('explicit settings save re-persists current realtime settings and clears dirty feedback', async () => {
+    let saves = 0;
+    const output = { dataset: {}, textContent: '' };
+    const ui = new CacheMemoryUI({ persistSettings: async () => { saves++; } });
+    ui.config = { querySelectorAll: selector => selector === '[data-settings-save-state]' ? [output] : [] };
+    ui.markSettingsDirty();
+    assert.equal(output.textContent, '有未保存修改');
+    await ui.saveSettingsNow();
+    assert.equal(saves, 1);
+    assert.equal(output.textContent, '已保存');
+    assert.equal(output.dataset.state, 'saved');
 });
 
 test('KEEP selection stays hidden until batch editing is enabled', async () => {
