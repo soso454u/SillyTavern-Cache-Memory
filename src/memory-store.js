@@ -1,5 +1,5 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.17.0';
-import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.17.0';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.18.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.18.0';
 
 export const STORE_VERSION = 5;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);

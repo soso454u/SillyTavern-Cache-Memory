@@ -1,6 +1,7 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.17.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.18.0';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.18.0';
 
-export const PLUGIN_VERSION = '1.17.0';
+export const PLUGIN_VERSION = '1.18.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1377,6 +1378,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
     recentCheckpointCount: 2,
     strictCacheMode: true,
     cacheDebug: false,
+    apiCacheAdapterEnabled: false,
+    apiCacheDefaultPolicy: DEFAULT_API_CACHE_POLICY,
+    apiCacheConnections: {},
+    apiCacheLastConnection: '',
+    apiCacheLastConnectionLabel: '',
     injectionMode: INJECTION_MODES.CHECKPOINT_BOUNDARY,
     provider: API_PROVIDERS.OPENAI_COMPATIBLE,
     apiBaseUrl: '',
@@ -1450,6 +1456,11 @@ export function normalizeSettings(saved = {}) {
         independentApi: source.independentApi !== false,
         strictCacheMode: source.strictCacheMode !== false,
         cacheDebug: source.cacheDebug === true,
+        apiCacheAdapterEnabled: source.apiCacheAdapterEnabled === true,
+        apiCacheDefaultPolicy: normalizeApiCachePolicy(source.apiCacheDefaultPolicy),
+        apiCacheConnections: normalizeApiCacheConnections(source.apiCacheConnections),
+        apiCacheLastConnection: /^cm-[0-9a-z]{1,8}$/.test(String(source.apiCacheLastConnection || '')) ? source.apiCacheLastConnection : '',
+        apiCacheLastConnectionLabel: String(source.apiCacheLastConnectionLabel || '').slice(0, 300),
         memoryStrategy,
         checkpointInterval,
         longMemoryInterval,

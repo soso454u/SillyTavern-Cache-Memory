@@ -1,12 +1,13 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.17.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.17.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.17.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.17.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.17.0';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.17.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.17.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.17.0';
-import { parseFloorSummary } from './summarizer.js?v=1.17.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.18.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.18.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.18.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.18.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.18.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.18.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.18.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.18.0';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.18.0';
+import { parseFloorSummary } from './summarizer.js?v=1.18.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -259,10 +260,10 @@ export function configTemplate() {
                 <div class="cache-memory-config-status cache-memory-status" data-cache-status data-state="idle">等待生成</div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
                     <button type="button" class="cache-memory-tab is-active" role="tab" aria-selected="true" data-settings-tab="general"><i class="fa-solid fa-layer-group"></i><span>常规</span></button>
+                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="manager"><i class="fa-solid fa-box-archive"></i><span>记忆管理</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="api"><i class="fa-solid fa-key"></i><span>模型接口</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="injection"><i class="fa-solid fa-syringe"></i><span>记忆注入</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="prompts"><i class="fa-solid fa-file-lines"></i><span>提示词</span></button>
-                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="manager"><i class="fa-solid fa-box-archive"></i><span>记忆管理</span></button>
                 </nav>
                 <div class="cache-memory-config-content">
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="general">
@@ -288,6 +289,7 @@ export function configTemplate() {
                         </div>
                         <small class="cache-memory-help">默认每 5 层提交 Checkpoint、每 50 层提交分段 Long Memory；已有自定义间隔保留。后台增量状态和 KEEP 不会逐层刷新严格模式的 Prompt。</small>
                     </section>
+                    ${managerPanelTemplate()}
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
                         <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>统一使用 OpenAI 兼容接口。</p></div></div>
@@ -317,6 +319,29 @@ export function configTemplate() {
                         <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。所有第三方模型请求均由 SillyTavern 同源后端转发，浏览器不会跨域直连。</small>
                         <small class="cache-memory-help">模型输入框支持手动填写和下拉选择；获取列表失败时不会影响手动填写与测试连接。</small>
                         <small class="cache-memory-help">新配置默认超时 180000 毫秒。已有超时设置保留；若已调高但仍约 60 秒返回 504，请检查服务器前的网关超时设置。</small>
+                        <section class="cache-memory-api-adapter">
+                            <div class="cache-memory-section-heading"><div><h4>API 缓存适配器（可选）</h4><p>控制主模型请求的缓存断点；实际结构改写只在 SillyTavern 服务端完成。</p></div></div>
+                            <label class="cache-memory-toggle"><span><strong>启用服务端缓存适配器</strong><small>服务端插件缺失或接口不兼容时保持原请求</small></span><input type="checkbox" data-setting="apiCacheAdapterEnabled"></label>
+                            <div class="cache-memory-adapter-connection"><strong>当前连接：</strong><span data-api-cache-connection>尚未识别</span></div>
+                            <div class="cache-memory-switches">
+                                <label class="cache-memory-toggle"><span><strong>启用此连接策略</strong><small>按主模型 API 连接分别保存</small></span><input type="checkbox" data-api-cache-policy="enabled"></label>
+                                <label class="cache-memory-toggle"><span><strong>固定设定断点</strong><small>只选择独立、非空的前置 system 消息块</small></span><input type="checkbox" data-api-cache-policy="cacheStatic"></label>
+                                <label class="cache-memory-toggle"><span><strong>冻结记忆断点</strong><small>识别 CACHE_MEMORY / Checkpoint / Long Memory</small></span><input type="checkbox" data-api-cache-policy="cacheMemory"></label>
+                                <label class="cache-memory-toggle"><span><strong>滚动历史断点</strong><small>按独立 user / assistant 消息块选择</small></span><input type="checkbox" data-api-cache-policy="cacheHistory"></label>
+                            </div>
+                            <div class="cache-memory-grid">
+                                <label>缓存 TTL<select data-api-cache-policy="ttl"><option value="5m">5 分钟</option><option value="1h">1 小时</option></select></label>
+                                <label>历史断点深度<input type="number" min="1" max="64" data-api-cache-policy="historyDepth"></label>
+                                <label>接口兼容模式<select data-api-cache-policy="compatibility"><option value="${API_CACHE_COMPATIBILITY.AUTO}">自动检测（仅确认兼容时启用）</option><option value="${API_CACHE_COMPATIBILITY.ANTHROPIC_BLOCKS}">Anthropic 内容块（手动确认）</option></select></label>
+                            </div>
+                            <div class="cache-memory-actions">
+                                <button type="button" class="menu_button" data-api-cache-probe><i class="fa-solid fa-server"></i> 检测服务端适配器</button>
+                                <button type="button" class="menu_button" data-api-cache-reset><i class="fa-solid fa-arrow-rotate-left"></i> 此连接恢复默认</button>
+                            </div>
+                            <div class="cache-memory-adapter-status" data-api-cache-status data-state="idle">尚未检测服务端适配器</div>
+                            <pre class="cache-memory-continuity" data-api-cache-preview hidden></pre>
+                            <small class="cache-memory-warning">Claude 原生源的官方缓存由 ST 服务端 config.yaml 管理，本适配器不会覆盖。自动模式只对确认支持内容块 cache_control 的连接生效；检测到 New API 已有缓存字段时会旁路，避免双重改写。</small>
+                        </section>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
@@ -334,7 +359,6 @@ export function configTemplate() {
                         <details><summary>阶段记忆提示词</summary><textarea rows="12" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
                         <details><summary>长期记忆提示词</summary><textarea rows="10" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
                     </section>
-                    ${managerPanelTemplate()}
                 </div>
                 <footer class="cache-memory-settings-save">
                     <span data-settings-save-state data-state="saved">已保存</span>
@@ -345,7 +369,7 @@ export function configTemplate() {
 }
 
 export class CacheMemoryUI {
-    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, updateInjection, persistence }) {
+    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, updateInjection, persistence, apiCacheAdapter }) {
         this.root = resolveUIRoot();
         this.doc = this.root.document;
         this.getSettings = getSettings;
@@ -357,6 +381,7 @@ export class CacheMemoryUI {
         this.getChat = getChat;
         this.updateInjection = updateInjection;
         this.persistence = persistence;
+        this.apiCacheAdapter = apiCacheAdapter;
         this.manager = null;
         this.config = null;
         this.wandObserver = null;
@@ -390,7 +415,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.17.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.18.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -504,7 +529,16 @@ export class CacheMemoryUI {
             if (keyState) keyState.textContent = this.apiClient.hasApiKey() ? 'API 密钥已保存在本浏览器' : '尚未保存 API 密钥';
             const keyInput = scope.querySelector('[data-api-key]');
             if (keyInput) keyInput.placeholder = this.apiClient.hasApiKey() ? '已保存，留空表示不更改' : '未配置';
+            const adapterPolicy = this.apiCacheAdapter?.currentPolicy?.();
+            const connection = scope.querySelector('[data-api-cache-connection]');
+            if (connection) connection.textContent = adapterPolicy?.label || '默认策略（尚未识别主模型连接）';
+            for (const element of scope.querySelectorAll('[data-api-cache-policy]')) {
+                const value = adapterPolicy?.policy?.[element.dataset.apiCachePolicy];
+                if (element.type === 'checkbox') element.checked = Boolean(value);
+                else element.value = value ?? '';
+            }
         }
+        if (this.apiCacheAdapter?.status) this.setApiCacheAdapterStatus(this.apiCacheAdapter.status);
         this.renderSettingsSaveState();
     }
 
@@ -532,6 +566,16 @@ export class CacheMemoryUI {
         if (!root || root.dataset.cacheMemoryBound === 'true') return;
         root.dataset.cacheMemoryBound = 'true';
         root.addEventListener('change', event => {
+            const cachePolicy = event.target.closest('[data-api-cache-policy]');
+            if (cachePolicy) {
+                const key = cachePolicy.dataset.apiCachePolicy;
+                const value = cachePolicy.type === 'checkbox' ? cachePolicy.checked
+                    : key === 'historyDepth' ? Number(cachePolicy.value) : cachePolicy.value;
+                this.apiCacheAdapter?.updateCurrentPolicy?.({ [key]: value });
+                this.markSettingsDirty();
+                this.populateSettings();
+                return;
+            }
             const modelSelect = event.target.closest('[data-model-select]');
             if (modelSelect) {
                 if (!modelSelect.value) return;
@@ -583,6 +627,17 @@ export class CacheMemoryUI {
             if (event.target.closest('[data-save-settings]')) {
                 try { await this.saveSettingsNow(); }
                 catch (error) { notify('error', `保存设置失败：${error.message}`); }
+                return;
+            }
+            if (event.target.closest('[data-api-cache-probe]')) {
+                this.setApiCacheAdapterStatus({ state: 'working', message: '正在检测 SillyTavern 服务端适配器…', preview: null });
+                await this.apiCacheAdapter?.probe?.();
+                return;
+            }
+            if (event.target.closest('[data-api-cache-reset]')) {
+                this.apiCacheAdapter?.resetCurrentPolicy?.();
+                this.markSettingsDirty();
+                this.populateSettings();
                 return;
             }
             const reset = event.target.closest('[data-reset-prompt]');
@@ -770,6 +825,20 @@ export class CacheMemoryUI {
             output.hidden = !this.getSettings().cacheDebug;
             output.textContent = `CACHE DEBUG\n${JSON.stringify(snapshot, null, 2)}`;
         }
+    }
+
+    setApiCacheAdapterStatus(status = {}) {
+        if (this.destroyed) return;
+        for (const output of this.doc.querySelectorAll('[data-api-cache-status]')) {
+            output.dataset.state = status.state || 'idle';
+            output.textContent = status.message || '尚未检测服务端适配器';
+        }
+        for (const output of this.doc.querySelectorAll('[data-api-cache-preview]')) {
+            output.hidden = !status.preview;
+            output.textContent = status.preview ? `实际请求结构（脱敏）\n${JSON.stringify(status.preview, null, 2)}` : '';
+        }
+        const connection = this.config?.querySelector('[data-api-cache-connection]');
+        if (connection) connection.textContent = this.apiCacheAdapter?.currentPolicy?.().label || '默认策略（尚未识别主模型连接）';
     }
 
     setStatus(state, text, error) {

@@ -1,4 +1,4 @@
-import { memoryContentDigest, mergeMemoryStores, normalizeStore } from './memory-store.js?v=1.17.0';
+import { memoryContentDigest, mergeMemoryStores, normalizeStore } from './memory-store.js?v=1.18.0';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',

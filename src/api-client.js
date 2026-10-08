@@ -500,6 +500,7 @@ export class SummaryApiClient {
             .filter(([key, value]) => !ST_NATIVE_BODY_KEYS.has(key) && value !== undefined));
         const proxyPayload = {
             ...payload, chat_completion_source: 'custom',
+            cache_memory_internal: true,
             custom_url: normalizeApiBaseUrl(settings.apiBaseUrl),
             custom_include_headers: JSON.stringify({ Authorization: apiKey ? `Bearer ${apiKey}` : '' }),
             ...(kind === 'completion' ? {

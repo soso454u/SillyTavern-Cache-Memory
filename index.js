@@ -12,15 +12,16 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.17.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.17.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.17.0';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.17.0';
-import { getAssistantMessages } from './src/utils.js?v=1.17.0';
-import { MemoryStore } from './src/memory-store.js?v=1.17.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.17.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.17.0';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.17.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.18.0';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.18.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.18.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.18.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.18.0';
+import { getAssistantMessages } from './src/utils.js?v=1.18.0';
+import { MemoryStore } from './src/memory-store.js?v=1.18.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.18.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.18.0';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.18.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -34,6 +35,13 @@ const timers = new Set();
 const frames = new Set();
 const diagnostics = new CacheDiagnostics();
 let activeChatId = null;
+
+const apiCacheAdapter = new ApiCacheAdapterBridge({
+    getSettings: () => settings,
+    updateSettings,
+    fetchImpl: (...args) => window.fetch(...args),
+    onStatus: status => ui?.setApiCacheAdapterStatus(status),
+});
 
 const injectionPublisher = new CacheMemoryInjectionPublisher({
     getPromptManager: () => promptManager,
@@ -228,6 +236,7 @@ function initialize() {
         getChat: () => chat,
         updateInjection,
         persistence,
+        apiCacheAdapter,
     });
     if (!ui.mountSettings()) {
         mountObserver = new ui.root.MutationObserver(() => {
@@ -239,6 +248,8 @@ function initialize() {
         mountObserver.observe(ui.doc.body, { childList: true, subtree: true });
     }
     ui.bindChatActions();
+    apiCacheAdapter.install(window);
+    apiCacheAdapter.probe();
     bindEvents();
     refreshChatState();
     console.info(LOG_PREFIX, 'Initialized with append-only memory storage.');
@@ -255,6 +266,7 @@ export function onActivate() {
 
 export function onHotUnload() {
     runtimeController.abort();
+    apiCacheAdapter.uninstall();
     mountObserver?.disconnect();
     mountObserver = null;
     for (const [name, handler] of eventBindings.splice(0)) {
