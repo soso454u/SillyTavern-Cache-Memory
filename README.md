@@ -2,7 +2,7 @@
 
 面向长篇 RP 的追加式剧情记忆扩展。正常 assistant 回复完成后，通过独立 OpenAI-compatible 接口生成楼层摘要，并增量维护 Checkpoint 世界状态、长期事实档案和 KEEP 不可丢失事项。历史记录保留为冻结快照。
 
-当前版本 **v1.9.0**。扩展栏版本号显示在内容右下角；扩展栏默认收起。“记忆管理”从设置内打开时可返回设置。
+当前版本 **v1.10.0**。扩展栏版本号显示在内容右下角；扩展栏默认收起。“记忆管理”从设置内打开时可返回设置。
 
 v1.8.0 将三份用户提供的每层 Summary、阶段 Checkpoint 和 Long Memory 提示词设为默认值。升级时会迁移旧版内置提示词，同时保留用户自定义提示词。
 
@@ -11,6 +11,8 @@ v1.8.1 新增思考模式设置，默认向 Ark 上游透传 `thinking: { type: 
 v1.9.0 新增 Summary 正文过滤策略，默认优先读取 `<content>`、其次 `<context>`，也可按优先级填写自定义标签或使用完整正文。过滤只产生临时 API 输入，不修改聊天正文。记忆管理改为概览、楼层摘要、阶段记忆、长期事实和 KEEP 五个内部页面，列表分页并默认折叠。
 
 v1.9.0 同时修正结构化 Summary 分段、多个 `[SUMMARY]` 时只保留最后有效块、Open/KEEP 分类、KEEP 精确去重与注入重复。“重新解析结构化摘要”可直接修复旧 `raw`，不调用模型 API。
+
+v1.10.0 将 KEEP 升级为 Store v3 的独立持久化 `keepRegistry`，提供 `active / resolved / superseded / invalid` 四状态、稳定顺序 ID、搜索多选和批量整理。旧 KEEP 升级时全部迁移保留；“整理 KEEP”只做本地文本规范化与精确重复处理，不调用模型。Checkpoint 不再回显整份 KEEP，只输出带新增摘要逐字证据的解决或替代变化。
 
 ## 流式后台传输
 
@@ -36,7 +38,7 @@ SSE 响应按 `text/event-stream` 读取，通过 `ReadableStream.getReader()` �
 - 批次结束或取消后，对已成功补齐的摘要统一检查一次 Checkpoint／Long Memory。切换聊天或卸载时取消批次，迟到的成功与失败响应都不会写入新聊天。
 - 补齐只写插件元数据，聊天正文和消息顺序保持不变。严格缓存模式下，批量补齐或强制替换单层摘要不刷新主 Prompt；新的 Checkpoint／Long Memory 边界成功提交时才更新注入。强制补齐不会自动重写已经冻结的阶段记忆。
 
-默认增量 Summary／Checkpoint／Long Memory 提示词已更新，保留事实因果、人物认知差、稳定 KEEP／fact ID 和逐字证据规则。旧默认模板会迁移；自定义模板保留，也可在提示词页点击“恢复默认”。新配置默认输出上限为 4096 tokens、超时为 180000 毫秒，已有自定义值保留。已有 60000 毫秒配置需在“模型接口”手动调高；若仍约 60 秒收到 504，需要检查 ST 后端及服务器网关的超时。
+默认增量 Summary／Checkpoint／Long Memory 提示词已更新，保留事实因果、人物认知差、稳定 KEEP／fact ID 和逐字证据规则。旧默认模板会迁移；自定义模板保留，也可在提示词页点击“恢复默认”。三类任务的默认输出上限分别为 1024／3072／4096 tokens，连接测试固定 16 tokens；默认软长度为 350／1000／2200 字。已有自定义值保留。默认超时为 180000 毫秒；已有 60000 毫秒配置需在“模型接口”手动调高，若仍约 60 秒收到 504，需要检查 ST 后端及服务器网关的超时。
 
 ## 兼容基线
 
@@ -102,7 +104,8 @@ API 密钥仍仅存当前浏览器 `localStorage` 项 `cache_memory_api_key_v1`�
 - 每个正常 assistant 正文后台生成 Summary，结构包含事件、状态、未解决事项、认知差和 KEEP；新策略长度为软目标，不硬截断。达到模型输出 token 上限会提示重试，并保留已有有效记忆。
 - Checkpoint 以“上一份有效状态 + 本阶段新增摘要 + 长期事实 + KEEP”维护连续性，生成下一条冻结记录。不会后台覆盖旧 Checkpoint。
 - Long Memory 等待完整的配置区间：新聊天默认 Long 001=1–50、Long 002=51–100。记录只含该阶段新增长期事实及有证据的变更，不将旧 Long 改写为截至当前的总档案。旧聊天从最后一段已冻结范围之后继续，不重新切割既有记录。
-- KEEP 和长期事实的解决/替代/失效需要新增摘要中的逐字证据，原记录保留。严格注入只显示已验证的事实变更及冻结 KEEP，模型在原始输出中提出的无证据删除不会进入事实注入。
+- KEEP 由独立 registry 保存，稳定 ID 不随内容编辑、来源 Summary 重生成或删除而改变。模型只能凭新增摘要中的逐字证据将 Active KEEP 标记为 resolved 或 superseded；invalid 只允许人工操作。Checkpoint 不再输出全部 Active KEEP，严格注入由 registry 单独添加一次。
+- Summary 卡片显示实际字符数与目标值；超过目标 15% 标记“偏长”，但不会额外调用模型压缩或在 JavaScript 中硬截断。
 - Long 覆盖整段 CP 后，严格快照可在该 Long 边界移除重复 CP 注入，但 CP 数据仍留在聊天元数据。自动后台任务不能改写已发布冻结块的正文。用户主动编辑/删除/重新生成/导入记忆属于明确的手动更新。
 
 ## 缓存与注入行为
@@ -139,13 +142,13 @@ ST 提供 `CHAT_COMPLETION_SETTINGS_READY` 时，只读发送前的 `messages`�
 chat_metadata.cache_memory
 ```
 
-数据版本为 2，结构仍包含 `summaries`、`checkpoints` 和 `longMemories`。新状态记录附有 `memoryKind: state`、来源摘要 ID 和 `keepItems`；新长期记录附有 `memoryKind: facts`、`factUpdates` 和冻结 KEEP；`injectionSnapshot` 保存按聊天冻结的注入快照，旧条目原样保留。聊天之间不会共享记忆。全局开关、间隔、Prompt 和非敏感 API 配置保存在：
+数据版本为 3，结构包含 `summaries`、`checkpoints`、`longMemories` 和独立的 `keepRegistry`。Registry 以 `KEEP-0001` 形式的稳定 ID 为键，保存正文、来源楼层/ID、四状态、原因、证据、创建/更新时间和替代目标。旧 Store 会一次性迁移 Summary 与历史聚合快照中的全部 KEEP，之后读取和注入都以 registry 为准；来源 Summary 被编辑、重生成或删除不会删除既有 KEEP。新状态记录附有 `memoryKind: state` 和来源摘要 ID；新长期记录附有 `memoryKind: facts` 与 `factUpdates`；`injectionSnapshot` 保存按聊天冻结的注入快照。聊天之间不会共享记忆。全局开关、间隔、Prompt 和非敏感 API 配置保存在：
 
 ```text
 extension_settings.cache_memory
 ```
 
-“记忆管理”支持浏览、手动编辑、删除、重新生成、导出 JSON 和导入 JSON。所有替换操作都要求用户点击；后台不会自动重写已经冻结的历史块。
+“记忆管理”支持浏览、手动编辑、删除、重新生成、导出 JSON 和导入 JSON。KEEP 页支持搜索、多选、全选当前页、批量切换四种状态、稳定 ID 下编辑正文，以及本地“整理 KEEP”。整理只标记空白或规范化后完全相同的重复项，不自动处理语义相似项，也不会按长期未出现的楼层数删除记录。所有替换操作都要求用户点击；后台不会自动重写已经冻结的历史块。
 
 ## 热更新兼容
 
@@ -169,3 +172,5 @@ v1.8.0 验证：85 项自动测试通过；Node.js 语法检查和 `git diff --c
 v1.8.1 验证：思考模式默认值、选项归一化、Summary/Checkpoint/Long Memory 的上游请求体及连接测试透传通过定向测试；真实模型验证待完成。
 
 v1.9.0 验证：90 项自动测试、JavaScript 语法检查和 `git diff --check` 通过；覆盖标签过滤顺序/回退、Summary 分段与最终块、Open/KEEP 分离、KEEP 去重及单次注入、旧 raw 本地重解析。真实 SillyTavern 视觉和触摸交互由实际环境验证。
+
+v1.10.0 验证：92 项自动测试通过，覆盖 Store v2→v3 KEEP 迁移、稳定 ID、四状态证据门槛、本地精确重复整理、Checkpoint 去除 KEEP 回显、三任务独立 token 上限及新默认长度；JavaScript 语法和补丁空白检查通过。未调用真实模型 API，真实 SillyTavern 视觉和触摸交互由实际环境验证。

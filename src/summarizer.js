@@ -1,7 +1,7 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.9.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.9.0';
-import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.9.0';
-import { extractSummarySource } from './summary-source.js?v=1.9.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.10.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.10.0';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.10.0';
+import { extractSummarySource } from './summary-source.js?v=1.10.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -39,15 +39,8 @@ export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}
     const title = read('title') || readSection(source, 'Title') || '未命名摘要';
     const characters = read('characters') || readSection(source, 'Characters') || '未明确';
     const event = read('event') || source;
-    if (preserveFull) return { title, characters, event, state: '', open: '', quote: '', keep: '', raw: source, format: 'legacy' };
-    const budget = Math.max(20, Number(maxLength) || 350);
-    const overhead = title.length + characters.length + 10;
-    return {
-        title: clampText(title, Math.min(80, budget)),
-        characters: clampText(characters, Math.min(160, budget)),
-        event: clampText(event, Math.max(20, budget - overhead)),
-        state: '', open: '', quote: '', keep: '', raw: clampText(source, budget), format: 'legacy',
-    };
+    // maxLength is a generation target, never a client-side truncation rule.
+    return { title, characters, event, state: '', open: '', quote: '', keep: '', raw: source, format: 'legacy' };
 }
 
 export class MemorySummarizer {
@@ -162,7 +155,7 @@ export class MemorySummarizer {
             const result = await this.apiClient.complete({
                 systemPrompt,
                 userContent: summarySource.text,
-                maxTokens: settings.maxTokens,
+                maxTokens: settings.summaryMaxTokens,
                 signal,
             });
             if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
@@ -312,7 +305,7 @@ export class MemorySummarizer {
             maxLength: settings.checkpointMaxLength,
         });
         try {
-            const result = await this.apiClient.complete({ systemPrompt, userContent, maxTokens: settings.maxTokens, signal });
+            const result = await this.apiClient.complete({ systemPrompt, userContent, maxTokens: settings.checkpointMaxTokens, signal });
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             if (result.finishReason === 'length') throw new Error('Checkpoint 输出达到 token 上限，请提高最大输出长度后重试');
@@ -320,11 +313,10 @@ export class MemorySummarizer {
                 id,
                 startFloor,
                 endFloor,
-                content: incremental ? stripStructuredSections(result.content, ['KEEP', 'RESOLVED_KEEP']) : clampText(result.content, settings.checkpointMaxLength),
+                content: incremental ? stripStructuredSections(result.content, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']) : clampText(result.content, settings.checkpointMaxLength),
                 ...(incremental ? {
                     memoryKind: 'state', previousCheckpointId: state.id,
                     summaryIds: summaries.map(item => item.messageId),
-                    keepItems: resolveKeepItems(keeps, result.content, newSummaries),
                 } : {}),
                 createdAt: new Date().toISOString(),
                 frozen: true,
@@ -332,6 +324,7 @@ export class MemorySummarizer {
                 status: 'frozen',
                 missingFloors: missing,
             };
+            if (incremental) this.store.applyKeepItems(resolveKeepItems(keeps, result.content, newSummaries), { persist: false });
             this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && !isUsableMemory(existing)) });
             return record;
         } catch (error) {
@@ -403,7 +396,7 @@ export class MemorySummarizer {
         const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n');
         const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
         try {
-            const result = await this.apiClient.complete({ systemPrompt, userContent, maxTokens: settings.maxTokens, signal });
+            const result = await this.apiClient.complete({ systemPrompt, userContent, maxTokens: settings.longMemoryMaxTokens, signal });
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Long Memory');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
@@ -413,7 +406,7 @@ export class MemorySummarizer {
                 endFloor,
                 checkpointIds: sorted.map(item => item.id),
                 content: incremental ? result.content.trim() : clampText(result.content, settings.longMemoryMaxLength),
-                ...(incremental ? { memoryKind: 'facts', factUpdates: parseFactUpdates(result.content, projection, newSummaries), keepItems: collectKeepItems(this.store.current(), endFloor) } : {}),
+                ...(incremental ? { memoryKind: 'facts', factUpdates: parseFactUpdates(result.content, projection, newSummaries) } : {}),
                 createdAt: new Date().toISOString(),
                 frozen: true,
                 manualEdited: false,

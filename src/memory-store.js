@@ -1,7 +1,8 @@
-import { getAssistantMessages } from './utils.js?v=1.9.0';
-import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.9.0';
+import { getAssistantMessages } from './utils.js?v=1.10.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.10.0';
 
-export const STORE_VERSION = 2;
+export const STORE_VERSION = 3;
+const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
 
 export function createEmptyStore(chatId = '') {
     return {
@@ -10,23 +11,100 @@ export function createEmptyStore(chatId = '') {
         summaries: {},
         checkpoints: [],
         longMemories: [],
+        keepRegistry: {},
         updatedAt: new Date().toISOString(),
     };
 }
 
 export function normalizeStore(value, chatId = '') {
     const store = value && typeof value === 'object' ? value : {};
+    const summaries = store.summaries && typeof store.summaries === 'object' && !Array.isArray(store.summaries) ? store.summaries : {};
+    const checkpoints = Array.isArray(store.checkpoints) ? store.checkpoints : [];
+    const longMemories = Array.isArray(store.longMemories) ? store.longMemories : [];
+    const keepRegistry = normalizeKeepRegistry(Number(store.version) >= STORE_VERSION ? store.keepRegistry : null,
+        { summaries, checkpoints, longMemories, updatedAt: store.updatedAt });
     return {
         version: STORE_VERSION,
         chatId: String(chatId ?? store.chatId ?? ''),
-        summaries: store.summaries && typeof store.summaries === 'object' && !Array.isArray(store.summaries)
-            ? store.summaries
-            : {},
-        checkpoints: Array.isArray(store.checkpoints) ? store.checkpoints : [],
-        longMemories: Array.isArray(store.longMemories) ? store.longMemories : [],
+        summaries,
+        checkpoints,
+        longMemories,
+        keepRegistry,
         ...(store.injectionSnapshot && typeof store.injectionSnapshot.value === 'string' && Array.isArray(store.injectionSnapshot.blocks) ? { injectionSnapshot: store.injectionSnapshot } : {}),
         updatedAt: store.updatedAt ?? new Date().toISOString(),
     };
+}
+
+function normalizedKeepRecord(item, id, fallbackTime) {
+    const now = fallbackTime ?? new Date().toISOString();
+    return {
+        text: String(item?.text ?? '').trim(),
+        sourceFloor: Number(item?.sourceFloor ?? item?.floor) || 0,
+        sourceId: String(item?.sourceId ?? ''),
+        status: KEEP_STATUSES.has(item?.status) ? item.status : 'active',
+        reason: String(item?.reason ?? ''),
+        evidence: String(item?.evidence ?? ''),
+        createdAt: item?.createdAt ?? now,
+        updatedAt: item?.updatedAt ?? item?.createdAt ?? now,
+        replacedBy: String(item?.replacedBy ?? ''),
+    };
+}
+
+function nextKeepId(registry) {
+    const maximum = Object.keys(registry).reduce((current, id) => Math.max(current, Number(String(id).match(/^KEEP-(\d+)$/i)?.[1]) || 0), 0);
+    return `KEEP-${String(maximum + 1).padStart(4, '0')}`;
+}
+
+function normalizeKeepRegistry(registry, legacy) {
+    if (registry && typeof registry === 'object' && !Array.isArray(registry)) {
+        const fields = ['text', 'sourceFloor', 'sourceId', 'status', 'reason', 'evidence', 'createdAt', 'updatedAt', 'replacedBy'];
+        const alreadyNormalized = Object.entries(registry).every(([id, item]) => id === id.toUpperCase()
+            && item && typeof item === 'object' && fields.every(field => Object.hasOwn(item, field)) && KEEP_STATUSES.has(item.status));
+        if (alreadyNormalized) return registry;
+        return Object.fromEntries(Object.entries(registry).map(([id, item]) => [String(id).toUpperCase(), normalizedKeepRecord(item, id, legacy.updatedAt)]));
+    }
+    const migrated = {};
+    const identities = new Map();
+    const remember = (item, identity) => {
+        if (!item?.text) return;
+        const existingId = identities.get(identity);
+        if (existingId) {
+            const existing = migrated[existingId];
+            if (KEEP_STATUSES.has(item.status)) Object.assign(existing, {
+                status: item.status,
+                reason: String(item.reason ?? existing.reason ?? ''),
+                evidence: String(item.evidence ?? existing.evidence ?? ''),
+                replacedBy: String(item.replacedBy ?? existing.replacedBy ?? ''),
+                updatedAt: item.updatedAt ?? item.createdAt ?? existing.updatedAt,
+            });
+            return;
+        }
+        const id = nextKeepId(migrated);
+        identities.set(identity, id);
+        migrated[id] = normalizedKeepRecord(item, id, legacy.updatedAt);
+    };
+    // Old checkpoint/long-memory snapshots already contain the plugin's legacy
+    // identity and status. Collapse repeated snapshots by that identity only.
+    for (const aggregate of [...legacy.checkpoints, ...legacy.longMemories]) {
+        for (const item of aggregate?.keepItems ?? []) {
+            const identity = item.id ? `id:${String(item.id).toLowerCase()}` : `snapshot:${aggregate.id}:${normalizeKeepText(item.text)}`;
+            remember(item, identity);
+        }
+    }
+    // Add explicit Summary [KEEP] entries that never reached an aggregate.
+    for (const summary of Object.values(legacy.summaries).sort((a, b) => (a.floor ?? 0) - (b.floor ?? 0))) {
+        for (const text of extractSummaryKeepEntries(summary)) {
+            const normalized = normalizeKeepText(text);
+            const existing = Object.values(migrated).find(item => normalizeKeepText(item.text) === normalized);
+            if (existing) {
+                if (!existing.sourceFloor) existing.sourceFloor = Number(summary.floor) || 0;
+                if (!existing.sourceId) existing.sourceId = String(summary.messageId ?? '');
+                continue;
+            }
+            remember({ text, sourceFloor: summary.floor, sourceId: summary.messageId, status: 'active', createdAt: summary.createdAt }, `summary:${summary.messageId}:${normalized}`);
+        }
+    }
+    return migrated;
 }
 
 export class MemoryStore {
@@ -40,8 +118,12 @@ export class MemoryStore {
 
     current() {
         const metadata = this.getMetadata();
+        const needsMigration = Number(metadata.cache_memory?.version) < STORE_VERSION || !metadata.cache_memory?.keepRegistry;
         const normalized = normalizeStore(metadata.cache_memory, this.getChatId());
-        if (metadata.cache_memory !== normalized) metadata.cache_memory = normalized;
+        if (metadata.cache_memory !== normalized) {
+            metadata.cache_memory = normalized;
+            if (needsMigration) this.saveMetadata();
+        }
         return normalized;
     }
 
@@ -81,6 +163,7 @@ export class MemoryStore {
             if (!record) continue;
             unmatched.delete(entry.messageId);
             if (record.floor !== entry.floor || record.messageIndex !== entry.messageIndex || record.messageId !== entry.messageId) {
+                for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === record.messageId) keep.sourceFloor = entry.floor;
                 record.floor = entry.floor;
                 record.messageIndex = entry.messageIndex;
                 record.messageId = entry.messageId;
@@ -125,6 +208,7 @@ export class MemoryStore {
             staleAt: new Date().toISOString(),
         });
         store.summaries[entry.messageId] = record;
+        for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === previousKey) keep.sourceId = entry.messageId;
         this.persist();
         return record;
     }
@@ -138,6 +222,7 @@ export class MemoryStore {
         if (store.summaries[record.messageId] && !overwrite) return store.summaries[record.messageId];
         const replacesFrozen = store.summaries[record.messageId]?.frozen !== false && ['frozen', 'manual-edited'].includes(store.summaries[record.messageId]?.status);
         store.summaries[record.messageId] = structuredClone(record);
+        this.registerSummaryKeeps(store.summaries[record.messageId]);
         this.persist(replacesFrozen && !background ? 'manual edit' : 'new summary');
         return store.summaries[record.messageId];
     }
@@ -146,6 +231,7 @@ export class MemoryStore {
         const record = this.getSummary(messageId);
         if (!record) return null;
         Object.assign(record, structuredClone(updates), { messageId });
+        this.registerSummaryKeeps(record);
         this.persist('manual edit');
         return record;
     }
@@ -166,10 +252,115 @@ export class MemoryStore {
             const parsed = parser(record.raw);
             if (!parsed || parsed.format !== 'structured') continue;
             Object.assign(record, parsed);
+            this.registerSummaryKeeps(record);
             updated++;
         }
         if (updated) this.persist('summary reparse');
         return updated;
+    }
+
+    registerSummaryKeeps(record) {
+        const store = this.current();
+        const existing = new Set(Object.values(store.keepRegistry).map(item => normalizeKeepText(item.text)).filter(Boolean));
+        for (const text of extractSummaryKeepEntries(record)) {
+            const normalized = normalizeKeepText(text);
+            if (!normalized || existing.has(normalized)) continue;
+            const id = nextKeepId(store.keepRegistry);
+            const now = new Date().toISOString();
+            store.keepRegistry[id] = normalizedKeepRecord({
+                text, sourceFloor: record.floor, sourceId: record.messageId, status: 'active', createdAt: now, updatedAt: now,
+            }, id, now);
+            existing.add(normalized);
+        }
+    }
+
+    updateKeep(id, updates, { persist = true } = {}) {
+        const store = this.current();
+        const key = String(id).toUpperCase();
+        const record = store.keepRegistry[key];
+        if (!record) return null;
+        const allowed = ['text', 'status', 'reason', 'evidence', 'replacedBy'];
+        for (const field of allowed) if (Object.hasOwn(updates, field)) record[field] = String(updates[field] ?? '').trim();
+        if (!KEEP_STATUSES.has(record.status)) record.status = 'active';
+        record.updatedAt = new Date().toISOString();
+        if (persist) this.persist('manual edit');
+        return { ...record, id: key };
+    }
+
+    applyKeepItems(items, { persist = true } = {}) {
+        const store = this.current();
+        let changed = 0;
+        for (const item of items) {
+            const key = String(item.id).toUpperCase();
+            const current = store.keepRegistry[key];
+            if (!current || !KEEP_STATUSES.has(item.status)) continue;
+            if (['status', 'reason', 'evidence', 'replacedBy'].some(field => String(current[field] ?? '') !== String(item[field] ?? ''))) {
+                Object.assign(current, { status: item.status, reason: item.reason ?? '', evidence: item.evidence ?? '', replacedBy: item.replacedBy ?? '', updatedAt: item.updatedAt ?? new Date().toISOString() });
+                changed++;
+            }
+        }
+        if (changed && persist) this.persist('keep lifecycle');
+        return changed;
+    }
+
+    setKeepStatus(ids, status, details = {}) {
+        if (!KEEP_STATUSES.has(status)) throw new Error('未知 KEEP 状态');
+        const store = this.current();
+        let changed = 0;
+        for (const id of ids) {
+            const record = store.keepRegistry[String(id).toUpperCase()];
+            if (!record) continue;
+            Object.assign(record, {
+                status,
+                reason: status === 'active' ? '' : String(details.reason ?? record.reason ?? ''),
+                evidence: status === 'active' ? '' : String(details.evidence ?? record.evidence ?? ''),
+                replacedBy: status === 'active' ? '' : String(details.replacedBy ?? record.replacedBy ?? ''),
+                updatedAt: new Date().toISOString(),
+            });
+            changed++;
+        }
+        if (changed) this.persist('manual edit');
+        return changed;
+    }
+
+    organizeKeepRegistry() {
+        const store = this.current();
+        const groups = new Map();
+        let normalized = 0;
+        let duplicates = 0;
+        for (const [id, record] of Object.entries(store.keepRegistry)) {
+            const text = normalizeKeepText(record.text);
+            if (text !== record.text) { record.text = text; normalized++; }
+            if (!text) {
+                record.status = 'invalid';
+                record.reason = '本地整理：空白 KEEP';
+                record.updatedAt = new Date().toISOString();
+                duplicates++;
+                continue;
+            }
+            const group = groups.get(text) ?? [];
+            group.push(id);
+            groups.set(text, group);
+        }
+        const priority = { active: 0, resolved: 1, superseded: 2, invalid: 3 };
+        for (const ids of groups.values()) {
+            if (ids.length < 2) continue;
+            ids.sort((left, right) => (priority[store.keepRegistry[left].status] ?? 9) - (priority[store.keepRegistry[right].status] ?? 9)
+                || (Number(left.match(/\d+/)?.[0]) || 0) - (Number(right.match(/\d+/)?.[0]) || 0));
+            const first = ids[0];
+            for (const id of ids.slice(1)) {
+                const record = store.keepRegistry[id];
+                if (record.status === 'invalid' && record.replacedBy === first) continue;
+                record.status = 'invalid';
+                record.reason = `本地整理：与 ${first} 完全重复`;
+                record.evidence = '';
+                record.replacedBy = first;
+                record.updatedAt = new Date().toISOString();
+                duplicates++;
+            }
+        }
+        if (normalized || duplicates) this.persist('manual edit');
+        return { normalized, duplicates, total: Object.keys(store.keepRegistry).length };
     }
 
     addCheckpoint(record, { overwrite = false } = {}) {

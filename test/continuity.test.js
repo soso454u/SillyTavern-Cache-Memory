@@ -33,7 +33,9 @@ test('old stores and custom prompts survive migration while former default promp
     assert.equal(settings.checkpointInterval, 20);
     assert.equal(settings.summaryMaxLength, 350);
     assert.equal(normalizeSettings().checkpointInterval, 5);
-    assert.equal(normalizeSettings().summaryMaxLength, 500);
+    assert.equal(normalizeSettings().summaryMaxLength, 350);
+    assert.equal(migrated.version, 3);
+    assert.deepEqual(migrated.keepRegistry, {});
 });
 
 test('structured summaries preserve complete state, open threads and KEEP beyond the soft target', () => {
@@ -48,20 +50,42 @@ test('structured summaries preserve complete state, open threads and KEEP beyond
     assert.ok(parsed.raw.length > 350);
 });
 
-test('only explicit KEEP entries receive stable ids, with exact normalized deduplication', () => {
-    const store = { summaries: {
+test('Store v3 migrates every legacy KEEP into an independent registry without deriving Open entries', () => {
+    const old = { version: 2, summaries: {
         a: { messageId: 'a', floor: 1, format: 'structured', status: 'frozen', raw: '[SUMMARY]\n[Event]\n当前事件\n[Open]\n未读消息\n[KEEP]\n无' },
         b: { messageId: 'b', floor: 2, format: 'structured', status: 'frozen', raw: '[SUMMARY]\n[Event]\n当前事件\n[Open]\n几小时后的集合\n[KEEP]\n1.  姜梨答应保守秘密' },
         c: { messageId: 'c', floor: 3, format: 'structured', status: 'frozen', raw: '[SUMMARY]\n[Event]\n当前事件\n[KEEP]\n- 姜梨答应保守秘密' },
     }, checkpoints: [{ id: 'checkpoint-001', endFloor: 3, status: 'frozen', keepItems: [
         { id: 'old-open-id', text: '未读消息', status: 'active' },
         { id: 'old-keep-id', text: '姜梨答应保守秘密', status: 'active' },
+    ] }, { id: 'checkpoint-002', endFloor: 4, status: 'frozen', keepItems: [
+        { id: 'old-keep-id', text: '姜梨答应保守秘密', status: 'resolved', reason: '秘密已公开', evidence: '姜梨公开了秘密' },
     ] }], longMemories: [] };
+    const store = normalizeStore(old, 'chat-a');
     const keeps = collectKeepItems(store);
-    assert.equal(keeps.length, 1);
-    assert.equal(keeps[0].text, '姜梨答应保守秘密');
-    assert.equal(keeps[0].id, 'old-keep-id');
-    assert.doesNotMatch(JSON.stringify(keeps), /未读消息|集合/);
+    assert.equal(keeps.length, 2);
+    assert.deepEqual(keeps.map(item => item.id), ['KEEP-0001', 'KEEP-0002']);
+    assert.ok(keeps.some(item => item.text === '姜梨答应保守秘密'));
+    assert.ok(keeps.some(item => item.text === '未读消息'));
+    assert.equal(keeps.find(item => item.text === '姜梨答应保守秘密').status, 'resolved');
+    assert.doesNotMatch(JSON.stringify(keeps), /几小时后的集合/);
+});
+
+test('registry KEEP ids survive edits and Summary deletion; deterministic cleanup only invalidates exact duplicates', () => {
+    const { store } = fixture();
+    addSummary(store, 1, '产生长期约定');
+    const first = collectKeepItems(store.current())[0];
+    assert.equal(first.id, 'KEEP-0001');
+    store.updateKeep(first.id, { text: '姜梨仍答应十二月前陪陆雾回巴黎见外婆' });
+    store.deleteSummary('m1');
+    assert.equal(collectKeepItems(store.current())[0].id, first.id);
+    assert.match(collectKeepItems(store.current())[0].text, /仍答应/);
+    const registry = store.current().keepRegistry;
+    registry['KEEP-0002'] = { ...registry[first.id], text: '  1. 姜梨仍答应十二月前陪陆雾回巴黎见外婆  ', status: 'active' };
+    const result = store.organizeKeepRegistry();
+    assert.equal(result.duplicates, 1);
+    assert.equal(store.current().keepRegistry['KEEP-0002'].status, 'invalid');
+    assert.equal(store.current().keepRegistry['KEEP-0002'].replacedBy, first.id);
 });
 
 test('saved structured raw can be reparsed locally without replacing record identity', () => {
@@ -105,7 +129,8 @@ test('incremental checkpoints carry prior state and KEEP; fact extraction append
     assert.match(inputs[2], /人物当前状态/);
     assert.equal(second.previousCheckpointId, first.id);
     assert.ok(first.content.length > 100);
-    assert.ok(second.keepItems.filter(item => item.status === 'active').length >= 1);
+    assert.equal('keepItems' in second, false);
+    assert.ok(collectKeepItems(memory).filter(item => item.status === 'active').length >= 1);
     assert.deepEqual(memory.checkpoints[0], old.checkpoints[0]);
     assert.deepEqual(memory.longMemories[0], old.longMemories[0]);
     assert.deepEqual(memory.checkpoints[1], firstSnapshot);
@@ -124,6 +149,26 @@ test('KEEP omission and unsupported resolutions never drop items; explicit evide
     assert.equal(resolved[0].status, 'resolved');
     assert.equal(resolved[0].text, items[0].text);
     assert.equal(items[0].status, 'active');
+    const superseded = resolveKeepItems(items, '[SUPERSEDED_KEEP]\n- KEEP-1 | 被新约定替代 | 姜梨改为明年去巴黎', '姜梨改为明年去巴黎，并取消旧日期。');
+    assert.equal(superseded[0].status, 'superseded');
+    assert.equal(resolveKeepItems(items, '[INVALID_KEEP]\n- keep-1 | 模型说无效 | 姜梨改为明年去巴黎', '姜梨改为明年去巴黎')[0].status, 'active');
+});
+
+test('Checkpoint lifecycle deltas update the registry and are stripped from saved state', async () => {
+    const { store } = fixture();
+    const records = [
+        { id: 'm1', floor: 1, event: '姜梨公开了秘密', keep: '- 姜梨一直隐瞒信件内容' },
+        { id: 'm2', floor: 2, event: '陆雾改为明年去巴黎', keep: '- 陆雾原计划今年去巴黎' },
+    ];
+    for (const item of records) store.addSummary({ messageId: item.id, floor: item.floor, title: `S${item.floor}`, characters: '姜梨/陆雾', event: item.event,
+        keep: item.keep, raw: `[SUMMARY]\n[Title]\nS${item.floor}\n[Characters]\n姜梨/陆雾\n[Event]\n${item.event}\n[KEEP]\n${item.keep}`, format: 'structured', status: 'frozen', frozen: true });
+    const keeps = collectKeepItems(store.current());
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2 }), getChat: () => [], apiClient: {
+        complete: async () => ({ content: `[CHECKPOINT]\n[Current State]\n已更新\n[RESOLVED_KEEP]\n- ${keeps[0].id} | 秘密已公开 | 姜梨公开了秘密\n[SUPERSEDED_KEEP]\n- ${keeps[1].id} | 改为明年 | 陆雾改为明年去巴黎` }),
+    } });
+    const checkpoint = await summarizer.generateCheckpoint(1, 2);
+    assert.doesNotMatch(checkpoint.content, /RESOLVED_KEEP|SUPERSEDED_KEEP/);
+    assert.deepEqual(collectKeepItems(store.current()).map(item => item.status), ['resolved', 'superseded']);
 });
 
 test('fact replacements require exact new-summary evidence and retain the old fact in the immutable ledger', () => {

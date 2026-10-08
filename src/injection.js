@@ -1,6 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.9.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.9.0';
-import { stripStructuredSections } from './summary-format.js?v=1.9.0';
+import { INJECTION_MODES } from './defaults.js?v=1.10.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.10.0';
+import { stripStructuredSections } from './summary-format.js?v=1.10.0';
 
 function byRange(a, b) {
     return Number(a.startFloor ?? a.floor) - Number(b.startFloor ?? b.floor);
@@ -21,7 +21,7 @@ export function buildInjection(store, settings) {
         if (keeps !== '无') blocks.push(`[KEEP]\n${keeps}`);
         if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode) && stateEnd) {
             const state = latest?.content ?? previousState(store, stateEnd + 1).content;
-            blocks.push(`[LATEST_CHECKPOINT | 截至第${stateEnd}层]\n${stripStructuredSections(state, ['KEEP', 'RESOLVED_KEEP'])}`);
+            blocks.push(`[LATEST_CHECKPOINT | 截至第${stateEnd}层]\n${stripStructuredSections(state, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP'])}`);
         }
         if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {
             // Include every summary after the latest checkpoint; count limits must not create a gap.

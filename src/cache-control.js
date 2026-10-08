@@ -1,8 +1,8 @@
-import { INJECTION_MODES } from './defaults.js?v=1.9.0';
-import { buildInjection } from './injection.js?v=1.9.0';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.9.0';
-import { fnv1a } from './utils.js?v=1.9.0';
-import { stripStructuredSections } from './summary-format.js?v=1.9.0';
+import { INJECTION_MODES } from './defaults.js?v=1.10.0';
+import { buildInjection } from './injection.js?v=1.10.0';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.10.0';
+import { fnv1a } from './utils.js?v=1.10.0';
+import { stripStructuredSections } from './summary-format.js?v=1.10.0';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -27,7 +27,7 @@ function frozenBlocks(store, mode) {
             : `- ${update.action.toUpperCase()} ${update.id}${update.previousId ? ` (supersedes ${update.previousId})` : ''}: ${update.text}`).join('\n');
         const content = record.memoryKind === 'facts' && Array.isArray(record.factUpdates)
             ? `[FACT_DELTA]\n${delta || '本阶段无新增或有证据的长期事实变更。'}`
-            : stripStructuredSections(record.content ?? '', ['KEEP', 'RESOLVED_KEEP']);
+            : stripStructuredSections(record.content ?? '', ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']);
         blocks.push({ id: `${type}:${record.id}`, type, startFloor: record.startFloor, endFloor: record.endFloor,
             text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}` });
     };

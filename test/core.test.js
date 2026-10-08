@@ -172,9 +172,11 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
     const originalBodies = chat.map(item => item.mes);
     const settings = normalizeSettings({ memoryStrategy: 'legacy', checkpointInterval: 2, longMemoryInterval: 4 });
     let calls = 0;
+    const budgets = [];
     const apiClient = {
-        async complete({ userContent }) {
+        async complete({ systemPrompt, userContent, maxTokens }) {
             calls += 1;
+            budgets.push(maxTokens);
             if (userContent.startsWith('body')) {
                 return { content: `<title>T${calls}</title><characters>C</characters><event>${userContent}</event>`, status: 200 };
             }
@@ -192,6 +194,9 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
     assert.equal(Object.keys(memory.summaries).length, 4);
     assert.equal(memory.checkpoints.length, 2);
     assert.equal(memory.longMemories.length, 1);
+    assert.equal(budgets.filter(value => value === 1024).length, 4);
+    assert.equal(budgets.filter(value => value === 3072).length, 2);
+    assert.equal(budgets.filter(value => value === 4096).length, 1);
     assert.deepEqual(chat.map(item => item.mes), originalBodies);
 
     const firstTitle = Object.values(memory.summaries).find(item => item.floor === 1).title;

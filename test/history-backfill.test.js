@@ -249,14 +249,20 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.9.0');
+    assert.equal(PLUGIN_VERSION, '1.10.0');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
+    assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);
+    assert.deepEqual([settings.summaryMaxLength, settings.checkpointMaxLength, settings.longMemoryMaxLength], [350, 1000, 2200]);
     assert.match(DEFAULT_PROMPTS.summary, /\[State\][\s\S]*\[Open\]/);
     assert.match(DEFAULT_PROMPTS.summary, /keep-id 由插件分配/);
-    assert.match(DEFAULT_PROMPTS.checkpoint, /\[RESOLVED_KEEP\][\s\S]*从 NEW_SUMMARIES 中逐字复制/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /\[RESOLVED_KEEP\][\s\S]*NEW_SUMMARIES 中的逐字证据[\s\S]*\[SUPERSEDED_KEEP\]/);
+    assert.doesNotMatch(DEFAULT_PROMPTS.checkpoint, /^\[KEEP\]$/m);
     assert.match(DEFAULT_PROMPTS.longMemory, /\[UPDATED_FACTS\][\s\S]*\[RETIRED_FACTS\]/);
     const custom = normalizeSettings({ timeoutMs: 60000, prompts: { summary: '自定义模板' } });
     assert.equal(custom.timeoutMs, 60000);
     assert.equal(custom.prompts.summary, '自定义模板');
+    const migrated = normalizeSettings({ maxTokens: 1234, summaryMaxLength: 777, checkpointMaxLength: 888, longMemoryMaxLength: 999 });
+    assert.deepEqual([migrated.summaryMaxTokens, migrated.checkpointMaxTokens, migrated.longMemoryMaxTokens], [1234, 1234, 1234]);
+    assert.deepEqual([migrated.summaryMaxLength, migrated.checkpointMaxLength, migrated.longMemoryMaxLength], [777, 888, 999]);
 });

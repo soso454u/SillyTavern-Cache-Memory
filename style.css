@@ -150,6 +150,11 @@
 .cache-memory-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; color: var(--cm-muted); font-size: 12px; }
 .cache-memory-manager-section { margin-bottom: 20px; }
 .cache-memory-card { margin: 9px 0; padding: 12px; border: 1px solid var(--cm-line); border-radius: 10px; background: #fff; color: var(--cm-ink); box-shadow: 0 2px 8px rgba(36, 55, 80, 0.04); }
+.cache-memory-keep-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 9px; }
+.cache-memory-keep-row > .cache-memory-card { width: 100%; box-sizing: border-box; }
+.cache-memory-keep-select { width: 19px; height: 19px; margin: 25px 0 0; accent-color: var(--cm-teal); cursor: pointer; }
+.cache-memory-keep-batch { align-items: center; margin: 0 0 12px; padding: 10px; border: 1px solid var(--cm-line); border-radius: 9px; background: #fff; }
+.cache-memory-keep-batch > span { margin-right: 5px; color: var(--cm-muted); font-size: 12px; font-weight: 650; }
 .cache-memory-fold-card { padding: 0; overflow: clip; }
 .cache-memory-fold-card > summary { list-style: none; }
 .cache-memory-fold-card > summary::-webkit-details-marker { display: none; }

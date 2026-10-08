@@ -1,6 +1,6 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.9.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.10.0';
 
-export const PLUGIN_VERSION = '1.9.0';
+export const PLUGIN_VERSION = '1.10.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -465,7 +465,7 @@ fact-id | 替代后的完整事实 | 证据
 没有退休写无。`,
 });
 
-export const DEFAULT_PROMPTS = Object.freeze({
+const V190_DEFAULT_PROMPTS = Object.freeze({
     summary: `你是长期 RP 剧情连续性的事实记录员。
 
 任务：
@@ -873,6 +873,397 @@ UPDATED_FACTS 与 RETIRED_FACTS 的证据必须从 NEW_SUMMARIES 中逐字复制
 无退休写无。`,
 });
 
+export const DEFAULT_PROMPTS = Object.freeze({
+    summary: `你是长期 RP 剧情连续性的事实记录员。
+
+任务：
+处理第 {{floor}} 层这一条 assistant 正文，生成一份可独立理解的剧情记忆。
+
+目标：
+未来看不到本层原文时，仍能准确知道本层关键事件 / 本层结束时仍有效的状态 / 后续需要继续追踪的事项。
+
+信息范围：
+仅依据当前正文。正文未明确提供的信息保持未知；时间 / 地点 / 关系 / 心理 / 动机 / 结果均以正文明确内容为准。
+
+【记录规则】
+
+- 重要事件保留最小因果链：人物 → 原因或情境 → 行动或关键表态 → 直接结果。
+- 多人物场景使用明确姓名，保证动作 / 认知 / 决定 / 物品都有清楚指向。
+- 优先保留影响后续连续性的具体事实：行动结果 / 人物位置 / 物品归属与状态 / 电话、消息、文件、交易结果 / 伤势与限制 / 计划与期限 / 立场、边界与决定。
+- 本层结束时仍持续存在并会影响下一步行动的身体状态 / 控制状态 / 物品位置 / 现实限制应保留。
+- 无持续影响的普通动作 / 天气 / 灯光与家具 / 普通服装 / 重复动作 / 氛围 / 修辞 / 闲聊可省略。
+- 使用具体事实表达，减少“发生冲突 / 双方对峙 / 关系恶化 / 感情升温 / 气氛紧张 / 发生亲密接触”等空泛概括。
+
+【事实与人物认知】
+
+严格区分：
+客观事实 / 谁知道 / 谁不知道 / 谁误信 / 谁声称 / 谁隐瞒 / 谁仅在猜测 / 原因当前未知。
+
+人物猜测、谎言、误会、传闻保留其来源与认知属性。
+关系 / 心理 / 动机按正文已经明确成立的内容记录。
+暧昧 / 争吵 / 性行为 / 亲密行为 / 照顾 / 嫉妒记录实际行为、表态与结果。
+
+【优先保留】
+
+人物身份与明确关系变化 / 立场与长期边界 / 承诺、约定、决定与拒绝 / 威胁 / 秘密 / 谎言、误会与人物认知差 / 计划、任务、期限与下一步 / 重要物品、文件、手机、联系方式及归属或去向 / 人物位置变化 / 伤势、损失、债务与责任 / 重大事件及明确原因 / 尚未解决的伏笔、异常与冲突。
+
+【时间与地点】
+
+正文明确提供且有助于后续连续性时记录具体时间和地点。
+天气 / 温度 / 环境条件仅在影响人物行动或剧情结果时记录。
+正文未提供的信息直接省略。
+
+【核心原话】
+
+可保留 0–2 句具有不可替代连续性价值的原话：
+
+承诺 / 拒绝 / 威胁 / 决定 / 重要否认 / 秘密揭露 / 边界声明 / 关键误会 / 后续可能再次引用的表态。
+
+每句注明说话人。
+原话总量尽量控制在 50 个中文字符以内。
+事件因果 / 最终状态 / 未解决事项优先于台词。
+
+【栏目分工】
+
+同一事实原则上只记录一次：
+
+Event → 本层已发生的关键过程与结果
+State → 本层结束时仍持续、下一层可直接继承的状态
+Open → 尚未解决 / 等待回应 / 等待结果的短期或中期事项
+KEEP → 本层首次产生、跨多个场景或较长剧情后仍必须持续追踪的长期事项
+
+避免同一事实重复出现在 Event / State / Open / KEEP。
+
+【KEEP】
+
+[KEEP] 默认写“无”。
+
+仅当本层首次产生新的长期事项时填写：
+
+重大秘密 / 持续人物认知差或重要误会 / 未兑现的重要承诺 / 未完成长期计划 / 明确长线伏笔或异常 / 重要物品长期去向 / 持续伤害、损失、债务或责任 / 长期边界 / 持续影响后续的重大事件或关系变化。
+
+已有长期事实再次出现时，无需重新创建 KEEP。
+
+当天安排 / 几小时内完成的计划 / 当前姿势与衣着 / 临时规则 / 当前地点 / 普通未读消息 / 当场尚未结束的小冲突 → State 或 Open。
+
+每个 KEEP：
+一条一个事项 / 明确人物与对象 / 脱离原文仍可独立理解 / 当前正文有明确依据。
+
+keep-id 由插件分配。
+
+【长度控制】
+
+正文摘要目标为 280–{{maxLength}} 个中文字符。
+{{maxLength}} 为常规上限，信息密集时最多允许超过约 15%。
+
+建议预算：
+Event 约 140–180 字 / State 约 60–90 字 / Open 0–2 项 / Quote 0–2 句且总计尽量不超过 50 字 / KEEP 通常为无，确有新增长期事项时 1–2 项。
+
+压缩顺序：
+重复信息 > 场景细节 > 普通动作 > 次要台词 > 已结束的短期状态。
+
+优先级：
+事实准确
+> 关键因果
+> 本层结束状态
+> 未解决事项
+> 人物认知差
+> 新增长期 KEEP
+> 核心原话
+> token 节省
+
+严格输出：
+
+[SUMMARY]
+
+[Title]
+一句简短、具体、可辨认的事件标题。
+
+[Characters]
+本层实际出现，或通过电话 / 消息 / 视频等明确参与事件的人物。
+仅被顺带提及、未实际参与事件的人物可省略。
+无则写无。
+
+[Event]
+按发生顺序记录关键事件：
+人物 → 原因/情境 → 行动或关键表态 → 直接结果。
+
+[State]
+记录本层结束瞬间仍然有效、下一层可直接继承的状态：
+人物位置与分布 / 尚未结束的重要动作 / 重要物品归属、位置与状态 / 电话、消息、文件、交易等操作结果 / 明确伤势或现实限制 / 当前计划与下一步 / 持续立场、边界、决定与约定 / 持续信息差与认知差。
+
+无新增或持续状态写无。
+
+[Open]
+记录本层结束时仍未解决、仍在等待结果或未来近期需要继续追踪的事项。
+每项写清涉及人物 / 具体事项 / 当前进度或卡点。
+无则写无。
+
+[Quote]
+- 人物名：“原话”
+
+保留 0–2 句。
+无则写无。
+
+[KEEP]
+仅写本层首次产生的新增长期事项。
+无新增长期事项写无。
+
+下一条 user 消息就是第 {{floor}} 层正文。`,
+    checkpoint: `你负责增量维护长期 RP 的“当前世界状态”。
+
+本次处理第 {{startFloor}}–{{endFloor}} 层。
+
+输入可能包含：
+
+[PREVIOUS_STATE]
+上一份冻结的阶段状态
+
+[LONG_FACTS]
+当前仍有效的长期事实
+
+[ACTIVE_KEEP]
+当前仍有效的 KEEP 项，包含稳定 keep-id
+
+[NEW_SUMMARIES]
+本阶段新增楼层摘要
+
+任务：
+以上一份仍有效状态为基础，合并本阶段明确新增 / 改变 / 解决的信息，输出新的当前世界状态，并识别本阶段发生的 KEEP 状态变化。
+
+【继承规则】
+
+- 未变化的重要状态持续继承；本阶段未再次提及不构成失效依据。
+- 持续关注：秘密 / 承诺与约定 / 冲突 / 债务与责任 / 伤害及长期后果 / 谎言、误会与人物认知差 / 未完成计划与伏笔 / 长期边界 / 重要物品去向。
+- 明确兑现 / 撤销 / 推翻 / 解决 / 被新事实替代 / 永久失效时更新对应状态。
+- 状态变化时保留仍影响后续的必要原因和历史后果。
+- 当前状态重点覆盖：人物位置与分布 / 尚未完成的重要行动 / 物品归属与状态 / 计划与下一步 / 通话、消息、任务、文件、交易结果 / 伤势与现实限制 / 当前边界与立场 / 信息差。
+
+无持续影响的天气 / 普通环境 / 普通服装 / 一次性动作 / 纯氛围 / 普通闲聊 / 文学修辞可省略。
+
+【人物认知】
+
+严格区分：
+客观事实 / 谁知道 / 谁不知道 / 谁误信 / 谁声称 / 谁隐瞒 / 谁仅在猜测 / 原因当前未知。
+
+【人物与关系】
+
+关系或立场发生重要变化时记录：
+人物 → 明确事件原因 → 立场、边界、行为或决定的变化 → 当前状态。
+
+使用具体事实表达关系变化。
+
+正文未明确成立的爱情 / 原谅 / 和好 / 依赖 / 臣服 / 占有关系保持未知。
+性行为 / 暧昧 / 嫉妒 / 照顾 / 争吵 / 亲密行为按事实与后果记录。
+
+【历史因果】
+
+[Story So Far] 仅保留理解当前局势不可缺少的历史原因。
+
+删除某条历史信息后若会导致无法理解人物当前行动 / 冲突来源 / 边界来源 / 承诺或责任 / 人物认知差，则继续保留。
+
+已经失去当前影响的旧剧情可省略。
+
+【KEEP 状态变化】
+
+ACTIVE_KEEP 是插件维护的独立长期追踪表。
+Checkpoint 无需再次全文输出所有 Active KEEP。
+
+仅检查本阶段是否出现：
+
+1. RESOLVED
+已有 KEEP 被明确解决 / 兑现 / 撤销 / 结束。
+
+2. SUPERSEDED
+已有 KEEP 被新的、更完整或明确改变后的事实替代。
+
+自动变更必须具有 NEW_SUMMARIES 中的明确证据。
+
+格式：
+
+keep-id | 原因 | 从 NEW_SUMMARIES 中逐字复制的证据
+
+证据至少 4 个字符。
+证据来源限定为 NEW_SUMMARIES。
+
+本阶段未出现明确证据的 KEEP 保持 active，由插件继续保存。
+
+invalid 属于人工整理状态，模型不自动输出 invalid。
+
+【长度】
+
+目标约 {{maxLength}} 个中文字符，为软目标。
+
+优先级：
+当前状态准确
+> 未解决事项
+> 人物认知差
+> 必要因果
+> 连续性锁
+> 去重
+> token 节省
+
+严格输出：
+
+[CHECKPOINT]
+
+[Story So Far]
+记录理解当前局势不可缺少的历史因果：
+必要起因 → 关键决定或行动 → 当前仍存在的后果。
+
+[Characters]
+按重要人物记录：
+人物名：身份与明确关系 / 当前立场与边界 / 当前已知、未知、误信的重要信息 / 当前目标、计划与下一步 / 重要决定、承诺、拒绝 / 持续伤害、责任、现实限制或长期后果。
+
+仅记录当前仍有效的信息。
+
+[Current State]
+当前已知时间与地点 / 重要人物当前位置与分布 / 尚未完成的重要行动 / 重要物品归属、位置与状态 / 当前计划、任务与下一步 / 当前伤势、身体或现实限制 / 当前明确关系边界、要求与决定 / 通话、消息、文件、交易等仍具有后续作用的结果。
+
+[Secrets & Knowledge]
+客观事实 | 谁知道 | 谁不知道 | 谁误信 | 谁隐瞒 | 当前状态
+
+[Open Threads]
+仍未结束且未来可能继续影响剧情的：
+承诺与约定 / 冲突 / 秘密 / 谎言与误会 / 任务与计划 / 等待中的回应或结果 / 尚未解释的异常 / 债务、责任、伤害与损失 / 伏笔 / 尚未兑现的决定。
+
+每项写明涉及人物与具体事项。
+
+[Continuity Locks]
+未来不能无证据遗忘、写反或改变的关键连续性事实。
+仅保留真正重要的锁定项，减少与 Current State 重复。
+
+[RESOLVED_KEEP]
+- keep-id | 明确解决 / 兑现 / 撤销 / 结束原因 | NEW_SUMMARIES 中的逐字证据
+
+无则写无。
+
+[SUPERSEDED_KEEP]
+- keep-id | 被什么新事实替代 | NEW_SUMMARIES 中的逐字证据
+
+无则写无。`,
+    longMemory: `你负责维护长期 RP 的“跨场景长期事实档案”。
+
+本次处理第 {{startFloor}}–{{endFloor}} 层产生的长期变化。
+
+输入可能包含：
+
+[EXISTING_LONG_FACTS]
+此前仍有效的长期事实，其中包含稳定 fact-id
+
+[CHECKPOINT_STATE]
+本阶段结束时的当前世界状态
+
+[NEW_SUMMARIES]
+本阶段新增楼层摘要
+
+任务：
+识别本阶段新增长期事实，以及既有长期事实中明确发生的更新或永久失效。
+
+输出范围：
+新增长期事实 / 明确改变的既有事实 / 明确永久失效且后续不再需要的既有事实。
+
+旧事实持续有效时保持原状。
+
+【长期保存范围】
+
+稳定身份与明确关系 / 长期偏好、禁忌、原则、规则与边界 / 重大关系转折及必要原因 / 已成立的重要承诺、誓言与持续责任 / 长期目标与计划 / 持续冲突、债务与义务 / 重大秘密及人物知情范围 / 长期谎言、误会与认知差 / 严重伤害、损失及持续后果 / 长期重要物品及归属 / 长期重要地点、身份、制度与规则 / 持续影响人物选择和剧情逻辑的重大事件。
+
+判断标准：
+经过几十或几百层以后，这条事实仍会影响人物理解 / 选择 / 责任 / 边界 / 关系 / 秘密状态 / 剧情逻辑，则具有长期价值。
+
+普通吃饭、睡觉、出门 / 普通天气与温度 / 普通服装 / 一次性姿势与动作 / 短暂情绪 / 普通争吵与聊天 / 短期位置 / 日常短期计划 / 已完成且无持续影响的电话、消息、任务 / 单纯等待回应的 Open Thread / 文学修辞与纯氛围无需进入长期事实。
+
+KEEP 中的事项只有在其内容已经形成稳定长期事实时，才可能进入 Long Memory。
+“尚待发生 / 等待结果 / 当前未完成”本身不构成长事实。
+
+【新增事实】
+
+本阶段首次形成且具有长期价值的事实进入 [LONG_MEMORY]。
+
+每条事实：
+可独立理解 / 明确人物与对象 / 必要时保留形成原因 / 必要时保留当前持续影响 / 使用明确指代。
+
+fact-id 由插件分配。
+
+已有事实再次被提及时无需重复新增。
+
+【已有事实更新】
+
+EXISTING_LONG_FACTS 中已有事实被本阶段明确改变时，使用对应 fact-id 输出完整更新版本。
+
+适合更新：
+人物获知原本不知道的秘密 / 长期关系或身份明确变化 / 承诺或责任内容改变 / 重要物品长期归属改变 / 长期计划正式改变 / 原有长期事实被明确推翻。
+
+措辞优化 / 缩写 / 重排不构成事实更新。
+
+更新后的完整事实保留：
+当前有效信息 / 仍重要的历史原因 / 仍持续的历史后果。
+
+【事实退休】
+
+已有事实同时满足以下条件时可进入 RETIRED_FACTS：
+
+正文明示事实已经失效 / 结束 / 被彻底推翻；
+旧事实已无持续责任、关系影响、认知影响或剧情后果；
+NEW_SUMMARIES 中存在明确证据。
+
+历史事件结束后仍持续产生影响时继续保留其长期事实。
+
+【证据】
+
+UPDATED_FACTS 与 RETIRED_FACTS 的证据必须从 NEW_SUMMARIES 中逐字复制至少 4 个字符。
+
+缺少明确新证据时旧事实保持原状。
+
+【事实与认知】
+
+严格区分：
+客观事实 / 谁知道 / 谁不知道 / 谁误信 / 谁隐瞒 / 谁声称 / 谁仅在猜测。
+
+【关系】
+
+长期关系事实依据已经明确成立并具有持续影响的信息。
+
+性行为 / 暧昧 / 嫉妒 / 照顾 / 争吵 / 占有行为 / 一次道歉 / 一次亲密 / 一次拒绝，仅在形成持续边界、责任、关系变化或长期后果时进入长期事实。
+
+【去重】
+
+新增信息与已有事实含义重合时优先使用 UPDATED_FACTS。
+只有独立的新长期事实进入 LONG_MEMORY。
+
+【长度】
+
+目标约 {{maxLength}} 个中文字符，为软目标。
+
+长期变化很少时允许输出很短，甚至全部为“无”。
+
+优先级：
+长期事实准确
+> 重要因果
+> 持续后果
+> 长期责任、秘密与认知差
+> 去重
+> token 节省
+
+严格输出：
+
+[LONG_MEMORY]
+- 【人物/主题｜类别】完整的新增长期事实；必要起因；当前持续影响。
+
+无新增写无。
+
+[UPDATED_FACTS]
+- fact-id | 替代后的完整当前事实（包含仍重要的历史后果） | 从 NEW_SUMMARIES 中逐字复制的变更证据
+
+无更新写无。
+
+[RETIRED_FACTS]
+- fact-id | 明确永久失效且无持续影响的原因 | 从 NEW_SUMMARIES 中逐字复制的证据
+
+无退休写无。`,
+});
+
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
 ]);
@@ -894,9 +1285,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     memoryStrategy: 'incremental',
     checkpointInterval: 5,
     longMemoryInterval: 50,
-    summaryMaxLength: 500,
-    checkpointMaxLength: 1500,
-    longMemoryMaxLength: 3000,
+    summaryMaxLength: 350,
+    checkpointMaxLength: 1000,
+    longMemoryMaxLength: 2200,
     recentSummaryCount: 10,
     recentCheckpointCount: 2,
     strictCacheMode: true,
@@ -906,6 +1297,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     apiBaseUrl: '',
     model: '',
     temperature: 0.2,
+    summaryMaxTokens: 1024,
+    checkpointMaxTokens: 3072,
+    longMemoryMaxTokens: 4096,
     maxTokens: 4096,
     tokenLimitParameter: 'max_tokens',
     generationTransport: GENERATION_TRANSPORTS.AUTO,
@@ -922,7 +1316,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];
     }
@@ -951,6 +1345,16 @@ export function normalizeSettings(saved = {}) {
         ? source.summaryFilterMode
         : SUMMARY_FILTER_MODES.DEFAULT;
 
+    const legacyMaxTokens = Math.round(number(source.maxTokens, 4096, 32, 32000));
+    const customizedLegacyTokens = source.maxTokens !== undefined && Number(source.maxTokens) !== 4096;
+    const migratedLength = (value, oldDefault, nextDefault, min, max) => {
+        if (value === undefined || value === null || value === '' || Number(value) === oldDefault) return nextDefault;
+        return Math.round(number(value, nextDefault, min, max));
+    };
+    const summaryMaxTokens = Math.round(number(source.summaryMaxTokens, customizedLegacyTokens ? legacyMaxTokens : 1024, 32, 32000));
+    const checkpointMaxTokens = Math.round(number(source.checkpointMaxTokens, customizedLegacyTokens ? legacyMaxTokens : 3072, 32, 32000));
+    const longMemoryMaxTokens = Math.round(number(source.longMemoryMaxTokens, customizedLegacyTokens ? legacyMaxTokens : 4096, 32, 32000));
+
     return {
         ...DEFAULT_SETTINGS,
         ...source,
@@ -963,9 +1367,9 @@ export function normalizeSettings(saved = {}) {
         memoryStrategy,
         checkpointInterval,
         longMemoryInterval,
-        summaryMaxLength: Math.round(number(source.summaryMaxLength, DEFAULT_SETTINGS.summaryMaxLength, 50, 5000)),
-        checkpointMaxLength: Math.round(number(source.checkpointMaxLength, 1500, 100, 12000)),
-        longMemoryMaxLength: Math.round(number(source.longMemoryMaxLength, 3000, 200, 24000)),
+        summaryMaxLength: migratedLength(source.summaryMaxLength, 500, 350, 50, 5000),
+        checkpointMaxLength: migratedLength(source.checkpointMaxLength, 1500, 1000, 100, 12000),
+        longMemoryMaxLength: migratedLength(source.longMemoryMaxLength, 3000, 2200, 200, 24000),
         recentSummaryCount: Math.round(number(source.recentSummaryCount, 10, 0, 200)),
         recentCheckpointCount: Math.round(number(source.recentCheckpointCount, 2, 0, 50)),
         temperature: number(source.temperature, 0.2, 0, 2),
@@ -974,7 +1378,10 @@ export function normalizeSettings(saved = {}) {
         thinkingMode,
         summaryFilterMode,
         summaryFilterTags: String(source.summaryFilterTags ?? DEFAULT_SETTINGS.summaryFilterTags),
-        maxTokens: Math.round(number(source.maxTokens, DEFAULT_SETTINGS.maxTokens, 32, 32000)),
+        summaryMaxTokens,
+        checkpointMaxTokens,
+        longMemoryMaxTokens,
+        maxTokens: longMemoryMaxTokens,
         timeoutMs: Math.round(number(source.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 300000)),
         provider,
         injectionMode,
