@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.13.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.13.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.13.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.13.0';
-import { downloadJson, getAssistantMessages } from './utils.js?v=1.13.0';
-import { collectKeepItems, projectLongFacts, readSection } from './continuity.js?v=1.13.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.13.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.13.0';
-import { parseFloorSummary } from './summarizer.js?v=1.13.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.14.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.14.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.14.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.14.0';
+import { downloadJson, getAssistantMessages } from './utils.js?v=1.14.0';
+import { collectKeepItems, projectLongFacts, readSection } from './continuity.js?v=1.14.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.14.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.14.0';
+import { parseFloorSummary } from './summarizer.js?v=1.14.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -117,7 +117,23 @@ function settingsTemplate() {
         </div>`;
 }
 
-function configTemplate() {
+function managerPanelTemplate() {
+    return `
+        <section id="${MANAGER_ID}" class="cache-memory-tab-panel cache-memory-manager-panel" role="tabpanel" data-settings-panel="manager" hidden>
+            <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
+                <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button>
+            </nav>
+            <div class="cache-memory-manager-toolbar">
+                <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
+                <button type="button" class="menu_button" data-import><i class="fa-solid fa-upload"></i> 导入 JSON</button>
+                <input type="file" accept="application/json,.json" data-import-file hidden>
+                <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
+            </div>
+            <div class="cache-memory-manager-content" data-manager-content></div>
+        </section>`;
+}
+
+export function configTemplate() {
     return `
         <div id="${CONFIG_ID}" class="cache-memory-overlay" hidden>
             <div class="cache-memory-config-panel" role="dialog" aria-modal="true" aria-labelledby="cache-memory-config-title">
@@ -134,10 +150,11 @@ function configTemplate() {
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="api"><i class="fa-solid fa-key"></i><span>模型接口</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="injection"><i class="fa-solid fa-syringe"></i><span>记忆注入</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="prompts"><i class="fa-solid fa-file-lines"></i><span>提示词</span></button>
+                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="manager"><i class="fa-solid fa-box-archive"></i><span>记忆管理</span></button>
                 </nav>
                 <div class="cache-memory-config-content">
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="general">
-                        <div class="cache-memory-section-heading"><div><h4>运行与分层</h4><p>控制摘要生成和冻结记忆的楼层范围。</p></div><button type="button" class="menu_button" data-open-manager><i class="fa-solid fa-box-archive"></i> 记忆管理</button></div>
+                        <div class="cache-memory-section-heading"><div><h4>运行与分层</h4><p>控制摘要生成和冻结记忆的楼层范围。</p></div></div>
                         <div class="cache-memory-switches">
                             <label class="cache-memory-toggle"><span><strong>启用插件</strong><small>显示楼层记忆并启用处理流程</small></span><input type="checkbox" data-setting="enabled"></label>
                             <label class="cache-memory-toggle"><span><strong>自动生成小总结</strong><small>正常回复结束后自动排队</small></span><input type="checkbox" data-setting="autoSummarize"></label>
@@ -205,6 +222,7 @@ function configTemplate() {
                         <details><summary>阶段记忆提示词</summary><textarea rows="12" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
                         <details><summary>长期记忆提示词</summary><textarea rows="10" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
                     </section>
+                    ${managerPanelTemplate()}
                 </div>
             </div>
         </div>`;
@@ -234,6 +252,7 @@ export class CacheMemoryUI {
         this.keepSelection = new Set();
         this.managerExpanded = { summaries: new Set(), checkpoints: new Set(), facts: new Set(), keeps: new Set() };
         this.managerEditing = null;
+        this.keepBatchMode = false;
         if (summarizer && store && getChat) this.backfill = new HistoryBackfill({
             summarizer, store, getChat, onProgress: () => this.renderBackfillProgress(),
         });
@@ -247,7 +266,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.13.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.14.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -271,7 +290,13 @@ export class CacheMemoryUI {
         if (this.config) return;
         this.doc.body.insertAdjacentHTML('beforeend', configTemplate());
         this.config = this.doc.getElementById(CONFIG_ID);
+        this.manager = this.config.querySelector(`#${MANAGER_ID}`);
         this.resetConfigDrag = this.bindDialogDrag(this.config);
+        this.manager.addEventListener('click', event => this.handleManagerClick(event), { signal: this.controller.signal });
+        this.manager.addEventListener('input', event => this.handleManagerInput(event), { signal: this.controller.signal });
+        this.manager.addEventListener('change', event => this.handleManagerInput(event), { signal: this.controller.signal });
+        this.manager.addEventListener('keydown', event => this.handleManagerKeydown(event), { signal: this.controller.signal });
+        this.manager.querySelector('[data-import-file]').addEventListener('change', event => this.importFile(event), { signal: this.controller.signal });
         this.doc.addEventListener('keydown', event => {
             if (event.key === 'Escape' && this.config && !this.config.hidden) this.closeSettings();
         }, { signal: this.controller.signal });
@@ -532,6 +557,10 @@ export class CacheMemoryUI {
         for (const panel of this.config.querySelectorAll('[data-settings-panel]')) {
             panel.hidden = panel.dataset.settingsPanel !== name;
         }
+        const managerActive = name === 'manager';
+        this.config.querySelector('.cache-memory-config-content')?.classList.toggle('is-manager-view', managerActive);
+        this.config.querySelector('.cache-memory-config-panel')?.classList.toggle('is-manager-view', managerActive);
+        if (managerActive) this.renderManager();
     }
 
     watchWandMenu() {
@@ -736,54 +765,11 @@ export class CacheMemoryUI {
         this.managerExpanded.summaries.add(messageId);
         this.managerEditing = { type: 'summary', id: messageId };
         this.openManager();
-        this.renderManager();
     }
 
     openManager() {
-        if (!this.manager) this.createManager();
-        this.managerReturnFocus = this.doc.activeElement;
-        const backButton = this.manager.querySelector('[data-manager-back]');
-        backButton.hidden = !this.config || this.config.hidden;
-        this.manager.hidden = false;
-        this.doc.body.classList.add('cache-memory-manager-open');
-        this.renderManager();
-    }
-
-    closeManager() {
-        this.resetManagerDrag?.();
-        if (this.manager) this.manager.hidden = true;
-        this.doc.body.classList.remove('cache-memory-manager-open');
-        this.managerReturnFocus?.focus?.();
-        this.managerReturnFocus = null;
-    }
-
-    createManager() {
-        this.mountStyles();
-        const overlay = this.doc.createElement('div');
-        overlay.id = MANAGER_ID;
-        overlay.hidden = true;
-        overlay.innerHTML = `
-            <div class="cache-memory-manager-panel" role="dialog" aria-modal="true" aria-label="记忆管理">
-                <header class="cache-memory-dialog-header"><div title="拖动标题栏移动弹窗"><h3>记忆管理</h3><small>查看和整理当前聊天的冻结记忆 · 可拖动标题栏</small></div><div class="cache-memory-manager-header-actions"><button type="button" class="menu_button" data-manager-back><i class="fa-solid fa-arrow-left"></i> 返回设置</button><button type="button" class="menu_button" data-manager-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button></div></header>
-                <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
-                    <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button>
-                </nav>
-                <div class="cache-memory-manager-toolbar">
-                    <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
-                    <button type="button" class="menu_button" data-import><i class="fa-solid fa-upload"></i> 导入 JSON</button>
-                    <input type="file" accept="application/json,.json" data-import-file hidden>
-                    <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
-                </div>
-                <div class="cache-memory-manager-content" data-manager-content></div>
-            </div>`;
-        this.doc.body.append(overlay);
-        this.manager = overlay;
-        this.resetManagerDrag = this.bindDialogDrag(overlay);
-        overlay.addEventListener('click', event => this.handleManagerClick(event), { signal: this.controller.signal });
-        overlay.addEventListener('input', event => this.handleManagerInput(event), { signal: this.controller.signal });
-        overlay.addEventListener('change', event => this.handleManagerInput(event), { signal: this.controller.signal });
-        overlay.addEventListener('keydown', event => this.handleManagerKeydown(event), { signal: this.controller.signal });
-        overlay.querySelector('[data-import-file]').addEventListener('change', event => this.importFile(event), { signal: this.controller.signal });
+        this.openSettings();
+        this.activateSettingsTab('manager');
     }
 
     renderManager() {
@@ -928,7 +914,7 @@ export class CacheMemoryUI {
         const root = this.element('div', 'cache-memory-manager-page');
         root.append(this.subtabs('keepStatus', [['active', '有效'], ['resolved', '已解决'], ['superseded', '已替代'], ['invalid', '无效']], this.managerState.keepStatus));
         const controls = this.element('div', 'cache-memory-list-controls');
-        controls.innerHTML = '<input type="search" data-keep-query placeholder="搜索 KEEP ID、内容或来源"><button type="button" class="menu_button" data-keep-select-page>全选当前页</button><button type="button" class="menu_button" data-keep-clear-selection>清空选择</button><button type="button" class="menu_button" data-fold-page="collapse">全部折叠</button><button type="button" class="menu_button" data-fold-page="expand">全部展开</button><button type="button" class="menu_button" data-keep-organize>整理 KEEP</button>';
+        controls.innerHTML = `<input type="search" data-keep-query placeholder="搜索 KEEP ID、内容或来源"><button type="button" class="menu_button${this.keepBatchMode ? ' cache-memory-primary' : ''}" data-keep-batch-mode>${this.keepBatchMode ? '退出批量编辑' : '批量编辑'}</button>${this.keepBatchMode ? '<button type="button" class="menu_button" data-keep-select-page>全选当前页</button><button type="button" class="menu_button" data-keep-clear-selection>清空选择</button>' : ''}<button type="button" class="menu_button" data-fold-page="collapse">全部折叠</button><button type="button" class="menu_button" data-fold-page="expand">全部展开</button><button type="button" class="menu_button" data-keep-organize>整理 KEEP</button>`;
         controls.querySelector('[data-keep-query]').value = this.managerState.keepQuery;
         root.append(controls);
         let items = collectKeepItems(this.store.current()).filter(item => item.status === this.managerState.keepStatus);
@@ -937,11 +923,14 @@ export class CacheMemoryUI {
         items.sort((a, b) => (b.sourceFloor ?? 0) - (a.sourceFloor ?? 0));
         const page = this.paginate(items, this.managerState.keepPage, 15);
         this.managerState.keepPage = page.page;
-        controls.querySelector('[data-keep-select-page]').dataset.keepIds = page.items.map(item => item.id).join(',');
-        const batch = this.element('div', 'cache-memory-actions cache-memory-keep-batch');
-        batch.innerHTML = '<span data-keep-selection-count></span><button type="button" class="menu_button" data-keep-batch="resolved">标记已解决</button><button type="button" class="menu_button" data-keep-batch="superseded">标记已替代</button><button type="button" class="menu_button" data-keep-batch="invalid">标记无效</button><button type="button" class="menu_button" data-keep-batch="active">恢复有效</button>';
-        batch.querySelector('[data-keep-selection-count]').textContent = `已选择 ${this.keepSelection.size} 条`;
-        root.append(batch);
+        const selectPage = controls.querySelector('[data-keep-select-page]');
+        if (selectPage) selectPage.dataset.keepIds = page.items.map(item => item.id).join(',');
+        if (this.keepBatchMode) {
+            const batch = this.element('div', 'cache-memory-actions cache-memory-keep-batch');
+            batch.innerHTML = '<span data-keep-selection-count></span><button type="button" class="menu_button" data-keep-batch="resolved">标记已解决</button><button type="button" class="menu_button" data-keep-batch="superseded">标记已替代</button><button type="button" class="menu_button" data-keep-batch="invalid">标记无效</button><button type="button" class="menu_button" data-keep-batch="active">恢复有效</button>';
+            batch.querySelector('[data-keep-selection-count]').textContent = `已选择 ${this.keepSelection.size} 条`;
+            root.append(batch);
+        }
         const list = this.element('div', 'cache-memory-card-list');
         for (const item of page.items) list.append(this.keepCard(item));
         if (!page.items.length) list.append(this.element('p', 'cache-memory-empty', '暂无记忆'));
@@ -1184,6 +1173,7 @@ export class CacheMemoryUI {
                 actions.innerHTML = '<button type="button" class="menu_button" data-manager-action="edit">编辑</button><button type="button" class="menu_button" data-keep-single-status="resolved">标记已解决</button><button type="button" class="menu_button" data-keep-single-status="superseded">标记已替代</button><button type="button" class="menu_button" data-keep-single-status="invalid">标记无效</button><button type="button" class="menu_button" data-keep-single-status="active">恢复有效</button>';
                 body.append(actions);
             } });
+        if (!this.keepBatchMode) return card;
         wrapper.append(select, card);
         return wrapper;
     }
@@ -1226,8 +1216,6 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
-        if (event.target.closest('[data-manager-back]')) return this.closeManager();
-        if (event.target === this.manager || event.target.closest('[data-manager-close]')) return this.closeManager();
         const editCard = event.target.closest('[data-memory-type]');
         if (editCard && event.target.closest('[data-manager-edit-cancel]')) {
             this.managerEditing = null;
@@ -1270,6 +1258,12 @@ export class CacheMemoryUI {
         const selectPage = event.target.closest('[data-keep-select-page]');
         if (selectPage) {
             for (const id of selectPage.dataset.keepIds.split(',').filter(Boolean)) this.keepSelection.add(id);
+            this.renderManager();
+            return;
+        }
+        if (event.target.closest('[data-keep-batch-mode]')) {
+            this.keepBatchMode = !this.keepBatchMode;
+            this.keepSelection.clear();
             this.renderManager();
             return;
         }
@@ -1415,6 +1409,7 @@ export class CacheMemoryUI {
         this.managerView = 'overview';
         this.managerState = { summaryStatus: 'all', summaryQuery: '', summaryPage: 1, checkpointPage: 1, factStatus: 'active', factPage: 1, keepStatus: 'active', keepQuery: '', keepPage: 1 };
         this.keepSelection.clear();
+        this.keepBatchMode = false;
         for (const expanded of Object.values(this.managerExpanded)) expanded.clear();
         this.managerEditing = null;
         this.backfillFormChatId = null;
@@ -1577,11 +1572,10 @@ export class CacheMemoryUI {
         this.wandObserver = null;
         this.doc.getElementById(ROOT_ID)?.remove();
         this.doc.getElementById(CONFIG_ID)?.remove();
-        this.doc.getElementById(MANAGER_ID)?.remove();
         this.doc.getElementById(WAND_CONTAINER_ID)?.remove();
         this.activeDialog?.remove();
         this.doc.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
-        this.doc.body.classList.remove('cache-memory-config-open', 'cache-memory-manager-open');
+        this.doc.body.classList.remove('cache-memory-config-open');
         this.config = null;
         this.manager = null;
     }

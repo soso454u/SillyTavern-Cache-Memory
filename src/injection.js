@@ -1,6 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.13.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.13.0';
-import { stripStructuredSections } from './summary-format.js?v=1.13.0';
+import { INJECTION_MODES } from './defaults.js?v=1.14.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.14.0';
+import { stripStructuredSections } from './summary-format.js?v=1.14.0';
 
 function byRange(a, b) {
     return Number(a.startFloor ?? a.floor) - Number(b.startFloor ?? b.floor);

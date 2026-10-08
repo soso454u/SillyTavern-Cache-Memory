@@ -1,7 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveUIRoot, viewportSize } from '../src/ui-context.js';
-import { buildCheckpointContent, CacheMemoryUI, parseCheckpointSections } from '../src/ui.js';
+import { buildCheckpointContent, CacheMemoryUI, configTemplate, parseCheckpointSections } from '../src/ui.js';
+
+test('memory manager is a settings tab instead of a second dialog', () => {
+    const html = configTemplate();
+    assert.match(html, /data-settings-tab="manager"/);
+    assert.match(html, /id="cache-memory-manager"[^>]+data-settings-panel="manager"/);
+    assert.doesNotMatch(html, /data-manager-back|data-manager-close|aria-label="记忆管理"/);
+});
+
+test('KEEP selection stays hidden until batch editing is enabled', async () => {
+    const ui = new CacheMemoryUI({});
+    let renders = 0;
+    ui.renderManager = () => { renders++; };
+    ui.keepSelection.add('KEEP-0001');
+    const target = { closest: selector => selector === '[data-keep-batch-mode]' ? {} : null };
+    await ui.handleManagerClick({ target });
+    assert.equal(ui.keepBatchMode, true);
+    assert.equal(ui.keepSelection.size, 0);
+    assert.equal(renders, 1);
+    await ui.handleManagerClick({ target });
+    assert.equal(ui.keepBatchMode, false);
+    assert.equal(renders, 2);
+});
 
 test('Checkpoint cards parse and rebuild only the six visible structured sections', () => {
     const content = '[CHECKPOINT]\n[Story So Far]\n必要前情\n[Characters]\n人物状态\n[Current State]\n当前世界\n[Secrets & Knowledge]\n认知差\n[Open Threads]\n未解决\n[Continuity Locks]\n锁定\n[RESOLVED_KEEP]\nKEEP-0001 | 已解决 | 证据文本';

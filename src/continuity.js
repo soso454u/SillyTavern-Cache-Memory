@@ -1,6 +1,6 @@
-import { fnv1a } from './utils.js?v=1.13.0';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.13.0';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.13.0';
+import { fnv1a } from './utils.js?v=1.14.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.14.0';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.14.0';
 
 export const isUsableMemory = item => item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen');
 
