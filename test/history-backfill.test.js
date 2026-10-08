@@ -163,6 +163,24 @@ test('cancellation aborts only the active floor and aggregates the five already 
     assert.equal(f.summarizer.aggregateDeferrals, 0);
 });
 
+test('discarded backfill can reset progress without a late cancelled state overwriting idle', async () => {
+    const f = fixture(3);
+    const started = gate();
+    f.apiClient.complete = request => new Promise((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'REQUEST_ABORTED' })), { once: true });
+        started.resolve();
+    });
+    const pending = f.backfill.start({ endFloor: 3 });
+    await started.promise;
+    f.backfill.cancel({ discard: true });
+    f.backfill.reset();
+    await pending;
+
+    assert.deepEqual(f.backfill.state, { status: 'idle', total: 0, processed: 0, success: 0, failed: 0, skipped: 0, retries: 0, currentFloor: null, error: '' });
+    assert.equal(f.backfill.active, false);
+    assert.equal(f.summarizer.aggregateDeferrals, 0);
+});
+
 test('switching chat during a failed request discards the error and never writes to the new chat', async () => {
     const f = fixture(3);
     const started = gate(), response = gate();
@@ -176,6 +194,33 @@ test('switching chat during a failed request discards the error and never writes
     assert.deepEqual(f.store.current().summaries, {});
     assert.deepEqual(f.store.current().checkpoints, []);
     assert.equal(f.summarizer.aggregateDeferrals, 0);
+});
+
+test('clearing the current chat invalidates a late summary and immediately empties strict injection', async () => {
+    const f = fixture(1);
+    const entry = getAssistantMessages(f.chat)[0];
+    f.store.addCheckpoint({ id: 'checkpoint-001', startFloor: 1, endFloor: 1, content: '旧状态', frozen: true, status: 'frozen' });
+    refreshSnapshot(f.store.current(), f.settings, 'manual edit');
+    assert.match(f.store.current().injectionSnapshot.value, /旧状态/);
+    const started = gate();
+    const response = gate();
+    f.apiClient.complete = () => { started.resolve(); return response.promise; };
+    const pending = f.summarizer.summarizeMessage(entry.messageId);
+    const rejection = assert.rejects(pending, error => error.code === 'CHAT_CHANGED');
+    await started.promise;
+
+    f.summarizer.invalidateContext();
+    f.store.clearCurrentChat();
+    response.resolve({ content: '[SUMMARY]\n[Event]\n不应写回' });
+
+    await rejection;
+    const cleared = f.store.current();
+    assert.deepEqual(cleared.summaries, {});
+    assert.deepEqual(cleared.checkpoints, []);
+    assert.deepEqual(cleared.longMemories, []);
+    assert.deepEqual(cleared.keepRegistry, {});
+    assert.equal(cleared.injectionSnapshot.value, '');
+    assert.equal(f.refreshes.at(-1), 'current chat cleared');
 });
 
 test('late failed checkpoints and long memories are discarded after a chat switch too', async () => {
@@ -249,7 +294,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.10.0');
+    assert.equal(PLUGIN_VERSION, '1.11.0');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);

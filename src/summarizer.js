@@ -1,7 +1,7 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.10.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.10.0';
-import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.10.0';
-import { extractSummarySource } from './summary-source.js?v=1.10.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.11.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.11.0';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.11.0';
+import { extractSummarySource } from './summary-source.js?v=1.11.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');

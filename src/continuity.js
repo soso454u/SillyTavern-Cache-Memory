@@ -1,5 +1,5 @@
-import { fnv1a } from './utils.js?v=1.10.0';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.10.0';
+import { fnv1a } from './utils.js?v=1.11.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.11.0';
 
 export const isUsableMemory = item => item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen');
 

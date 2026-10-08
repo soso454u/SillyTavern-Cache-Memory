@@ -9,16 +9,28 @@
 .cache-memory-manager-header-actions { display: flex; align-items: center; gap: 8px; }
 .cache-memory-manager-header-actions [hidden] { display: none !important; }
 
-.cache-memory-overlay[hidden], #cache-memory-manager[hidden] { display: none !important; }
-.cache-memory-overlay, #cache-memory-manager {
+.cache-memory-overlay[hidden] { display: none !important; }
+#cache-memory-manager[hidden] { display: none !important; }
+.cache-memory-overlay {
     position: fixed;
     inset: 0;
     z-index: 2147482998;
     display: grid;
     place-items: center;
-    padding: 18px;
-    background: rgba(15, 23, 42, 0.72);
-    backdrop-filter: blur(7px);
+    padding: clamp(18px, 3vw, 42px);
+    background: transparent;
+    backdrop-filter: none;
+    box-sizing: border-box;
+}
+#cache-memory-manager {
+    position: fixed;
+    inset: 0;
+    z-index: 2147482998;
+    display: grid;
+    place-items: center;
+    padding: clamp(18px, 3vw, 42px);
+    background: transparent;
+    backdrop-filter: none;
     box-sizing: border-box;
 }
 .cache-memory-config-panel, .cache-memory-manager-panel {
@@ -30,25 +42,24 @@
     --cm-teal: #087f72;
     --cm-teal-dark: #06665d;
     --cm-blue: #2563a9;
-    width: min(1100px, 100%);
-    height: min(900px, 88vh, 88dvh);
+    height: min(860px, calc(100vh - 64px), calc(100dvh - 64px));
     overflow: hidden;
-    border: 1px solid #cbd7e5;
-    border-radius: 20px;
+    border: 1px solid rgba(151, 166, 184, 0.72);
+    border-radius: 16px;
     background: #f8fafc;
     opacity: 1;
     position: relative;
     z-index: 2147482999;
     color: var(--cm-ink);
     color-scheme: light;
-    box-shadow: 0 28px 80px rgba(4, 13, 30, 0.44);
+    box-shadow: 0 20px 48px rgba(15, 23, 42, 0.24), 0 3px 12px rgba(15, 23, 42, 0.12);
     font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.cache-memory-config-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); max-width: calc(100dvw - 36px); box-sizing: border-box; }
+.cache-memory-config-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); width: min(1040px, 100%); max-width: calc(100dvw - 36px); box-sizing: border-box; }
 .cache-memory-dialog-header { cursor: grab; touch-action: none; user-select: none; }
 .cache-memory-dialog-header.is-dragging { cursor: grabbing; }
 .cache-memory-dialog-header button { cursor: pointer; touch-action: auto; }
-.cache-memory-manager-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); }
+.cache-memory-manager-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); width: min(1180px, 100%); }
 .cache-memory-backfill, .cache-memory-aggregation { margin-top: 18px; padding: 16px; border: 1px solid var(--cm-line); border-radius: 12px; background: #fff; }
 .cache-memory-backfill h4 { margin: 0; }
 .cache-memory-backfill p { margin: 8px 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -62,7 +73,8 @@
     gap: 14px;
     padding: 16px 20px;
     border-bottom: 1px solid var(--cm-line);
-    background: linear-gradient(115deg, #ecfdf8 0%, #f2f7ff 68%, #fff8ed 100%);
+    background: linear-gradient(115deg, #effbf8 0%, #f5f8fc 72%, #fffaf2 100%);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset;
 }
 .cache-memory-dialog-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .cache-memory-dialog-title > i {
@@ -131,7 +143,9 @@
 .cache-memory-message summary { color: var(--SmartThemeEmColor); cursor: pointer; user-select: none; }
 .cache-memory-message-body { padding: 7px 0 2px 14px; }
 .cache-memory-message-body p { margin: 4px 0; white-space: pre-wrap; }
-.cache-memory-manager-toolbar { display: flex; gap: 8px; padding: 11px 20px; border-bottom: 1px solid var(--cm-line); background: #f8fafc; }
+.cache-memory-manager-toolbar { display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-bottom: 1px solid var(--cm-line); background: #f8fafc; }
+.cache-memory-manager-toolbar .cache-memory-danger { margin-left: auto; border-color: #dc6975; background: #fff5f6; color: #a51f32; }
+.cache-memory-manager-toolbar .cache-memory-danger:hover { border-color: #b42336; background: #b42336; color: #fff; }
 .cache-memory-manager-tabs { display: flex; gap: 4px; padding: 8px 14px 0; overflow-x: auto; border-bottom: 1px solid var(--cm-line); background: #fff; scrollbar-width: thin; }
 .cache-memory-manager-tabs button { flex: 0 0 auto; min-height: 40px; padding: 8px 14px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--cm-muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
 .cache-memory-manager-tabs button.is-active { border-bottom-color: var(--cm-teal); color: var(--cm-teal-dark); }
@@ -179,7 +193,8 @@
 body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden; }
 
 @media (max-width: 650px) {
-    .cache-memory-overlay, #cache-memory-manager { padding: 6px; }
+    .cache-memory-overlay { padding: 6px; }
+    #cache-memory-manager { padding: 6px; }
     .cache-memory-config-panel, .cache-memory-manager-panel { height: min(88vh, 88dvh); border-radius: 20px; }
     .cache-memory-config-panel { max-width: calc(100dvw - 12px); }
     .cache-memory-dialog-header, .cache-memory-manager-panel > header { padding: 12px 13px; }
@@ -192,6 +207,7 @@ body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden
     .cache-memory-section-heading { align-items: stretch; flex-direction: column; }
     .cache-memory-section-heading .menu_button { align-self: flex-start; }
     .cache-memory-manager-toolbar { flex-wrap: wrap; padding-inline: 13px; }
+    .cache-memory-manager-toolbar .cache-memory-danger { flex-basis: 100%; margin-left: 0; }
     .cache-memory-manager-content { padding-inline: 13px; }
     .cache-memory-manager-tabs { padding-inline: 7px; }
     .cache-memory-manager-tabs button { min-height: 44px; padding-inline: 12px; }
@@ -201,6 +217,4 @@ body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden
     .cache-memory-card-body { padding-left: 14px; }
 }
 
-/* Avoid repainting the blurred ST page on each drag frame. */
-.cache-memory-overlay.is-dragging { backdrop-filter: none; }
-.cache-memory-overlay.is-dragging .cache-memory-config-panel { box-shadow: 0 8px 28px rgba(4, 13, 30, 0.35); }
+.cache-memory-overlay.is-dragging .cache-memory-config-panel { box-shadow: 0 12px 32px rgba(15, 23, 42, 0.24); }

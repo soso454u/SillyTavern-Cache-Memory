@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.10.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.10.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.10.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.10.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.10.0';
-import { collectKeepItems, projectLongFacts } from './continuity.js?v=1.10.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.10.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.10.0';
-import { parseFloorSummary } from './summarizer.js?v=1.10.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.11.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.11.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.11.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.11.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.11.0';
+import { collectKeepItems, projectLongFacts } from './continuity.js?v=1.11.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.11.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.11.0';
+import { parseFloorSummary } from './summarizer.js?v=1.11.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -225,7 +225,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.10.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.11.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -715,6 +715,7 @@ export class CacheMemoryUI {
                     <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
                     <button type="button" class="menu_button" data-import><i class="fa-solid fa-upload"></i> 导入 JSON</button>
                     <input type="file" accept="application/json,.json" data-import-file hidden>
+                    <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
                 </div>
                 <div class="cache-memory-manager-content" data-manager-content></div>
             </div>`;
@@ -1060,6 +1061,34 @@ export class CacheMemoryUI {
     async handleManagerClick(event) {
         if (event.target.closest('[data-manager-back]')) return this.closeManager();
         if (event.target === this.manager || event.target.closest('[data-manager-close]')) return this.closeManager();
+        const clearButton = event.target.closest('[data-clear-current-chat]');
+        if (clearButton) {
+            const warning = '这会删除当前聊天的全部 Cache Memory，包括楼层摘要、阶段记忆、长期事实和 KEEP。原始聊天正文和插件设置不会被修改。\n\n如需备份，请先导出 JSON。';
+            if (!this.root.confirm(`${warning}\n\n是否继续？`)) return;
+            if (this.root.prompt('这是不可撤销的危险操作。请输入“清空”以确认：', '') !== '清空') {
+                notify('warning', '输入未完全匹配“清空”，操作已取消。');
+                return;
+            }
+            clearButton.disabled = true;
+            try {
+                this.backfill?.cancel({ discard: true });
+                this.summarizer.invalidateContext();
+                this.apiClient.abortAll();
+                this.store.clearCurrentChat();
+                this.backfill?.reset();
+                this.resetManagerTransientState();
+                this.updateInjection('current chat cleared');
+                this.setStatus('success', '当前聊天的 Cache Memory 已清空；历史摘要不会自动重建。');
+                this.renderMessageMemories();
+                this.renderManager();
+                notify('success', '当前聊天记忆已清空。需要时可手动“补齐缺失摘要”。');
+            } catch (error) {
+                notify('error', `清空失败：${error.message}`);
+            } finally {
+                if (clearButton.isConnected) clearButton.disabled = false;
+            }
+            return;
+        }
         const selectPage = event.target.closest('[data-keep-select-page]');
         if (selectPage) {
             for (const id of selectPage.dataset.keepIds.split(',').filter(Boolean)) this.keepSelection.add(id);
@@ -1207,6 +1236,14 @@ export class CacheMemoryUI {
         }
         this.renderMessageMemories();
         this.renderManager();
+    }
+
+    resetManagerTransientState() {
+        this.managerView = 'overview';
+        this.managerState = { summaryStatus: 'all', summaryQuery: '', summaryPage: 1, checkpointPage: 1, factStatus: 'active', factPage: 1, keepStatus: 'active', keepQuery: '', keepPage: 1 };
+        this.keepSelection.clear();
+        for (const expanded of Object.values(this.managerExpanded)) expanded.clear();
+        this.backfillFormChatId = null;
     }
 
     handleManagerInput(event) {

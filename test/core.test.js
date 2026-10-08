@@ -109,6 +109,41 @@ test('automatic add is append-only and never overwrites a frozen summary', () =>
     assert.equal(fixture.store.getSummary('m1').title, 'manual replacement');
 });
 
+test('clearCurrentChat atomically replaces only the current chat memory store', () => {
+    const metadata = {
+        cache_memory: {
+            version: 3,
+            chatId: 'chat-a',
+            summaries: { m1: { messageId: 'm1', floor: 1, status: 'frozen' } },
+            checkpoints: [{ id: 'checkpoint-001' }],
+            longMemories: [{ id: 'long-001' }],
+            keepRegistry: { 'KEEP-0001': { text: '保留事项' } },
+            injectionSnapshot: { value: '<CACHE_MEMORY>old</CACHE_MEMORY>', blocks: [{ id: 'old' }] },
+        },
+        unrelated: { preserved: true },
+    };
+    let saves = 0;
+    let change;
+    const store = new MemoryStore({
+        getMetadata: () => metadata,
+        getChatId: () => 'chat-a',
+        saveMetadata: () => { saves += 1; },
+        onChange: (value, reason) => { change = { value, reason }; },
+    });
+
+    const cleared = store.clearCurrentChat();
+
+    assert.equal(saves, 1);
+    assert.equal(change.reason, 'current chat cleared');
+    assert.equal(cleared.chatId, 'chat-a');
+    assert.deepEqual(cleared.summaries, {});
+    assert.deepEqual(cleared.checkpoints, []);
+    assert.deepEqual(cleared.longMemories, []);
+    assert.deepEqual(cleared.keepRegistry, {});
+    assert.equal(Object.hasOwn(cleared, 'injectionSnapshot'), false);
+    assert.deepEqual(metadata.unrelated, { preserved: true });
+});
+
 test('message sync keeps identity through array index shifts and marks edited source stale', () => {
     const fixture = createStore();
     const assistant = message('original body', '2026-01-01');

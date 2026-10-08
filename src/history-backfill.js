@@ -1,4 +1,4 @@
-import { getAssistantMessages } from './utils.js?v=1.10.0';
+import { getAssistantMessages } from './utils.js?v=1.11.0';
 
 export function isRetryableSummaryError(error) {
     if (['REQUEST_ABORTED', 'CHAT_CHANGED', 'SOURCE_CHANGED', 'ST_PROXY_ROUTE_MISSING'].includes(error.code)) return false;
@@ -15,6 +15,10 @@ function aborted() {
     return Object.assign(new Error('历史补齐已取消'), { code: 'REQUEST_ABORTED' });
 }
 
+function idleState() {
+    return { status: 'idle', total: 0, processed: 0, success: 0, failed: 0, skipped: 0, retries: 0, currentFloor: null, error: '' };
+}
+
 export function waitForRetry(ms, signal) {
     return new Promise((resolve, reject) => {
         if (signal.aborted) return reject(aborted());
@@ -27,11 +31,17 @@ export function waitForRetry(ms, signal) {
 export class HistoryBackfill {
     constructor({ summarizer, store, getChat, onProgress = () => {}, delay = waitForRetry }) {
         Object.assign(this, { summarizer, store, getChat, onProgress, delay });
-        this.state = { status: 'idle', total: 0, processed: 0, success: 0, failed: 0, skipped: 0, retries: 0, currentFloor: null, error: '' };
+        this.state = idleState();
+        this.runId = 0;
+        this.operationActive = false;
     }
 
-    get active() { return ['running', 'pausing', 'paused', 'cancelling', 'aggregating'].includes(this.state.status); }
-    publish(patch = {}) { Object.assign(this.state, patch); this.onProgress({ ...this.state }); }
+    get active() { return this.operationActive || ['running', 'pausing', 'paused', 'cancelling', 'aggregating'].includes(this.state.status); }
+    publish(patch = {}, runId = this.runId) {
+        if (runId !== this.runId) return;
+        Object.assign(this.state, patch);
+        this.onProgress({ ...this.state });
+    }
 
     pause() {
         if (this.state.status === 'running') this.publish({ status: 'pausing' });
@@ -52,6 +62,13 @@ export class HistoryBackfill {
         if (this.state.status !== 'cancelling') this.publish({ status: 'cancelling' });
     }
 
+    reset() {
+        this.runId++;
+        this.state = idleState();
+        this.chatId = null;
+        this.onProgress({ ...this.state });
+    }
+
     async boundary() {
         if (this.store.current().chatId !== this.chatId) this.cancel({ discard: true });
         if (this.state.status === 'pausing') this.publish({ status: 'paused' });
@@ -62,6 +79,7 @@ export class HistoryBackfill {
 
     async start({ startFloor = 1, endFloor, mode = 'missing-failed' } = {}) {
         if (this.active) throw new Error('历史补齐正在进行，请先暂停或取消');
+        const runId = ++this.runId;
         if (!['missing', 'failed', 'missing-failed', 'all'].includes(mode)) throw new Error('未知的历史补齐模式');
         const assistants = this.store.syncMessages(this.getChat());
         endFloor ??= assistants.at(-1)?.floor ?? 0;
@@ -74,13 +92,14 @@ export class HistoryBackfill {
         this.aggregateController = new AbortController();
         this.discard = false;
         this.lastFailure = '';
+        this.operationActive = true;
         this.state = { status: 'running', total: entries.length, processed: 0, success: 0, failed: 0, skipped: 0, retries: 0, currentFloor: null, error: '' };
         this.summarizer.aggregateDeferrals++;
-        this.publish();
+        this.publish({}, runId);
         try {
             for (const entry of entries) {
                 await this.boundary();
-                this.publish({ currentFloor: entry.floor });
+                this.publish({ currentFloor: entry.floor }, runId);
                 const existing = this.store.getSummary(entry.messageId);
                 const selected = mode === 'all' || (!existing && ['missing', 'missing-failed'].includes(mode))
                     || (existing?.status === 'failed' && ['failed', 'missing-failed'].includes(mode));
@@ -100,7 +119,7 @@ export class HistoryBackfill {
                         } catch (error) {
                             if (['CHAT_CHANGED', 'REQUEST_ABORTED'].includes(error.code)) throw error;
                             if (attempt < 2 && isRetryableSummaryError(error)) {
-                                this.publish({ retries: this.state.retries + 1, error: `第 ${entry.floor} 层将在 ${attempt ? 5 : 2} 秒后重试：${error.message}` });
+                                this.publish({ retries: this.state.retries + 1, error: `第 ${entry.floor} 层将在 ${attempt ? 5 : 2} 秒后重试：${error.message}` }, runId);
                                 await this.delay(attempt ? 5000 : 2000, this.controller.signal);
                                 continue;
                             }
@@ -111,25 +130,27 @@ export class HistoryBackfill {
                         }
                     }
                 }
-                this.publish({ processed: this.state.processed + 1 });
+                this.publish({ processed: this.state.processed + 1 }, runId);
             }
         } catch (error) {
-            if (!['CHAT_CHANGED', 'REQUEST_ABORTED'].includes(error.code)) this.publish({ error: error.message });
+            if (!['CHAT_CHANGED', 'REQUEST_ABORTED'].includes(error.code)) this.publish({ error: error.message }, runId);
             this.controller.abort();
         } finally {
             this.summarizer.aggregateDeferrals--;
             const cancelled = this.controller.signal.aborted;
             if (!this.discard && this.store.current().chatId === this.chatId && this.state.success > 0) {
-                this.publish({ status: 'aggregating' });
+                this.publish({ status: 'aggregating' }, runId);
                 try {
                     await this.summarizer.enqueue(() => {
                         if (this.discard || this.store.current().chatId !== this.chatId) return;
                         return this.summarizer.generateDueAggregates({ signal: this.aggregateController.signal });
                     });
                 }
-                catch (error) { if (error.code !== 'REQUEST_ABORTED') this.publish({ error: `阶段记忆生成失败：${error.message}` }); }
+                catch (error) { if (error.code !== 'REQUEST_ABORTED') this.publish({ error: `阶段记忆生成失败：${error.message}` }, runId); }
             }
-            this.publish({ status: cancelled || this.discard ? 'cancelled' : 'completed', currentFloor: null });
+            this.operationActive = false;
+            if (runId === this.runId) this.publish({ status: cancelled || this.discard ? 'cancelled' : 'completed', currentFloor: null }, runId);
+            else this.onProgress({ ...this.state });
         }
         return { ...this.state };
     }

@@ -1,5 +1,5 @@
-import { getAssistantMessages } from './utils.js?v=1.10.0';
-import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.10.0';
+import { getAssistantMessages } from './utils.js?v=1.11.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.11.0';
 
 export const STORE_VERSION = 3;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
@@ -410,6 +410,16 @@ export class MemoryStore {
         store[key] = next;
         this.persist('manual edit');
         return true;
+    }
+
+    clearCurrentChat() {
+        const chatId = this.getChatId();
+        const cleared = createEmptyStore(chatId);
+        this.aggregateBatches.delete(String(chatId ?? ''));
+        this.getMetadata().cache_memory = cleared;
+        this.saveMetadata();
+        this.onChange(cleared, 'current chat cleared');
+        return cleared;
     }
 
     replace(imported) {
