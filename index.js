@@ -12,16 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.18.0';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.18.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.18.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.18.0';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.18.0';
-import { getAssistantMessages } from './src/utils.js?v=1.18.0';
-import { MemoryStore } from './src/memory-store.js?v=1.18.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.18.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.18.0';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.18.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.19.0';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.19.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.19.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.19.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.19.0';
+import { getAssistantMessages } from './src/utils.js?v=1.19.0';
+import { MemoryStore } from './src/memory-store.js?v=1.19.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.19.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.19.0';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.19.0';
+import { MemoryServerClient } from './src/memory-server.js?v=1.19.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -35,12 +36,19 @@ const timers = new Set();
 const frames = new Set();
 const diagnostics = new CacheDiagnostics();
 let activeChatId = null;
+let onlineHandler = null;
 
 const apiCacheAdapter = new ApiCacheAdapterBridge({
     getSettings: () => settings,
     updateSettings,
     fetchImpl: (...args) => window.fetch(...args),
     onStatus: status => ui?.setApiCacheAdapterStatus(status),
+});
+
+const memoryServer = new MemoryServerClient({
+    fetchImpl: (...args) => window.fetch(...args),
+    getHeaders: () => getContext()?.getRequestHeaders?.(),
+    onStatus: (state, detail) => console.info(LOG_PREFIX, `authoritative memory ${state}: ${detail}`),
 });
 
 const injectionPublisher = new CacheMemoryInjectionPublisher({
@@ -109,6 +117,9 @@ const persistence = new MemoryPersistenceCoordinator({
         if (String(context.chatId ?? '') !== String(chatId ?? '')) throw new Error('聊天已切换，取消旧聊天保存');
         await context.saveMetadata();
     },
+    readAuthoritativeStore: async chatId => memoryServer.read(chatId),
+    commitAuthoritative: async (chatId, payload) => memoryServer.commit(chatId, payload),
+    authoritativeAvailable: () => memoryServer.available,
     onStatus: (chatId) => {
         if (String(getCurrentChatId() ?? '') !== chatId) return;
         queueMicrotask(() => ui?.renderManager());
@@ -156,21 +167,24 @@ function updateInjection(reason = 'manual edit') {
     return { ...result, placement };
 }
 
-function refreshChatState({ serverLoaded = false } = {}) {
+async function refreshChatState({ serverLoaded = false } = {}) {
     if (!settings) return;
     let current = store.current();
     const chatId = current.chatId;
     if (chatId !== activeChatId || serverLoaded) current = persistence.activate(chatId, current) ?? current;
+    if (memoryServer.available && (chatId !== activeChatId || serverLoaded)) current = await persistence.sync(chatId, current);
     store.persistMigration();
     store.syncMessages(chat);
-    if (chatId !== activeChatId) {
+    const switched = chatId !== activeChatId;
+    if (switched) {
         summarizer.invalidateContext();
         ui?.backfill?.cancel({ discard: true });
         ui?.cancelMissingCheckpointBackfill({ discard: true });
         activeChatId = chatId;
         updateInjection('chat changed');
         persistence.verify(chatId);
-    } else if (!settings.strictCacheMode) updateInjection('history metadata changed');
+    } else if (serverLoaded) updateInjection('authoritative memory restored');
+    else if (!settings.strictCacheMode) updateInjection('history metadata changed');
     nextFrame(() => ui?.renderMessageMemories());
 }
 
@@ -226,6 +240,7 @@ function initialize() {
     if (runtimeController.signal.aborted) runtimeController = new AbortController();
     initialized = true;
     loadSettings();
+    memoryServer.probe().then(() => refreshChatState({ serverLoaded: true }));
     ui = new CacheMemoryUI({
         getSettings: () => settings,
         updateSettings,
@@ -251,6 +266,14 @@ function initialize() {
     apiCacheAdapter.install(window);
     apiCacheAdapter.probe();
     bindEvents();
+    onlineHandler = async () => {
+        await memoryServer.probe();
+        if (memoryServer.available && activeChatId) {
+            await persistence.sync(activeChatId, chat_metadata.cache_memory);
+            await persistence.flush(activeChatId);
+        }
+    };
+    window.addEventListener('online', onlineHandler, { signal: runtimeController.signal });
     refreshChatState();
     console.info(LOG_PREFIX, 'Initialized with append-only memory storage.');
 }
@@ -266,6 +289,8 @@ export function onActivate() {
 
 export function onHotUnload() {
     runtimeController.abort();
+    if (onlineHandler) window.removeEventListener('online', onlineHandler);
+    onlineHandler = null;
     apiCacheAdapter.uninstall();
     mountObserver?.disconnect();
     mountObserver = null;

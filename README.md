@@ -2,7 +2,7 @@
 
 面向长篇 RP 的追加式剧情记忆扩展。正常 assistant 回复完成后，通过独立 OpenAI-compatible 接口生成楼层摘要，并增量维护 Checkpoint 世界状态、长期事实档案和 KEEP 不可丢失事项。历史记录保留为冻结快照。
 
-当前版本 **v1.18.0**。扩展栏版本号显示在内容右下角；扩展栏默认收起。“记忆管理”现在是设置窗口顶部页签，不再打开第二层弹窗。
+当前版本 **v1.19.0**。扩展栏版本号显示在内容右下角；扩展栏默认收起。“记忆管理”现在是设置窗口顶部页签，不再打开第二层弹窗。
 
 v1.8.0 将三份用户提供的每层 Summary、阶段 Checkpoint 和 Long Memory 提示词设为默认值。升级时会迁移旧版内置提示词，同时保留用户自定义提示词。
 
@@ -35,6 +35,8 @@ v1.16.1 加强重要 NPC 的长期连续性保护：稳定身份、关系、立�
 v1.17.0 增加按聊天隔离的记忆保存队列与服务端读回验证。每次实际修改会先比对服务器记忆版本，调用 SillyTavern 官方 `saveMetadata()` 后再次读回；无法验证时保留本机待保存副本，不显示“已确认保存”。检测到另一设备的新记忆时阻止静默覆盖，并提供冲突导出、合并和显式恢复。记忆管理新增手动保存、合并导入与摘要异常楼层明细；不完整消息加载不再自动把 Summary 标记为 orphaned。
 
 v1.18.0 增加可选的 SillyTavern 服务端 API 缓存适配器。仅主聊天 `/generate` 请求可选择进入适配路由；插件自己的 Summary、Checkpoint、Long Memory 与连接测试请求会明确旁路。服务端只在兼容模式确认后为独立文本块添加缓存断点，并在检测到已有缓存改写时旁路。浏览器扩展默认关闭此功能；Claude 原生源继续由 SillyTavern 自身配置管理。
+
+v1.19.0 增加独立的服务端权威记忆库。每个已认证 ST 用户和稳定 chatId 各自保存 JSON 记录，采用临时文件写入后原子 rename、修订版本检查和按 Summary / Checkpoint / Long Memory / KEEP 稳定 ID 的三方增量合并。打开聊天时优先从权威记忆库恢复，不再以 `chat_metadata` 整体读回作为“已提交”证明；旧 `chat_metadata.cache_memory` 只在该聊天尚无权威记录时作为一次性迁移源。当前聊天暂时缺少历史楼层时不会删除服务器记忆，明确删除仍由删除事件产生 orphaned 状态。
 
 ## 跨设备接力与恢复
 
@@ -104,6 +106,8 @@ https://github.com/soso454u/SillyTavern-Cache-Memory
 扩展 manifest 已启用仓库自动更新。
 
 API 缓存适配器是可选的服务端插件，不包含在浏览器扩展自动安装流程中。若要启用，请把仓库内 `server-plugin/cache-memory-api-adapter/` 整个目录复制到 SillyTavern 安装目录下的 `plugins/cache-memory-api-adapter/`，确认该目录中直接包含 `index.mjs` 和 `package.json`，然后重启 SillyTavern 服务端。打开 Cache Memory 设置 → 模型接口，先点击“检测服务端适配器”；检测就绪后，再分别启用全局适配器和当前主模型连接策略。两项开关默认均关闭。未安装或未启用时，主请求保持原路由；此可选服务端插件不会处理 Cache Memory 自身的模型请求。不要为验证安装而发起模型请求，适配器检测只访问 SillyTavern 同源状态路由。
+
+要启用权威记忆库，还需把 `server-plugin/cache-memory-memory/` 复制到 SillyTavern 的 `plugins/cache-memory-memory/`，目录内直接包含 `index.mjs` 与 `package.json`，并在 `config.yaml` 确认 `enableServerPlugins: true` 后重启服务端。浏览器扩展会调用 `/api/plugins/cache-memory-memory/status` 检测；状态可用后，聊天打开、保存和断线重试自动使用该库。数据默认保存在 SillyTavern 工作目录的 `data/cache-memory/`；若部署使用自定义 `SILLYTAVERN_DATA_DIR`，则保存在该目录下。每条记录按 ST 登录用户 `request.user.profile.handle` 和 chatId 的哈希文件隔离。迁移旧 161 条数据时，第一次打开同一聊天会把当前 `chat_metadata.cache_memory` 作为基线提交；若服务器已有权威记录，直接恢复服务器记录并保留手机本地副本为冲突证据，不会用 156 条旧数据覆盖 161 条。迁移和提交失败会保留浏览器待同步副本，界面继续显示待同步/冲突/保存失败，不显示已确认。
 
 ## 模型接口
 
@@ -213,4 +217,4 @@ v1.11.0 验证：95 项自动测试通过，覆盖当前聊天 Store 原子清�
 
 v1.12.0 验证：100 项自动测试通过，覆盖完整消息元数据提取、过滤正文隔离、Summary→Checkpoint→Long Memory 时间范围传递、KEEP 来源与解决时间、Store v4 兼容迁移；JavaScript 语法和补丁空白检查通过。未调用真实模型 API，弹窗拖动、结构化编辑、分页换行与插件内确认的真实 SillyTavern 视觉和交互由实际环境验证。
 
-v1.18.0 验证：服务端缓存适配器逻辑使用本地模拟请求覆盖，语法检查通过；未调用模型 API，未在真实 SillyTavern 服务端联机验证。服务端插件需单独安装并重启 SillyTavern。
+v1.19.0 验证：权威记忆插件和客户端提交路径仅做 Node 语法检查、纯本地三方合并/原子写入模拟；未调用模型 API，未在真实 SillyTavern 服务端联机验证。服务端插件需单独安装并重启 SillyTavern。ST 核心聊天文件仍由 ST 自己保存，本修复不接管、不覆盖聊天正文。

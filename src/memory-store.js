@@ -1,5 +1,5 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.18.0';
-import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.18.0';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.19.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.19.0';
 
 export const STORE_VERSION = 5;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
@@ -177,7 +177,19 @@ export class MemoryStore {
         let changed = false;
 
         for (const entry of assistants) {
-            const record = store.summaries[entry.messageId];
+            let record = store.summaries[entry.messageId];
+            let recordKey = entry.messageId;
+            if (!record && entry.fingerprint) {
+                const match = Object.entries(store.summaries).find(([, candidate]) => candidate?.status !== 'orphaned' && candidate?.sourceFingerprint === entry.fingerprint);
+                if (match) {
+                    recordKey = match[0];
+                    record = match[1];
+                    delete store.summaries[recordKey];
+                    store.summaries[entry.messageId] = record;
+                    for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === recordKey) keep.sourceId = entry.messageId;
+                    changed = true;
+                }
+            }
             if (!record) continue;
             if (record.floor !== entry.floor || record.messageIndex !== entry.messageIndex || record.messageId !== entry.messageId) {
                 for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === record.messageId) keep.sourceFloor = entry.floor;

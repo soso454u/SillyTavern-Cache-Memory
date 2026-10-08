@@ -175,6 +175,18 @@ test('message sync keeps identity through array index shifts and marks edited so
     assert.equal(stored.status, 'stale');
 });
 
+test('message sync rebinds a restored summary by stable assistant fingerprint', () => {
+    const metadata = { cache_memory: { version: 5, chatId: 'chat-a', summaries: {}, checkpoints: [], longMemories: [], keepRegistry: {} } };
+    const restoredMessage = { is_user: false, is_system: false, mes: 'same', send_date: 1, gen_started: 2, gen_finished: 3 };
+    const entry = getAssistantMessages([restoredMessage])[0];
+    metadata.cache_memory.summaries.old_id = { messageId: 'old_id', sourceFingerprint: entry.fingerprint, floor: 161, messageIndex: 161, raw: 'saved', status: 'frozen', frozen: true };
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'chat-a', saveMetadata: () => {} });
+    store.syncMessages([restoredMessage]);
+    const reboundId = getAssistantMessages([restoredMessage])[0].messageId;
+    assert.equal(store.current().summaries[reboundId]?.raw, 'saved');
+    assert.equal(store.current().summaries.old_id, undefined);
+});
+
 test('injection is deterministic, ordered and excludes checkpoints covered by long memory', () => {
     const store = {
         longMemories: [
