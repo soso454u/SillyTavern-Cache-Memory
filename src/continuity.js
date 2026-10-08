@@ -1,4 +1,5 @@
-import { fnv1a } from './utils.js?v=1.8.1';
+import { fnv1a } from './utils.js?v=1.9.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.9.0';
 
 export const isUsableMemory = item => item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen');
 
@@ -17,17 +18,24 @@ function lines(text) {
 
 export function summaryText(item) {
     // Manual edits and legacy XML records use their current visible fields.
-    return item.format === 'structured' && !item.manualEdited
-        ? item.raw
+    return item.format === 'structured'
+        ? buildStructuredSummary(parseStructuredSummary(item.raw) ?? item)
         : `${item.title}\n人物：${item.characters}\n事件：${item.event}`;
 }
 
+function normalizeKeepText(value) {
+    return String(value ?? '').trim()
+        .replace(/^\s*(?:(?:[-*•]+)|(?:\d+[.)、:])|(?:[（(]?\d+[）)]))\s*/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function keepFromRecord(item) {
-    const text = summaryText(item);
-    const entries = [...lines(readSection(text, 'KEEP')), ...lines(readSection(text, 'Open'))];
+    const parsed = item.format === 'structured' ? parseStructuredSummary(item.raw) : null;
+    const entries = lines(item.keep ?? parsed?.keep ?? readSection(summaryText(item), 'KEEP')).map(normalizeKeepText).filter(Boolean);
     return [...new Set(entries)].map(text => ({
-        id: `keep-${fnv1a(`${item.messageId ?? item.id}:${text}`)}`,
-        text, floor: item.floor ?? item.endFloor, status: 'active',
+        id: `keep-${fnv1a(text)}`,
+        text, floor: item.floor ?? item.endFloor, sourceId: item.messageId ?? item.id, status: 'active',
     }));
 }
 
@@ -35,11 +43,15 @@ export function collectKeepItems(store, throughFloor = Infinity) {
     const map = new Map();
     const checkpoints = store.checkpoints.filter(item => isUsableMemory(item) && item.endFloor <= throughFloor)
         .sort((a, b) => a.endFloor - b.endFloor);
-    for (const item of Object.values(store.summaries).filter(item => isUsableMemory(item) && item.floor <= throughFloor)) {
-        for (const keep of keepFromRecord(item)) map.set(keep.id, keep);
+    for (const item of Object.values(store.summaries).filter(item => isUsableMemory(item) && item.floor <= throughFloor).sort((a, b) => a.floor - b.floor)) {
+        for (const keep of keepFromRecord(item)) if (!map.has(normalizeKeepText(keep.text))) map.set(normalizeKeepText(keep.text), keep);
     }
     for (const checkpoint of checkpoints) {
-        for (const keep of checkpoint.keepItems ?? []) map.set(keep.id, { ...keep });
+        for (const keep of checkpoint.keepItems ?? []) {
+            const key = normalizeKeepText(keep.text);
+            const source = map.get(key);
+            if (source) map.set(key, { ...source, ...keep, text: source.text, floor: source.floor, sourceId: source.sourceId });
+        }
     }
     return [...map.values()];
 }
@@ -71,7 +83,7 @@ export function previousState(store, startFloor) {
     const checkpoints = store.checkpoints.filter(item => isUsableMemory(item) && item.endFloor < startFloor)
         .sort((a, b) => a.endFloor - b.endFloor);
     const latest = checkpoints.at(-1);
-    if (latest?.memoryKind === 'state') return { id: latest.id, content: latest.content };
+    if (latest?.memoryKind === 'state') return { id: latest.id, content: stripStructuredSections(latest.content, ['KEEP', 'RESOLVED_KEEP']) };
     // First incremental checkpoint seeds from all retained legacy aggregate ranges.
     const longs = store.longMemories.filter(item => isUsableMemory(item) && item.endFloor < startFloor && item.memoryKind !== 'facts');
     return {
@@ -93,10 +105,12 @@ export function projectLongFacts(store, throughFloor = Infinity) {
         const updates = memory.factUpdates ?? [];
         for (const update of updates) {
             if (update.previousId && facts.has(update.previousId)) {
-                facts.set(update.previousId, { ...facts.get(update.previousId), status: update.action === 'retire' ? 'retired' : 'superseded', reason: update.reason, evidence: update.evidence });
+                facts.set(update.previousId, { ...facts.get(update.previousId), status: update.action === 'retire' ? 'retired' : 'superseded', reason: update.reason, evidence: update.evidence,
+                    resolvedBy: memory.id, resolvedFloor: memory.endFloor });
             }
             if (update.action !== 'retire') facts.set(update.id, {
                 id: update.id, text: update.text, status: 'active', floor: memory.endFloor,
+                sourceId: memory.id, startFloor: memory.startFloor, endFloor: memory.endFloor,
             });
         }
     }

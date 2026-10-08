@@ -1,5 +1,5 @@
-import { getAssistantMessages } from './utils.js?v=1.8.1';
-import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.8.1';
+import { getAssistantMessages } from './utils.js?v=1.9.0';
+import { parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.9.0';
 
 export const STORE_VERSION = 2;
 
@@ -156,6 +156,20 @@ export class MemoryStore {
         delete store.summaries[messageId];
         this.persist('manual edit');
         return true;
+    }
+
+    reparseStructuredSummaries(parser) {
+        const store = this.current();
+        let updated = 0;
+        for (const record of Object.values(store.summaries)) {
+            if (!record?.raw || (record.format !== 'structured' && !/^\s*\[SUMMARY\]/im.test(record.raw))) continue;
+            const parsed = parser(record.raw);
+            if (!parsed || parsed.format !== 'structured') continue;
+            Object.assign(record, parsed);
+            updated++;
+        }
+        if (updated) this.persist('summary reparse');
+        return updated;
     }
 
     addCheckpoint(record, { overwrite = false } = {}) {

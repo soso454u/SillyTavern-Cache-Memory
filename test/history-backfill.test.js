@@ -249,7 +249,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.8.1');
+    assert.equal(PLUGIN_VERSION, '1.9.0');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
     assert.match(DEFAULT_PROMPTS.summary, /\[State\][\s\S]*\[Open\]/);

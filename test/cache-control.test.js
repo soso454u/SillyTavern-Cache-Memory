@@ -56,6 +56,17 @@ test('floor summaries never refresh strict injection; 1-4/6-9 have byte-identica
     assert.doesNotMatch(store.current().injectionSnapshot.value, /RECENT_SUMMARY|S10/);
 });
 
+test('strict checkpoint snapshots inject active KEEP exactly once even for legacy embedded KEEP content', () => {
+    const { store } = fixture();
+    const text = '姜梨答应保守秘密';
+    store.addSummary({ messageId: 'm1', floor: 1, format: 'structured', raw: `[SUMMARY]\n[Event]\n事件\n[KEEP]\n- ${text}`, status: 'frozen', frozen: true });
+    store.addCheckpoint({ ...checkpoint(5, `[CHECKPOINT]\n状态\n[KEEP]\n- keep-old | ${text}`), memoryKind: 'state',
+        keepItems: [{ id: 'keep-old', text, floor: 1, status: 'active' }] });
+    const value = store.current().injectionSnapshot.value;
+    assert.equal(value.match(/\[KEEP\]/g)?.length, 1);
+    assert.equal(value.match(new RegExp(text, 'g'))?.length, 1);
+});
+
 test('old recent mode is demoted; long-only boundary ignores every checkpoint and summary', () => {
     const recent = normalizeSettings({ injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT });
     assert.equal(effectiveInjectionMode(recent), INJECTION_MODES.CHECKPOINT_BOUNDARY);

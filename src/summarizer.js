@@ -1,5 +1,7 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.8.1';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.8.1';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.9.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.9.0';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.9.0';
+import { extractSummarySource } from './summary-source.js?v=1.9.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -22,23 +24,29 @@ function chatChangedError(kind) {
 export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}) {
     const source = String(text ?? '').trim();
     const read = tag => source.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))?.[1]?.trim() ?? '';
-    const structured = /^\s*\[SUMMARY\]/i.test(source);
+    const structured = parseStructuredSummary(source);
+    if (structured) return {
+        title: structured.title || '未命名摘要',
+        characters: structured.characters || '未明确',
+        event: structured.event,
+        state: structured.state,
+        open: structured.open,
+        quote: structured.quote,
+        keep: structured.keep,
+        raw: structured.raw,
+        format: 'structured',
+    };
     const title = read('title') || readSection(source, 'Title') || '未命名摘要';
     const characters = read('characters') || readSection(source, 'Characters') || '未明确';
-    const event = structured
-        ? ['Event', 'State', 'Open', 'Quote', 'KEEP'].map(name => {
-            const value = readSection(source, name);
-            return value ? `[${name}]\n${value}` : '';
-        }).filter(Boolean).join('\n\n') || source
-        : read('event') || source;
-    if (preserveFull) return { title, characters, event, raw: source, format: structured ? 'structured' : 'legacy' };
+    const event = read('event') || source;
+    if (preserveFull) return { title, characters, event, state: '', open: '', quote: '', keep: '', raw: source, format: 'legacy' };
     const budget = Math.max(20, Number(maxLength) || 350);
     const overhead = title.length + characters.length + 10;
     return {
         title: clampText(title, Math.min(80, budget)),
         characters: clampText(characters, Math.min(160, budget)),
         event: clampText(event, Math.max(20, budget - overhead)),
-        raw: clampText(source, budget),
+        state: '', open: '', quote: '', keep: '', raw: clampText(source, budget), format: 'legacy',
     };
 }
 
@@ -144,9 +152,16 @@ export class MemorySummarizer {
                 maxLength: settings.summaryMaxLength,
                 floor: entry.floor,
             });
+            const summarySource = extractSummarySource(entry.message.mes, settings);
+            if (settings.cacheDebug) console.info('[Cache Memory] SUMMARY SOURCE', {
+                strategy: settings.summaryFilterMode,
+                source: summarySource.source,
+                originalChars: String(entry.message.mes ?? '').length,
+                inputChars: summarySource.text.length,
+            });
             const result = await this.apiClient.complete({
                 systemPrompt,
-                userContent: entry.message.mes,
+                userContent: summarySource.text,
                 maxTokens: settings.maxTokens,
                 signal,
             });
@@ -161,6 +176,10 @@ export class MemorySummarizer {
                 title: parsed.title,
                 characters: parsed.characters,
                 event: parsed.event,
+                state: parsed.state,
+                open: parsed.open,
+                quote: parsed.quote,
+                keep: parsed.keep,
                 raw: parsed.raw,
                 format: parsed.format,
                 createdAt: new Date().toISOString(),
@@ -215,9 +234,32 @@ export class MemorySummarizer {
 
     getNextCheckpointRange() {
         const settings = this.getSettings();
-        const checkpoints = this.store.current().checkpoints.filter(isUsableMemory);
-        const startFloor = checkpoints.length ? Math.max(...checkpoints.map(item => item.endFloor)) + 1 : 1;
+        const checkpoints = this.store.current().checkpoints.filter(isUsableMemory).sort((a, b) => a.startFloor - b.startFloor);
+        let startFloor = 1;
+        while (true) {
+            const next = checkpoints.find(item => item.startFloor === startFloor && item.endFloor >= item.startFloor);
+            if (!next) break;
+            startFloor = next.endFloor + 1;
+        }
         return { startFloor, endFloor: startFloor + settings.checkpointInterval - 1 };
+    }
+
+    async generateAggregatesFrom(startFloor, { signal } = {}) {
+        const settings = this.getSettings();
+        const latestFloor = getAssistantMessages(this.getChat()).at(-1)?.floor ?? 0;
+        let start = Math.max(1, Math.floor(Number(startFloor) || 1));
+        return this.store.withAggregateBatch(async () => {
+            while (start + settings.checkpointInterval - 1 <= latestFloor) {
+                const end = start + settings.checkpointInterval - 1;
+                const existing = this.store.current().checkpoints.find(item => item.startFloor === start && item.endFloor === end);
+                if (!existing || !isUsableMemory(existing)) {
+                    const created = await this.generateCheckpoint(start, end, { overwrite: Boolean(existing), signal });
+                    if (!created) break;
+                }
+                await this.generateDueLongMemories({ signal });
+                start = end + 1;
+            }
+        });
     }
 
     async generateDueAggregates({ signal } = {}) {
@@ -278,7 +320,7 @@ export class MemorySummarizer {
                 id,
                 startFloor,
                 endFloor,
-                content: incremental ? result.content.trim() : clampText(result.content, settings.checkpointMaxLength),
+                content: incremental ? stripStructuredSections(result.content, ['KEEP', 'RESOLVED_KEEP']) : clampText(result.content, settings.checkpointMaxLength),
                 ...(incremental ? {
                     memoryKind: 'state', previousCheckpointId: state.id,
                     summaryIds: summaries.map(item => item.messageId),

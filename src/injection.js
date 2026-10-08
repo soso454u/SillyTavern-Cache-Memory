@@ -1,5 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.8.1';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.8.1';
+import { INJECTION_MODES } from './defaults.js?v=1.9.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.9.0';
+import { stripStructuredSections } from './summary-format.js?v=1.9.0';
 
 function byRange(a, b) {
     return Number(a.startFloor ?? a.floor) - Number(b.startFloor ?? b.floor);
@@ -19,13 +20,14 @@ export function buildInjection(store, settings) {
         const keeps = formatKeepItems(collectKeepItems(store));
         if (keeps !== '无') blocks.push(`[KEEP]\n${keeps}`);
         if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode) && stateEnd) {
-            blocks.push(`[LATEST_CHECKPOINT | 截至第${stateEnd}层]\n${latest?.content ?? previousState(store, stateEnd + 1).content}`);
+            const state = latest?.content ?? previousState(store, stateEnd + 1).content;
+            blocks.push(`[LATEST_CHECKPOINT | 截至第${stateEnd}层]\n${stripStructuredSections(state, ['KEEP', 'RESOLVED_KEEP'])}`);
         }
         if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {
             // Include every summary after the latest checkpoint; count limits must not create a gap.
             const summaries = Object.values(store.summaries).filter(item => isUsableMemory(item) && item.floor > stateEnd)
                 .sort((a, b) => a.floor - b.floor);
-            for (const item of summaries) blocks.push(`[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${summaryText(item)}`);
+            for (const item of summaries) blocks.push(`[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}`);
         }
         return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
     }

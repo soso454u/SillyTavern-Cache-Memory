@@ -1,7 +1,8 @@
-import { INJECTION_MODES } from './defaults.js?v=1.8.1';
-import { buildInjection } from './injection.js?v=1.8.1';
-import { formatKeepItems, isUsableMemory } from './continuity.js?v=1.8.1';
-import { fnv1a } from './utils.js?v=1.8.1';
+import { INJECTION_MODES } from './defaults.js?v=1.9.0';
+import { buildInjection } from './injection.js?v=1.9.0';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.9.0';
+import { fnv1a } from './utils.js?v=1.9.0';
+import { stripStructuredSections } from './summary-format.js?v=1.9.0';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -21,20 +22,21 @@ export function shouldRefreshInjection(settings, reason) {
 function frozenBlocks(store, mode) {
     const blocks = [];
     const add = (record, type) => {
-        const keeps = formatKeepItems(record.keepItems ?? []);
         const delta = (record.factUpdates ?? []).map(update => update.action === 'retire'
             ? `- RETIRE ${update.previousId}: ${update.reason || update.evidence || '明确失效'}`
             : `- ${update.action.toUpperCase()} ${update.id}${update.previousId ? ` (supersedes ${update.previousId})` : ''}: ${update.text}`).join('\n');
         const content = record.memoryKind === 'facts' && Array.isArray(record.factUpdates)
             ? `[FACT_DELTA]\n${delta || '本阶段无新增或有证据的长期事实变更。'}`
-            : record.content ?? '';
+            : stripStructuredSections(record.content ?? '', ['KEEP', 'RESOLVED_KEEP']);
         blocks.push({ id: `${type}:${record.id}`, type, startFloor: record.startFloor, endFloor: record.endFloor,
-            text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}${keeps !== '无' ? `\n[KEEP]\n${keeps}` : ''}` });
+            text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}` });
     };
     for (const record of [...store.longMemories].filter(isUsableMemory).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'long');
     if (mode === INJECTION_MODES.CHECKPOINT_BOUNDARY) {
         for (const record of [...store.checkpoints].filter(isUsableMemory).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'checkpoint');
     }
+    const keeps = formatKeepItems(collectKeepItems(store));
+    if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: 0, text: `[KEEP]\n${keeps}` });
     return blocks;
 }
 
@@ -56,7 +58,10 @@ export function refreshSnapshot(store, settings, reason = 'manual edit') {
             blocks = rebuild ? fresh : [...(previous.blocks ?? [])];
             if (!rebuild) {
                 const ids = new Set(blocks.map(block => block.id));
-                for (const block of fresh) if (!ids.has(block.id)) { blocks.push(block); ids.add(block.id); }
+                const freshKeep = fresh.find(block => block.id === 'keep:active');
+                blocks = blocks.filter(block => block.id !== 'keep:active');
+                for (const block of fresh) if (block.id !== 'keep:active' && !ids.has(block.id)) { blocks.push(block); ids.add(block.id); }
+                if (freshKeep) blocks.push(freshKeep);
             }
             // Explicitly permitted compaction at a Long boundary; never delete Checkpoint data.
             const longs = blocks.filter(block => block.type === 'long');

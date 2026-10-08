@@ -37,13 +37,44 @@ test('old stores and custom prompts survive migration while former default promp
 });
 
 test('structured summaries preserve complete state, open threads and KEEP beyond the soft target', () => {
-    const text = `[SUMMARY]\n[Title]\n重要承诺\n[Characters]\n姜梨/陆雾\n[Event]\n${'重要因果'.repeat(180)}\n[State]\n陆雾尚不知道邮件已被查看\n[Open]\n旅行尚未兑现\n[KEEP]\n- 姜梨答应十二月前陪陆雾回巴黎见外婆`;
+    const text = `模型自我修改\n[SUMMARY]\n[Event]\n旧稿\n\n[SUMMARY]\n[Title]\n重要承诺\n[Characters]\n姜梨/陆雾\n[Event]\n${'重要因果'.repeat(180)}\n[State]\n陆雾尚不知道邮件已被查看\n[Open]\n旅行尚未兑现\n[Quote]\n无\n[KEEP]\n- 姜梨答应十二月前陪陆雾回巴黎见外婆`;
     const parsed = parseFloorSummary(text, 350, { preserveFull: true });
-    assert.equal(parsed.raw, text);
-    assert.match(parsed.event, /陆雾尚不知道/);
-    assert.match(parsed.event, /旅行尚未兑现/);
-    assert.match(parsed.event, /十二月前/);
+    assert.match(parsed.raw, /^\[SUMMARY\]\n\[Title\]/);
+    assert.doesNotMatch(parsed.raw, /旧稿|模型自我修改/);
+    assert.doesNotMatch(parsed.event, /\[State\]|陆雾尚不知道/);
+    assert.equal(parsed.state, '陆雾尚不知道邮件已被查看');
+    assert.equal(parsed.open, '旅行尚未兑现');
+    assert.match(parsed.keep, /十二月前/);
     assert.ok(parsed.raw.length > 350);
+});
+
+test('only explicit KEEP entries receive stable ids, with exact normalized deduplication', () => {
+    const store = { summaries: {
+        a: { messageId: 'a', floor: 1, format: 'structured', status: 'frozen', raw: '[SUMMARY]\n[Event]\n当前事件\n[Open]\n未读消息\n[KEEP]\n无' },
+        b: { messageId: 'b', floor: 2, format: 'structured', status: 'frozen', raw: '[SUMMARY]\n[Event]\n当前事件\n[Open]\n几小时后的集合\n[KEEP]\n1.  姜梨答应保守秘密' },
+        c: { messageId: 'c', floor: 3, format: 'structured', status: 'frozen', raw: '[SUMMARY]\n[Event]\n当前事件\n[KEEP]\n- 姜梨答应保守秘密' },
+    }, checkpoints: [{ id: 'checkpoint-001', endFloor: 3, status: 'frozen', keepItems: [
+        { id: 'old-open-id', text: '未读消息', status: 'active' },
+        { id: 'old-keep-id', text: '姜梨答应保守秘密', status: 'active' },
+    ] }], longMemories: [] };
+    const keeps = collectKeepItems(store);
+    assert.equal(keeps.length, 1);
+    assert.equal(keeps[0].text, '姜梨答应保守秘密');
+    assert.equal(keeps[0].id, 'old-keep-id');
+    assert.doesNotMatch(JSON.stringify(keeps), /未读消息|集合/);
+});
+
+test('saved structured raw can be reparsed locally without replacing record identity', () => {
+    const { store } = fixture();
+    store.addSummary({ messageId: 'm1', floor: 1, status: 'frozen', format: 'structured', event: '[Event]\n旧错误\n[State]\n旧状态',
+        raw: '[SUMMARY]\n[Event]\n草稿\n\n[SUMMARY]\n[Title]\n最终\n[Characters]\n姜梨\n[Event]\n最终事件\n[State]\n最终状态\n[Open]\n无\n[Quote]\n无\n[KEEP]\n无' });
+    const count = store.reparseStructuredSummaries(raw => parseFloorSummary(raw, 500, { preserveFull: true }));
+    const record = store.getSummary('m1');
+    assert.equal(count, 1);
+    assert.equal(record.messageId, 'm1');
+    assert.equal(record.event, '最终事件');
+    assert.equal(record.state, '最终状态');
+    assert.doesNotMatch(record.raw, /草稿/);
 });
 
 test('incremental checkpoints carry prior state and KEEP; fact extraction appends deltas without rewriting legacy records', async () => {
@@ -125,6 +156,7 @@ test('non-strict incremental injection combines active facts, KEEP, latest state
     assert.equal(output, buildInjection(store.current(), settings));
     assert.match(output, /长期有效的重要事实/);
     assert.match(output, /十二月前/);
+    assert.equal(output.match(/\[KEEP\]/g)?.length, 1);
     assert.match(output, /latest state/);
     assert.match(output, /最近第一件事/);
     assert.match(output, /最近第二件事/);

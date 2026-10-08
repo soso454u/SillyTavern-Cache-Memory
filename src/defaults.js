@@ -1,4 +1,6 @@
-export const PLUGIN_VERSION = '1.8.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.9.0';
+
+export const PLUGIN_VERSION = '1.9.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -528,6 +530,8 @@ KEEP 保存即使几十或几百层没有再次出现，也仍需持续追踪的
 
 未兑现承诺与约定 / 未完成长期计划 / 重要秘密 / 持续人物认知差 / 重要误会 / 明确伏笔与异常 / 重要物品去向 / 持续伤害、损失、债务与责任 / 长期边界 / 仍持续影响后续的重大事件或关系变化。
 
+KEEP 默认应稀疏，不要假设每层都需要 KEEP。当天安排 / 几小时后的计划 / 普通未读消息 / 当前姿势 / 当前场景尚未结束的小冲突，通常只写入 State 或 Open，不得因其“未解决”就写入 KEEP。
+
 每个 KEEP：
 一条一个事项 / 明确人物和对象 / 脱离原文仍可独立理解 / 仅写当前正文明确支持的信息。
 
@@ -870,7 +874,7 @@ UPDATED_FACTS 与 RETIRED_FACTS 的证据必须从 NEW_SUMMARIES 中逐字复制
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
-    'f4616e5c', '9154624b', 'dd33ee6c',
+    'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
 ]);
 
 function promptFingerprint(value) {
@@ -906,6 +910,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     tokenLimitParameter: 'max_tokens',
     generationTransport: GENERATION_TRANSPORTS.AUTO,
     thinkingMode: THINKING_MODES.DISABLED,
+    summaryFilterMode: SUMMARY_FILTER_MODES.DEFAULT,
+    summaryFilterTags: 'content, context',
     timeoutMs: 180000,
     prompts: DEFAULT_PROMPTS,
 });
@@ -941,6 +947,9 @@ export function normalizeSettings(saved = {}) {
     const thinkingMode = Object.values(THINKING_MODES).includes(source.thinkingMode)
         ? source.thinkingMode
         : THINKING_MODES.DISABLED;
+    const summaryFilterMode = Object.values(SUMMARY_FILTER_MODES).includes(source.summaryFilterMode)
+        ? source.summaryFilterMode
+        : SUMMARY_FILTER_MODES.DEFAULT;
 
     return {
         ...DEFAULT_SETTINGS,
@@ -963,6 +972,8 @@ export function normalizeSettings(saved = {}) {
         tokenLimitParameter: source.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens',
         generationTransport,
         thinkingMode,
+        summaryFilterMode,
+        summaryFilterTags: String(source.summaryFilterTags ?? DEFAULT_SETTINGS.summaryFilterTags),
         maxTokens: Math.round(number(source.maxTokens, DEFAULT_SETTINGS.maxTokens, 32, 32000)),
         timeoutMs: Math.round(number(source.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 300000)),
         provider,

@@ -49,7 +49,7 @@
 .cache-memory-dialog-header.is-dragging { cursor: grabbing; }
 .cache-memory-dialog-header button { cursor: pointer; touch-action: auto; }
 .cache-memory-manager-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); }
-.cache-memory-backfill { padding: 12px 20px; border-bottom: 1px solid var(--cm-line); max-height: 38dvh; overflow-y: auto; }
+.cache-memory-backfill, .cache-memory-aggregation { margin-top: 18px; padding: 16px; border: 1px solid var(--cm-line); border-radius: 12px; background: #fff; }
 .cache-memory-backfill h4 { margin: 0; }
 .cache-memory-backfill p { margin: 8px 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cache-memory-backfill small { display: block; font-size: 11px; color: var(--cm-muted); }
@@ -132,9 +132,39 @@
 .cache-memory-message-body { padding: 7px 0 2px 14px; }
 .cache-memory-message-body p { margin: 4px 0; white-space: pre-wrap; }
 .cache-memory-manager-toolbar { display: flex; gap: 8px; padding: 11px 20px; border-bottom: 1px solid var(--cm-line); background: #f8fafc; }
-.cache-memory-manager-content { overflow-y: auto; padding: 18px 20px 28px; background: #f8fafc; }
+.cache-memory-manager-tabs { display: flex; gap: 4px; padding: 8px 14px 0; overflow-x: auto; border-bottom: 1px solid var(--cm-line); background: #fff; scrollbar-width: thin; }
+.cache-memory-manager-tabs button { flex: 0 0 auto; min-height: 40px; padding: 8px 14px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--cm-muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.cache-memory-manager-tabs button.is-active { border-bottom-color: var(--cm-teal); color: var(--cm-teal-dark); }
+.cache-memory-manager-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 18px 20px 28px; background: #f8fafc; }
+.cache-memory-manager-page { min-height: 100%; }
+.cache-memory-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.cache-memory-stat { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--cm-line); border-radius: 11px; background: #fff; }
+.cache-memory-stat strong { color: var(--cm-teal-dark); font-size: 24px; }
+.cache-memory-stat span { color: var(--cm-muted); font-size: 12px; }
+.cache-memory-list-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.cache-memory-list-controls input, .cache-memory-list-controls select, .cache-memory-aggregate-controls input { min-height: 38px; padding: 7px 9px; border: 1px solid #bdcada; border-radius: 8px; background: #fff; color: var(--cm-ink); box-sizing: border-box; }
+.cache-memory-list-controls input[type="search"] { flex: 1 1 220px; min-width: 140px; }
+.cache-memory-subtabs { display: flex; gap: 7px; margin-bottom: 12px; }
+.cache-memory-subtabs button { min-height: 36px; padding: 6px 12px; border: 1px solid var(--cm-line); border-radius: 999px; background: #fff; color: var(--cm-muted); font: inherit; cursor: pointer; }
+.cache-memory-subtabs button.is-active { border-color: var(--cm-teal); background: #eaf8f5; color: var(--cm-teal-dark); font-weight: 700; }
+.cache-memory-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; color: var(--cm-muted); font-size: 12px; }
 .cache-memory-manager-section { margin-bottom: 20px; }
 .cache-memory-card { margin: 9px 0; padding: 12px; border: 1px solid var(--cm-line); border-radius: 10px; background: #fff; color: var(--cm-ink); box-shadow: 0 2px 8px rgba(36, 55, 80, 0.04); }
+.cache-memory-fold-card { padding: 0; overflow: clip; }
+.cache-memory-fold-card > summary { list-style: none; }
+.cache-memory-fold-card > summary::-webkit-details-marker { display: none; }
+.cache-memory-card-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 12px; cursor: pointer; user-select: none; }
+.cache-memory-card-arrow { color: var(--cm-teal); transition: transform 0.15s ease; }
+.cache-memory-fold-card[open] .cache-memory-card-arrow { transform: rotate(90deg); }
+.cache-memory-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cache-memory-card-status { padding: 3px 7px; border-radius: 999px; background: #eaf8f5; color: var(--cm-teal-dark); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.cache-memory-card-summary time { color: var(--cm-muted); font-size: 11px; white-space: nowrap; }
+.cache-memory-card-body { padding: 0 14px 14px 36px; border-top: 1px solid var(--cm-line); }
+.cache-memory-card-body p { margin: 9px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cache-memory-card-body pre { margin: 12px 0 0; padding: 10px; max-height: 320px; overflow: auto; border-radius: 7px; background: var(--cm-soft); color: #27364a; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.55; }
+.cache-memory-aggregation h4, .cache-memory-aggregation p { margin-top: 0; }
+.cache-memory-aggregate-controls label { display: flex; align-items: center; gap: 8px; color: var(--cm-muted); font-size: 12px; }
+.cache-memory-aggregate-controls input { width: 100px; }
 .cache-memory-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .cache-memory-card > header span { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: #eaf8f5; color: var(--cm-teal-dark); font-size: 10px; font-weight: 700; }
 .cache-memory-card small { display: block; margin-top: 6px; color: var(--cm-muted); line-height: 1.45; }
@@ -158,6 +188,12 @@ body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden
     .cache-memory-section-heading .menu_button { align-self: flex-start; }
     .cache-memory-manager-toolbar { flex-wrap: wrap; padding-inline: 13px; }
     .cache-memory-manager-content { padding-inline: 13px; }
+    .cache-memory-manager-tabs { padding-inline: 7px; }
+    .cache-memory-manager-tabs button { min-height: 44px; padding-inline: 12px; }
+    .cache-memory-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cache-memory-card-summary { grid-template-columns: auto minmax(0, 1fr) auto; min-height: 58px; }
+    .cache-memory-card-summary time { display: none; }
+    .cache-memory-card-body { padding-left: 14px; }
 }
 
 /* Avoid repainting the blurred ST page on each drag frame. */

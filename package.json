@@ -1,11 +1,11 @@
 {
   "name": "sillytavern-cache-memory",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "description": "Cache-friendly append-only story memory for SillyTavern.",
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check index.js && node --check src/api-client.js && node --check src/cache-control.js && node --check src/ui-context.js && node --check src/continuity.js && node --check src/defaults.js && node --check src/memory-store.js && node --check src/summarizer.js && node --check src/injection.js && node --check src/ui.js && node --check src/history-backfill.js && node --check src/utils.js"
+    "check": "node --check index.js && node --check src/api-client.js && node --check src/cache-control.js && node --check src/ui-context.js && node --check src/continuity.js && node --check src/defaults.js && node --check src/memory-store.js && node --check src/summarizer.js && node --check src/injection.js && node --check src/ui.js && node --check src/history-backfill.js && node --check src/summary-format.js && node --check src/summary-source.js && node --check src/utils.js"
   },
   "engines": {
     "node": ">=20"
