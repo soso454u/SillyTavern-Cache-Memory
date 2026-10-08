@@ -89,3 +89,13 @@ Cache Debug 仅在启用时读主 RP 的发送前事件；独立记忆 API 不�
 - 所有生成继续只请求 ST 相对代理路径，不存在浏览器直连 Ark 的 fallback。Strict Cache、Checkpoint Boundary、聊天正文和注入刷新规则未改动。
 - 对照的 shujuku `spv5.5.7` 独立 API 路径同样通过 ST `/generate`，其 `streamingEnabled` 开启时发送流式请求并用 reader/decoder 拼接 `delta.content`；该版本默认配置的流式开关为关闭。它还提供 TavernHelper 主 API和连接预设路径，这两种模式不适合直接复制到独立 Cache Memory 配置。
 - 自动测试使用模拟 SSE/JSON 响应验证两种传输和计时字段，没有使用用户真实 Ark Key，无法代替部署环境中的同模型 504 对照测试。
+
+## v1.12.0 维护审查（2026-10-08）
+
+- 记忆管理与设置共用 `bindDialogDrag()`；标题栏内按钮和输入控件被排除在拖动起点之外。
+- 清空当前聊天改用插件内确认弹窗，确认后仍调用既有 `clearCurrentChat()`；取消补齐、失效上下文、终止请求和清空注入的顺序未改变。
+- 四类列表共用分页构造器，增加首页/末页/受限页码跳转与 Enter；既有筛选只改变展示集合，不影响 Store。
+- Summary 完整编辑只调用 `updateSummary()`，同步结构化字段与 `raw`，不写 `message.mes`、不调用 API、不触发聚合；`registerSummaryKeeps()` 仍只新增，不因 Summary 修改或删除回删 Registry。
+- 剧情时间/地点从完整 assistant `message.mes` 的明确标签、字段或数值时间中确定性提取；发送给模型的正文仍来自既有过滤器。模型返回的时间/地点不会覆盖提取值，缺失时保持空字符串。
+- Checkpoint、Long Memory 和 KEEP 的元数据由来源 Summary 确定性投影；Store v3→v4 只补 KEEP 元数据空字段，不调用模型或重建旧 Summary/Checkpoint/Long Memory。
+- Strict Cache、Checkpoint Boundary、注入投影、历史补齐、KEEP Registry 状态机和 API transport 的控制路径未改变。100 项模拟自动测试、语法检查与补丁空白检查通过；未调用真实模型 API。

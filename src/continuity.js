@@ -1,5 +1,6 @@
-import { fnv1a } from './utils.js?v=1.11.0';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.11.0';
+import { fnv1a } from './utils.js?v=1.12.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.12.0';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.12.0';
 
 export const isUsableMemory = item => item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen');
 
@@ -55,7 +56,7 @@ function evidencedChanges(text, section, source) {
     });
 }
 
-export function resolveKeepItems(items, output, newSummaries) {
+export function resolveKeepItems(items, output, newSummaries, summaries = []) {
     const resolutions = new Map(evidencedChanges(output, 'RESOLVED_KEEP', newSummaries).map(item => [item.id.toUpperCase(), item]));
     const superseded = new Map(evidencedChanges(output, 'SUPERSEDED_KEEP', newSummaries).map(item => [item.id.toUpperCase(), item]));
     const now = new Date().toISOString();
@@ -63,8 +64,10 @@ export function resolveKeepItems(items, output, newSummaries) {
         const resolution = resolutions.get(String(item.id).toUpperCase());
         const replacement = superseded.get(String(item.id).toUpperCase());
         if (item.status !== 'active') return { ...item };
-        if (resolution) return { ...item, status: 'resolved', reason: resolution.value, evidence: resolution.evidence, updatedAt: now };
-        if (replacement) return { ...item, status: 'superseded', reason: replacement.value, evidence: replacement.evidence, updatedAt: now };
+        if (resolution) return { ...item, status: 'resolved', reason: resolution.value, evidence: resolution.evidence,
+            resolvedStoryTime: storyTimeForEvidence(summaries, resolution.evidence), updatedAt: now };
+        if (replacement) return { ...item, status: 'superseded', reason: replacement.value, evidence: replacement.evidence,
+            resolvedStoryTime: storyTimeForEvidence(summaries, replacement.evidence), updatedAt: now };
         return { ...item };
     });
 }
@@ -105,6 +108,7 @@ export function projectLongFacts(store, throughFloor = Infinity) {
             if (update.action !== 'retire') facts.set(update.id, {
                 id: update.id, text: update.text, status: 'active', floor: memory.endFloor,
                 sourceId: memory.id, startFloor: memory.startFloor, endFloor: memory.endFloor,
+                storyStartTime: memory.storyStartTime ?? '', storyEndTime: memory.storyEndTime ?? '', createdAt: memory.createdAt ?? '',
             });
         }
     }

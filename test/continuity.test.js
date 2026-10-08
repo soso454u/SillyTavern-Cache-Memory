@@ -34,7 +34,7 @@ test('old stores and custom prompts survive migration while former default promp
     assert.equal(settings.summaryMaxLength, 350);
     assert.equal(normalizeSettings().checkpointInterval, 5);
     assert.equal(normalizeSettings().summaryMaxLength, 350);
-    assert.equal(migrated.version, 3);
+    assert.equal(migrated.version, 4);
     assert.deepEqual(migrated.keepRegistry, {});
 });
 
@@ -48,6 +48,28 @@ test('structured summaries preserve complete state, open threads and KEEP beyond
     assert.equal(parsed.open, '旅行尚未兑现');
     assert.match(parsed.keep, /十二月前/);
     assert.ok(parsed.raw.length > 350);
+    assert.equal(parseFloorSummary('[SUMMARY]\n[StoryTime]\n无\n[Location]\n未知\n[Event]\n事件', 350).storyTime, '');
+    assert.equal(parseFloorSummary('[SUMMARY]\n[StoryTime]\n无\n[Location]\n未知\n[Event]\n事件', 350).location, '');
+});
+
+test('Summary uses full-message metadata beside filtered content and rejects model-invented metadata', async () => {
+    const { store } = fixture();
+    const chat = [{ name: 'A', is_user: false, mes: '<context>剧情时间：2025/01/02 10:35｜地点：湖畔酒店</context><content>姜梨走进大堂。</content>', send_date: '1', gen_started: '1' }];
+    let input = '';
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings(), getChat: () => chat, apiClient: {
+        complete: async request => {
+            input = request.userContent;
+            return { content: '[SUMMARY]\n[Title]\n抵达\n[Characters]\n姜梨\n[StoryTime]\n明天\n[Location]\n火星\n[Event]\n姜梨走进大堂。\n[State]\n无\n[Open]\n无\n[Quote]\n无\n[KEEP]\n无' };
+        },
+    } });
+    const record = await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
+    assert.match(input, /\[SOURCE_METADATA\][\s\S]*2025\/01\/02 10:35[\s\S]*湖畔酒店/);
+    assert.match(input, /\[SUMMARY_SOURCE\]\n姜梨走进大堂。/);
+    assert.doesNotMatch(input, /<context>/);
+    assert.equal(record.storyTime, '2025/01/02 10:35');
+    assert.equal(record.location, '湖畔酒店');
+    assert.match(record.raw, /\[StoryTime\]\n2025\/01\/02 10:35/);
+    assert.doesNotMatch(record.raw, /明天|火星/);
 });
 
 test('Store v3 migrates every legacy KEEP into an independent registry without deriving Open entries', () => {
@@ -169,6 +191,39 @@ test('Checkpoint lifecycle deltas update the registry and are stripped from save
     const checkpoint = await summarizer.generateCheckpoint(1, 2);
     assert.doesNotMatch(checkpoint.content, /RESOLVED_KEEP|SUPERSEDED_KEEP/);
     assert.deepEqual(collectKeepItems(store.current()).map(item => item.status), ['resolved', 'superseded']);
+});
+
+test('story metadata flows from summaries into checkpoints, long memories and KEEP lifecycle without inference', async () => {
+    const { store } = fixture();
+    const records = [
+        { id: 'm1', floor: 1, storyTime: '2025/01/02 09:16', location: '湖畔酒店', event: '姜梨答应保守秘密', keep: '- 姜梨答应保守秘密' },
+        { id: 'm2', floor: 2, storyTime: '', location: '', event: '普通过场', keep: '无' },
+        { id: 'm3', floor: 3, storyTime: '2025/01/02 12:24', location: '酒店露台', event: '姜梨公开了秘密', keep: '无' },
+    ];
+    for (const item of records) store.addSummary({ messageId: item.id, floor: item.floor, title: `S${item.floor}`, characters: '姜梨',
+        storyTime: item.storyTime, location: item.location, event: item.event, keep: item.keep,
+        raw: `[SUMMARY]\n[Title]\nS${item.floor}\n[Characters]\n姜梨\n[StoryTime]\n${item.storyTime || '无'}\n[Location]\n${item.location || '无'}\n[Event]\n${item.event}\n[KEEP]\n${item.keep}`,
+        format: 'structured', status: 'frozen', frozen: true });
+    const keep = collectKeepItems(store.current())[0];
+    assert.equal(keep.sourceStoryTime, '2025/01/02 09:16');
+    assert.equal(keep.sourceLocation, '湖畔酒店');
+
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 3, longMemoryInterval: 3 }), getChat: () => [], apiClient: {
+        complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]')
+            ? '[LONG_MEMORY]\n- 【姜梨｜秘密】姜梨曾公开秘密\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无'
+            : `[CHECKPOINT]\n[Current State]\n已公开\n[RESOLVED_KEEP]\n- ${keep.id} | 秘密已公开 | 姜梨公开了秘密` }),
+    } });
+    const checkpoint = await summarizer.generateCheckpoint(1, 3);
+    assert.deepEqual({ storyStartTime: checkpoint.storyStartTime, storyEndTime: checkpoint.storyEndTime,
+        currentStoryTime: checkpoint.currentStoryTime, currentLocation: checkpoint.currentLocation }, {
+        storyStartTime: '2025/01/02 09:16', storyEndTime: '2025/01/02 12:24',
+        currentStoryTime: '2025/01/02 12:24', currentLocation: '酒店露台',
+    });
+    assert.equal(collectKeepItems(store.current())[0].resolvedStoryTime, '2025/01/02 12:24');
+    await summarizer.generateDueLongMemories();
+    const long = store.current().longMemories[0];
+    assert.equal(long.storyStartTime, '2025/01/02 09:16');
+    assert.equal(long.storyEndTime, '2025/01/02 12:24');
 });
 
 test('fact replacements require exact new-summary evidence and retain the old fact in the immutable ledger', () => {

@@ -1,4 +1,4 @@
-import { getAssistantMessages } from './utils.js?v=1.11.0';
+import { getAssistantMessages } from './utils.js?v=1.12.0';
 
 export function isRetryableSummaryError(error) {
     if (['REQUEST_ABORTED', 'CHAT_CHANGED', 'SOURCE_CHANGED', 'ST_PROXY_ROUTE_MISSING'].includes(error.code)) return false;

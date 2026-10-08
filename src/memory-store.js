@@ -1,7 +1,7 @@
-import { getAssistantMessages } from './utils.js?v=1.11.0';
-import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.11.0';
+import { getAssistantMessages } from './utils.js?v=1.12.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.12.0';
 
-export const STORE_VERSION = 3;
+export const STORE_VERSION = 4;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
 
 export function createEmptyStore(chatId = '') {
@@ -21,7 +21,7 @@ export function normalizeStore(value, chatId = '') {
     const summaries = store.summaries && typeof store.summaries === 'object' && !Array.isArray(store.summaries) ? store.summaries : {};
     const checkpoints = Array.isArray(store.checkpoints) ? store.checkpoints : [];
     const longMemories = Array.isArray(store.longMemories) ? store.longMemories : [];
-    const keepRegistry = normalizeKeepRegistry(Number(store.version) >= STORE_VERSION ? store.keepRegistry : null,
+    const keepRegistry = normalizeKeepRegistry(Number(store.version) >= 3 ? store.keepRegistry : null,
         { summaries, checkpoints, longMemories, updatedAt: store.updatedAt });
     return {
         version: STORE_VERSION,
@@ -41,6 +41,9 @@ function normalizedKeepRecord(item, id, fallbackTime) {
         text: String(item?.text ?? '').trim(),
         sourceFloor: Number(item?.sourceFloor ?? item?.floor) || 0,
         sourceId: String(item?.sourceId ?? ''),
+        sourceStoryTime: String(item?.sourceStoryTime ?? ''),
+        sourceLocation: String(item?.sourceLocation ?? ''),
+        resolvedStoryTime: String(item?.resolvedStoryTime ?? ''),
         status: KEEP_STATUSES.has(item?.status) ? item.status : 'active',
         reason: String(item?.reason ?? ''),
         evidence: String(item?.evidence ?? ''),
@@ -57,7 +60,7 @@ function nextKeepId(registry) {
 
 function normalizeKeepRegistry(registry, legacy) {
     if (registry && typeof registry === 'object' && !Array.isArray(registry)) {
-        const fields = ['text', 'sourceFloor', 'sourceId', 'status', 'reason', 'evidence', 'createdAt', 'updatedAt', 'replacedBy'];
+        const fields = ['text', 'sourceFloor', 'sourceId', 'sourceStoryTime', 'sourceLocation', 'resolvedStoryTime', 'status', 'reason', 'evidence', 'createdAt', 'updatedAt', 'replacedBy'];
         const alreadyNormalized = Object.entries(registry).every(([id, item]) => id === id.toUpperCase()
             && item && typeof item === 'object' && fields.every(field => Object.hasOwn(item, field)) && KEEP_STATUSES.has(item.status));
         if (alreadyNormalized) return registry;
@@ -101,7 +104,8 @@ function normalizeKeepRegistry(registry, legacy) {
                 if (!existing.sourceId) existing.sourceId = String(summary.messageId ?? '');
                 continue;
             }
-            remember({ text, sourceFloor: summary.floor, sourceId: summary.messageId, status: 'active', createdAt: summary.createdAt }, `summary:${summary.messageId}:${normalized}`);
+            remember({ text, sourceFloor: summary.floor, sourceId: summary.messageId, sourceStoryTime: summary.storyTime,
+                sourceLocation: summary.location, status: 'active', createdAt: summary.createdAt }, `summary:${summary.messageId}:${normalized}`);
         }
     }
     return migrated;
@@ -268,7 +272,8 @@ export class MemoryStore {
             const id = nextKeepId(store.keepRegistry);
             const now = new Date().toISOString();
             store.keepRegistry[id] = normalizedKeepRecord({
-                text, sourceFloor: record.floor, sourceId: record.messageId, status: 'active', createdAt: now, updatedAt: now,
+                text, sourceFloor: record.floor, sourceId: record.messageId, sourceStoryTime: record.storyTime,
+                sourceLocation: record.location, status: 'active', createdAt: now, updatedAt: now,
             }, id, now);
             existing.add(normalized);
         }
@@ -279,7 +284,7 @@ export class MemoryStore {
         const key = String(id).toUpperCase();
         const record = store.keepRegistry[key];
         if (!record) return null;
-        const allowed = ['text', 'status', 'reason', 'evidence', 'replacedBy'];
+        const allowed = ['text', 'status', 'reason', 'evidence', 'replacedBy', 'resolvedStoryTime'];
         for (const field of allowed) if (Object.hasOwn(updates, field)) record[field] = String(updates[field] ?? '').trim();
         if (!KEEP_STATUSES.has(record.status)) record.status = 'active';
         record.updatedAt = new Date().toISOString();
@@ -294,8 +299,9 @@ export class MemoryStore {
             const key = String(item.id).toUpperCase();
             const current = store.keepRegistry[key];
             if (!current || !KEEP_STATUSES.has(item.status)) continue;
-            if (['status', 'reason', 'evidence', 'replacedBy'].some(field => String(current[field] ?? '') !== String(item[field] ?? ''))) {
-                Object.assign(current, { status: item.status, reason: item.reason ?? '', evidence: item.evidence ?? '', replacedBy: item.replacedBy ?? '', updatedAt: item.updatedAt ?? new Date().toISOString() });
+            if (['status', 'reason', 'evidence', 'replacedBy', 'resolvedStoryTime'].some(field => String(current[field] ?? '') !== String(item[field] ?? ''))) {
+                Object.assign(current, { status: item.status, reason: item.reason ?? '', evidence: item.evidence ?? '', replacedBy: item.replacedBy ?? '',
+                    resolvedStoryTime: item.resolvedStoryTime ?? '', updatedAt: item.updatedAt ?? new Date().toISOString() });
                 changed++;
             }
         }
@@ -315,6 +321,7 @@ export class MemoryStore {
                 reason: status === 'active' ? '' : String(details.reason ?? record.reason ?? ''),
                 evidence: status === 'active' ? '' : String(details.evidence ?? record.evidence ?? ''),
                 replacedBy: status === 'active' ? '' : String(details.replacedBy ?? record.replacedBy ?? ''),
+                resolvedStoryTime: status === 'active' ? '' : String(details.resolvedStoryTime ?? record.resolvedStoryTime ?? ''),
                 updatedAt: new Date().toISOString(),
             });
             changed++;

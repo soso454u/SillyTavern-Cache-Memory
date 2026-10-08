@@ -1,7 +1,8 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.11.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.11.0';
-import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.11.0';
-import { extractSummarySource } from './summary-source.js?v=1.11.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.12.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.12.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.12.0';
+import { extractSummarySource } from './summary-source.js?v=1.12.0';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.12.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -21,6 +22,11 @@ function chatChangedError(kind) {
     return error;
 }
 
+function metadataValue(value) {
+    const text = String(value ?? '').trim();
+    return /^(?:无|未知|未提供|不详|none|null|n\/a)[。.]?$/i.test(text) ? '' : text;
+}
+
 export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}) {
     const source = String(text ?? '').trim();
     const read = tag => source.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))?.[1]?.trim() ?? '';
@@ -28,6 +34,8 @@ export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}
     if (structured) return {
         title: structured.title || '未命名摘要',
         characters: structured.characters || '未明确',
+        storyTime: metadataValue(structured.storyTime),
+        location: metadataValue(structured.location),
         event: structured.event,
         state: structured.state,
         open: structured.open,
@@ -38,9 +46,11 @@ export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}
     };
     const title = read('title') || readSection(source, 'Title') || '未命名摘要';
     const characters = read('characters') || readSection(source, 'Characters') || '未明确';
+    const storyTime = metadataValue(read('storyTime') || read('story_time') || readSection(source, 'StoryTime'));
+    const location = metadataValue(read('location') || readSection(source, 'Location'));
     const event = read('event') || source;
     // maxLength is a generation target, never a client-side truncation rule.
-    return { title, characters, event, state: '', open: '', quote: '', keep: '', raw: source, format: 'legacy' };
+    return { title, characters, storyTime, location, event, state: '', open: '', quote: '', keep: '', raw: source, format: 'legacy' };
 }
 
 export class MemorySummarizer {
@@ -146,20 +156,26 @@ export class MemorySummarizer {
                 floor: entry.floor,
             });
             const summarySource = extractSummarySource(entry.message.mes, settings);
+            const sourceMetadata = extractStoryMetadata(entry.message.mes);
             if (settings.cacheDebug) console.info('[Cache Memory] SUMMARY SOURCE', {
                 strategy: settings.summaryFilterMode,
                 source: summarySource.source,
                 originalChars: String(entry.message.mes ?? '').length,
                 inputChars: summarySource.text.length,
+                storyTimeFound: Boolean(sourceMetadata.storyTime),
+                locationFound: Boolean(sourceMetadata.location),
             });
             const result = await this.apiClient.complete({
                 systemPrompt,
-                userContent: summarySource.text,
+                userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata),
                 maxTokens: settings.summaryMaxTokens,
                 signal,
             });
             if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
             const parsed = parseFloorSummary(result.content, settings.summaryMaxLength, { preserveFull: settings.memoryStrategy !== 'legacy' });
+            parsed.storyTime = sourceMetadata.storyTime;
+            parsed.location = sourceMetadata.location;
+            if (parsed.format === 'structured') parsed.raw = buildStructuredSummary(parsed);
             assertContext();
             const record = {
                 floor: entry.floor,
@@ -168,6 +184,8 @@ export class MemorySummarizer {
                 sourceFingerprint: entry.fingerprint,
                 title: parsed.title,
                 characters: parsed.characters,
+                storyTime: parsed.storyTime,
+                location: parsed.location,
                 event: parsed.event,
                 state: parsed.state,
                 open: parsed.open,
@@ -296,6 +314,7 @@ export class MemorySummarizer {
         const incremental = settings.memoryStrategy !== 'legacy';
         const state = previousState(this.store.current(), startFloor);
         const keeps = collectKeepItems(this.store.current(), endFloor);
+        const storyMetadata = storyMetadataRange(summaries);
         const userContent = incremental
             ? `[PREVIOUS_STATE]\n${state.content}\n\n[LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.store.current(), startFloor - 1))}\n\n[ACTIVE_KEEP]\n${formatKeepItems(keeps)}\n\n[NEW_SUMMARIES]\n${newSummaries}`
             : newSummaries;
@@ -313,6 +332,7 @@ export class MemorySummarizer {
                 id,
                 startFloor,
                 endFloor,
+                ...storyMetadata,
                 content: incremental ? stripStructuredSections(result.content, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']) : clampText(result.content, settings.checkpointMaxLength),
                 ...(incremental ? {
                     memoryKind: 'state', previousCheckpointId: state.id,
@@ -324,7 +344,7 @@ export class MemorySummarizer {
                 status: 'frozen',
                 missingFloors: missing,
             };
-            if (incremental) this.store.applyKeepItems(resolveKeepItems(keeps, result.content, newSummaries), { persist: false });
+            if (incremental) this.store.applyKeepItems(resolveKeepItems(keeps, result.content, newSummaries, summaries), { persist: false });
             this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && !isUsableMemory(existing)) });
             return record;
         } catch (error) {
@@ -334,6 +354,7 @@ export class MemorySummarizer {
                 id,
                 startFloor,
                 endFloor,
+                ...storyMetadata,
                 content: error.message,
                 error: error.message,
                 createdAt: new Date().toISOString(),
@@ -393,6 +414,9 @@ export class MemorySummarizer {
         const newSummaries = Object.values(this.store.current().summaries)
             .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor)
             .sort((a, b) => a.floor - b.floor).map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
+        const sourceSummaries = Object.values(this.store.current().summaries)
+            .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor);
+        const storyMetadata = storyMetadataRange(sourceSummaries);
         const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n');
         const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
         try {
@@ -404,6 +428,8 @@ export class MemorySummarizer {
                 id,
                 startFloor,
                 endFloor,
+                storyStartTime: storyMetadata.storyStartTime,
+                storyEndTime: storyMetadata.storyEndTime,
                 checkpointIds: sorted.map(item => item.id),
                 content: incremental ? result.content.trim() : clampText(result.content, settings.longMemoryMaxLength),
                 ...(incremental ? { memoryKind: 'facts', factUpdates: parseFactUpdates(result.content, projection, newSummaries) } : {}),
@@ -421,6 +447,8 @@ export class MemorySummarizer {
                 id,
                 startFloor,
                 endFloor,
+                storyStartTime: storyMetadata.storyStartTime,
+                storyEndTime: storyMetadata.storyEndTime,
                 checkpointIds: sorted.map(item => item.id),
                 content: error.message,
                 error: error.message,

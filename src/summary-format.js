@@ -1,7 +1,8 @@
-export const SUMMARY_SECTION_NAMES = Object.freeze(['Title', 'Characters', 'Event', 'State', 'Open', 'Quote', 'KEEP']);
+export const SUMMARY_SECTION_NAMES = Object.freeze(['Title', 'Characters', 'StoryTime', 'Location', 'Event', 'State', 'Open', 'Quote', 'KEEP']);
 
 const SUMMARY_MARKER = /^\s*\[SUMMARY\]\s*$/gim;
-const SECTION_MARKER = /^\s*\[(Title|Characters|Event|State|Open|Quote|KEEP)\]\s*$/gim;
+const SECTION_MARKER = /^\s*\[(Title|Characters|StoryTime|Location|Event|State|Open|Quote|KEEP)\]\s*$/gim;
+const sectionKey = name => name.toLowerCase() === 'storytime' ? 'storyTime' : name.toLowerCase();
 
 export function selectFinalSummaryBlock(value) {
     const text = String(value ?? '').trim();
@@ -19,10 +20,10 @@ export function selectFinalSummaryBlock(value) {
 export function parseStructuredSummary(value) {
     const raw = selectFinalSummaryBlock(value);
     if (!raw) return null;
-    const sections = Object.fromEntries(SUMMARY_SECTION_NAMES.map(name => [name.toLowerCase(), '']));
+    const sections = Object.fromEntries(SUMMARY_SECTION_NAMES.map(name => [sectionKey(name), '']));
     const markers = [...raw.matchAll(SECTION_MARKER)];
     for (let index = 0; index < markers.length; index += 1) {
-        const name = markers[index][1].toLowerCase();
+        const name = sectionKey(markers[index][1]);
         const start = markers[index].index + markers[index][0].length;
         const end = markers[index + 1]?.index ?? raw.length;
         sections[name] = raw.slice(start, end).trim();
@@ -31,7 +32,7 @@ export function parseStructuredSummary(value) {
 }
 
 export function buildStructuredSummary(fields = {}) {
-    return ['[SUMMARY]', ...SUMMARY_SECTION_NAMES.flatMap(name => [`[${name}]`, String(fields[name.toLowerCase()] ?? '').trim() || '无'])].join('\n');
+    return ['[SUMMARY]', ...SUMMARY_SECTION_NAMES.flatMap(name => [`[${name}]`, String(fields[sectionKey(name)] ?? '').trim() || '无'])].join('\n');
 }
 
 export function stripStructuredSections(value, names) {
