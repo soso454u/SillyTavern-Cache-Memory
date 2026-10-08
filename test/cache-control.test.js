@@ -97,6 +97,16 @@ test('background appends preserve published bytes even if underlying record chan
     assert.match(store.current().injectionSnapshot.value, /AAA2/);
 });
 
+test('manual reinject rebuilds and stamps the snapshot even when its bytes are unchanged', () => {
+    const { store, settings } = fixture();
+    store.addCheckpoint(checkpoint(5, 'AAA'));
+    const before = store.current().injectionSnapshot.value;
+    const result = refreshSnapshot(store.current(), settings, 'manual reinject');
+    assert.equal(result.value, before);
+    assert.equal(store.current().injectionSnapshot.reason, 'manual reinject');
+    assert.equal(shouldRefreshInjection(settings, 'manual reinject'), true);
+});
+
 test('Long boundary removes only fully covered CP injection, never CP data or prior Long contents', () => {
     const { store } = fixture();
     for (let floor = 5; floor <= 55; floor += 5) store.addCheckpoint(checkpoint(floor));

@@ -1,8 +1,8 @@
-import { INJECTION_MODES } from './defaults.js?v=1.15.0';
-import { buildInjection } from './injection.js?v=1.15.0';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.15.0';
-import { fnv1a } from './utils.js?v=1.15.0';
-import { stripStructuredSections } from './summary-format.js?v=1.15.0';
+import { INJECTION_MODES } from './defaults.js?v=1.15.1';
+import { buildInjection } from './injection.js?v=1.15.1';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.15.1';
+import { fnv1a } from './utils.js?v=1.15.1';
+import { stripStructuredSections } from './summary-format.js?v=1.15.1';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -13,7 +13,7 @@ export function effectiveInjectionMode(settings) {
 
 export function shouldRefreshInjection(settings, reason) {
     if (!settings.strictCacheMode) return true;
-    if (['manual edit', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason)) return true;
+    if (['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason)) return true;
     const mode = effectiveInjectionMode(settings);
     return (reason === 'new checkpoint' && mode === INJECTION_MODES.CHECKPOINT_BOUNDARY)
         || (reason === 'new long memory' && [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_BOUNDARY].includes(mode));
@@ -54,7 +54,7 @@ export function refreshSnapshot(store, settings, reason = 'manual edit') {
         if (!settings.strictCacheMode) value = buildInjection(store, settings);
         else {
             const fresh = frozenBlocks(store, mode);
-            const rebuild = !previous || previous.signature !== signature || ['manual edit', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason);
+            const rebuild = !previous || previous.signature !== signature || ['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason);
             blocks = rebuild ? fresh : [...(previous.blocks ?? [])];
             if (!rebuild) {
                 const ids = new Set(blocks.map(block => block.id));
@@ -70,7 +70,7 @@ export function refreshSnapshot(store, settings, reason = 'manual edit') {
         }
     }
     const changed = value !== (previous?.value ?? '');
-    store.injectionSnapshot = { signature, mode, blocks, value, reason: changed ? reason : previous?.reason ?? reason };
+    store.injectionSnapshot = { signature, mode, blocks, value, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
     return { value, changed };
 }
 

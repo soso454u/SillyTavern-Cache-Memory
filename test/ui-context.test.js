@@ -48,6 +48,15 @@ test('KEEP selection stays hidden until batch editing is enabled', async () => {
     assert.equal(renders, 2);
 });
 
+test('overview reinject action refreshes locally with the manual reinject reason', async () => {
+    const reasons = [];
+    const ui = new CacheMemoryUI({ updateInjection: reason => reasons.push(reason) });
+    ui.renderManager = () => {};
+    const target = { closest: selector => selector === '[data-reinject]' ? {} : null };
+    await ui.handleManagerClick({ target });
+    assert.deepEqual(reasons, ['manual reinject']);
+});
+
 test('Checkpoint cards parse and rebuild only the six visible structured sections', () => {
     const content = '[CHECKPOINT]\n[Story So Far]\n必要前情\n[Characters]\n人物状态\n[Current State]\n当前世界\n[Secrets & Knowledge]\n认知差\n[Open Threads]\n未解决\n[Continuity Locks]\n锁定\n[RESOLVED_KEEP]\nKEEP-0001 | 已解决 | 证据文本';
     const fields = parseCheckpointSections(content);

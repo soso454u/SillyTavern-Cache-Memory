@@ -11,13 +11,15 @@ import {
     setExtensionPrompt,
 } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.15.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.15.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.15.0';
-import { getAssistantMessages } from './src/utils.js?v=1.15.0';
-import { MemoryStore } from './src/memory-store.js?v=1.15.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.15.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.15.0';
+import { promptManager } from '../../../openai.js';
+import { SummaryApiClient } from './src/api-client.js?v=1.15.1';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.15.1';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.15.1';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.15.1';
+import { getAssistantMessages } from './src/utils.js?v=1.15.1';
+import { MemoryStore } from './src/memory-store.js?v=1.15.1';
+import { MemorySummarizer } from './src/summarizer.js?v=1.15.1';
+import { CacheMemoryUI } from './src/ui.js?v=1.15.1';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -31,7 +33,18 @@ const timers = new Set();
 const frames = new Set();
 const diagnostics = new CacheDiagnostics();
 let activeChatId = null;
-let publishedValue = null;
+
+const injectionPublisher = new CacheMemoryInjectionPublisher({
+    getPromptManager: () => promptManager,
+    publishFallback: value => setExtensionPrompt(
+        INJECTION_KEY,
+        value,
+        extension_prompt_types.IN_PROMPT,
+        0,
+        false,
+        extension_prompt_roles.SYSTEM,
+    ),
+});
 
 function schedule(callback, delay = 0) {
     const id = window.setTimeout(() => {
@@ -108,9 +121,8 @@ function updateInjection(reason = 'manual edit') {
     const current = store.current();
     const result = refreshSnapshot(current, settings, reason);
     if (!result.skipped) saveMetadataDebounced();
-    if (publishedValue === result.value) return;
-    publishedValue = result.value;
-    setExtensionPrompt(INJECTION_KEY, result.value, extension_prompt_types.IN_PROMPT, 0, false, extension_prompt_roles.SYSTEM);
+    const placement = injectionPublisher.publish(result.value, { forceRelocate: reason === 'manual reinject' });
+    return { ...result, placement };
 }
 
 function refreshChatState() {
@@ -223,11 +235,10 @@ export function onHotUnload() {
     summarizer.invalidateContext();
     ui?.destroy();
     diagnostics.reset();
-    publishedValue = null;
     activeChatId = null;
     ui = undefined;
     pendingSwipeIndex = null;
-    setExtensionPrompt(INJECTION_KEY, '', extension_prompt_types.IN_PROMPT, 0, false, extension_prompt_roles.SYSTEM);
+    injectionPublisher.dispose();
     initialized = false;
 }
 

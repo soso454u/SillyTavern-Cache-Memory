@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.15.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.15.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.15.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.15.0';
-import { downloadJson, getAssistantMessages } from './utils.js?v=1.15.0';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.15.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.15.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.15.0';
-import { parseFloorSummary } from './summarizer.js?v=1.15.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.15.1';
+import { effectiveInjectionMode } from './cache-control.js?v=1.15.1';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.15.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.15.1';
+import { downloadJson, getAssistantMessages } from './utils.js?v=1.15.1';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.15.1';
+import { buildStructuredSummary } from './summary-format.js?v=1.15.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.15.1';
+import { parseFloorSummary } from './summarizer.js?v=1.15.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -346,7 +346,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.15.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.15.1', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -917,7 +917,7 @@ export class CacheMemoryUI {
         health.append(this.element('small', '', `最近正文窗口：${overview.recentBodyWindow}。Token 为本地粗略估算，以实际模型 tokenizer 为准。`));
         root.append(grid, health);
         const quick = this.element('div', 'cache-memory-actions');
-        quick.innerHTML = '<button type="button" class="menu_button cache-memory-primary" data-backfill-action="missing">补齐缺失摘要</button><button type="button" class="menu_button" data-backfill-action="failed">重试失败摘要</button><button type="button" class="menu_button" data-reparse-summaries>重新解析结构化摘要</button>';
+        quick.innerHTML = '<button type="button" class="menu_button cache-memory-primary" data-backfill-action="missing">补齐缺失摘要</button><button type="button" class="menu_button" data-backfill-action="failed">重试失败摘要</button><button type="button" class="menu_button" data-reinject>重新注入</button><button type="button" class="menu_button" data-reparse-summaries>重新解析结构化摘要</button>';
         root.append(quick, this.backfillPanel(), this.aggregationPanel());
         return root;
     }
@@ -1308,6 +1308,12 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
+        if (event.target.closest('[data-reinject]')) {
+            this.updateInjection('manual reinject');
+            notify('success', 'Cache Memory 已重新注入');
+            this.renderManager();
+            return;
+        }
         const editCard = event.target.closest('[data-memory-type]');
         if (editCard && event.target.closest('[data-manager-edit-cancel]')) {
             this.managerEditing = null;
