@@ -42,7 +42,6 @@
     font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 .cache-memory-config-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); width: min(1040px, 100%); max-width: calc(100dvw - 36px); box-sizing: border-box; }
-.cache-memory-config-panel.is-manager-view { width: min(1180px, 100%); }
 .cache-memory-dialog-header { cursor: grab; touch-action: none; user-select: none; }
 .cache-memory-dialog-header.is-dragging { cursor: grabbing; }
 .cache-memory-dialog-header button { cursor: pointer; touch-action: auto; }

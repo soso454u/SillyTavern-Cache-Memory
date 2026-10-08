@@ -42,16 +42,30 @@ function lastBracketValue(text, labels) {
 function lastExplicitTime(text) {
     const source = plainText(text);
     const patterns = [
-        /(?:\d{4}\s*[年/.\-]\s*\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?)(?:\s*(?:上午|下午|晚上|凌晨|清晨|中午|傍晚)?\s*\d{1,2}\s*(?::|：|点)\s*\d{0,2}\s*分?)?/g,
-        /(?:\d{1,2}\s*月\s*\d{1,2}\s*日)(?:\s*(?:上午|下午|晚上|凌晨|清晨|中午|傍晚)?\s*\d{1,2}\s*(?::|：|点)\s*\d{0,2}\s*分?)?/g,
+        /(?:\d{4}\s*[年/.\-]\s*\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?|\d{1,2}\s*月\s*\d{1,2}\s*日)\s*周[一二三四五六日天]\s*(?:上午|下午|晚上|凌晨|清晨|中午|傍晚)?\s*\d{1,2}\s*(?::|：|点)\s*\d{0,2}\s*分?/g,
+        /(?:\d{4}\s*[年/.\-]\s*\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?|\d{1,2}\s*月\s*\d{1,2}\s*日)\s*(?:上午|下午|晚上|凌晨|清晨|中午|傍晚)?\s*\d{1,2}\s*(?::|：|点)\s*\d{0,2}\s*分?/g,
+        /(?:\d{4}\s*[年/.\-]\s*\d{1,2}\s*[月/.\-]\s*\d{1,2}\s*日?|\d{1,2}\s*月\s*\d{1,2}\s*日)(?:\s*周[一二三四五六日天])?/g,
         /(?:上午|下午|晚上|凌晨|清晨|中午|傍晚)?\s*\d{1,2}\s*(?::|：)\s*\d{2}/g,
     ];
-    const matches = patterns.flatMap(pattern => [...source.matchAll(pattern)].map(match => ({
-        index: match.index,
-        end: match.index + match[0].length,
-        value: cleanValue(match[0]),
-    }))).filter(item => item.value).sort((left, right) => left.end - right.end || left.value.length - right.value.length);
-    return matches.at(-1)?.value ?? '';
+    for (const pattern of patterns) {
+        const matches = [...source.matchAll(pattern)].map(match => cleanValue(match[0])).filter(Boolean);
+        if (matches.length) return matches.at(-1);
+    }
+    return '';
+}
+
+function lastStatusBarLocation(text) {
+    const candidates = plainText(text).split(/[\n\r]+/).map(line => line.trim()).filter(Boolean);
+    for (const line of candidates.reverse()) {
+        const parts = line.split(/[|｜]/);
+        if (parts.length < 2 || !lastExplicitTime(parts[0])) continue;
+        const location = cleanValue(parts[1])
+            .replace(/^(?:剧情地点|故事地点|Scene[ _-]?Location|Location|地点|场所)\s*[:：]\s*/i, '')
+            .replace(/^[「『【\[]+|[」』】\]]+$/g, '')
+            .trim();
+        if (location) return location;
+    }
+    return '';
 }
 
 export function extractStoryMetadata(message) {
@@ -62,7 +76,8 @@ export function extractStoryMetadata(message) {
         || lastExplicitTime(text);
     const location = lastTaggedValue(text, ['location', 'place', 'scene_location', 'scene-location'])
         || lastBracketValue(text, ['Scene[ _-]?Location', 'Location', '剧情地点', '故事地点', '地点', '场所'])
-        || lastLabeledValue(text, ['剧情地点', '故事地点', 'Scene[ _-]?Location', 'Location', '地点', '场所']);
+        || lastLabeledValue(text, ['剧情地点', '故事地点', 'Scene[ _-]?Location', 'Location', '地点', '场所'])
+        || lastStatusBarLocation(text);
     return { storyTime, location };
 }
 

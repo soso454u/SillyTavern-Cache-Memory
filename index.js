@@ -11,13 +11,13 @@ import {
     setExtensionPrompt,
 } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.14.0';
-import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.14.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.14.0';
-import { getAssistantMessages } from './src/utils.js?v=1.14.0';
-import { MemoryStore } from './src/memory-store.js?v=1.14.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.14.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.14.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.14.1';
+import { API_KEY_STORAGE_KEY, DEFAULT_SETTINGS, INJECTION_KEY, MODULE_ID, normalizeSettings } from './src/defaults.js?v=1.14.1';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.14.1';
+import { getAssistantMessages } from './src/utils.js?v=1.14.1';
+import { MemoryStore } from './src/memory-store.js?v=1.14.1';
+import { MemorySummarizer } from './src/summarizer.js?v=1.14.1';
+import { CacheMemoryUI } from './src/ui.js?v=1.14.1';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;

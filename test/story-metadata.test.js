@@ -11,6 +11,26 @@ test('extracts only explicit story metadata from the complete assistant message'
     assert.deepEqual(extractStoryMetadata('<content>很多年前，她可能去过某处。</content>'), { storyTime: '', location: '' });
 });
 
+test('prefers complete story date, weekday and time in status bars', () => {
+    const cases = [
+        ['2025/01/01 周三 10:21', '2025/01/01 周三 10:21'],
+        ['2025-01-01 周三 10:21', '2025-01-01 周三 10:21'],
+        ['2025年1月1日 周三 10:21', '2025年1月1日 周三 10:21'],
+        ['1月1日 周三 10:21', '1月1日 周三 10:21'],
+        ['2025/01/01 10:21', '2025/01/01 10:21'],
+        ['2025/01/01', '2025/01/01'],
+        ['10:21', '10:21'],
+    ];
+    for (const [input, storyTime] of cases) {
+        assert.equal(extractStoryMetadata(`<content>${input}</content>`).storyTime, storyTime);
+    }
+    assert.deepEqual(extractStoryMetadata('「2025/01/01 周三 10:21｜特卡波镇·湖畔酒店｜人物｜天气」'), {
+        storyTime: '2025/01/01 周三 10:21',
+        location: '特卡波镇·湖畔酒店',
+    });
+    assert.equal(extractStoryMetadata('2025/01/01 周天 10:21｜地点｜人物').storyTime, '2025/01/01 周天 10:21');
+});
+
 test('filtered summary source receives extracted metadata without exposing the complete message', () => {
     const input = summarySourceWithMetadata('只保留的正文', { storyTime: '2025/01/02 10:35', location: '湖畔酒店' });
     assert.match(input, /^\[SOURCE_METADATA\]/);

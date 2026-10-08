@@ -1,6 +1,6 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.14.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.14.1';
 
-export const PLUGIN_VERSION = '1.14.0';
+export const PLUGIN_VERSION = '1.14.1';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -53,11 +53,11 @@ export const LEGACY_PROMPTS = Object.freeze({
 
 <title>摘要标题</title>
 <characters>本段实际出现的人物</characters>
-<storyTime>插件提供的明确剧情时间，无则留空</storyTime>
+<storyTime>插件提供的最完整剧情日期 / 星期 / 时间，无则留空</storyTime>
 <location>插件提供的明确剧情地点，无则留空</location>
 <event>时间、地点 → 场景 → 关键动作 → 一句核心原话 → 本段结束时的客观状态</event>
 
-下一条 user 消息可能先提供插件从完整 assistant message.mes 确定性提取的 SOURCE_METADATA，随后提供经过现有过滤策略得到的 SUMMARY_SOURCE。只能照录 SOURCE_METADATA 中的时间与地点，不得推算。`,
+下一条 user 消息可能先提供插件从完整 assistant message.mes 确定性提取的 SOURCE_METADATA，随后提供经过现有过滤策略得到的 SUMMARY_SOURCE。只能照录 SOURCE_METADATA 中的完整剧情日期时间与地点，不得推算或补全。`,
     checkpoint: `你是剧情阶段记忆压缩器。
 
 只根据下一条 user 消息中给出的楼层小总结，生成第 {{startFloor}}-{{endFloor}} 层阶段总结。不得读取、补写或推断原始正文之外的信息。总长度不超过 {{maxLength}} 个中文字符。
@@ -911,9 +911,9 @@ export const DEFAULT_PROMPTS = Object.freeze({
 仅依据当前正文。正文未明确提供的信息保持未知；时间 / 地点 / 关系 / 心理 / 动机 / 结果均以正文明确内容为准。
 
 输入可能包含：
-[SOURCE_METADATA] 插件从完整 assistant message.mes 中提取的明确剧情时间与地点；“无”表示没有明确值。
+[SOURCE_METADATA] 插件从完整 assistant message.mes 中提取的明确剧情日期 / 星期 / 时间与地点；“无”表示没有明确值。
 [SUMMARY_SOURCE] 按现有过滤策略得到的摘要正文。
-StoryTime / Location 只能照录 SOURCE_METADATA，不得从上下文推算或补全。
+StoryTime 表示完整剧情日期时间；StoryTime / Location 只能照录 SOURCE_METADATA，不得从上下文推算或补全。
 
 【记录规则】
 
@@ -1012,7 +1012,9 @@ Event 约 140–180 字 / State 约 60–90 字 / Open 0–2 项 / Quote 0–2 �
 无则写无。
 
 [StoryTime]
-照录 SOURCE_METADATA 的 StoryTime；没有明确值写无，不得推算。
+照录 SOURCE_METADATA 中最完整的剧情日期 / 星期 / 时间；
+例如：2025/01/01 周三 10:21。
+只提供其中一部分时照录已有部分；不得推算或补全。
 
 [Location]
 照录 SOURCE_METADATA 的 Location；没有明确值写无，不得推算。
@@ -1093,11 +1095,11 @@ ${THIRD_PARTY_OBJECTIVE_RULES}
 
 已经失去当前影响的旧剧情可省略。
 
-【时间与地点】
+【剧情日期/时间与地点】
 
-NEW_SUMMARIES 中存在明确 StoryTime / Location 时，[Current State] 保留阶段结束时最新明确的剧情时间与地点。
+NEW_SUMMARIES 中存在明确 StoryTime / Location 时，[Current State] 保留阶段结束时最新明确的完整剧情日期时间（日期 / 星期 / 时间）与地点。
 缺失时保持未知，不推算、不补全。
-阶段剧情时间范围由插件依据 Summary 元数据维护，无需在 Checkpoint 正文重复计算或输出。
+阶段剧情日期时间范围由插件依据 Summary 元数据维护，无需在 Checkpoint 正文重复计算或输出。
 
 【KEEP 状态变化】
 
@@ -1153,7 +1155,7 @@ invalid 属于人工整理状态，模型不自动输出 invalid。
 仅记录当前仍有效的信息。
 
 [Current State]
-当前已知时间与地点 / 重要人物当前位置与分布 / 尚未完成的重要行动 / 重要物品归属、位置与状态 / 当前计划、任务与下一步 / 当前伤势、身体或现实限制 / 当前明确关系边界、要求与决定 / 通话、消息、文件、交易等仍具有后续作用的结果。
+当前已知完整剧情日期时间与地点 / 重要人物当前位置与分布 / 尚未完成的重要行动 / 重要物品归属、位置与状态 / 当前计划、任务与下一步 / 当前伤势、身体或现实限制 / 当前明确关系边界、要求与决定 / 通话、消息、文件、交易等仍具有后续作用的结果。
 
 [Secrets & Knowledge]
 客观事实 | 谁知道 | 谁不知道 | 谁误信 | 谁隐瞒 | 当前状态
@@ -1212,9 +1214,9 @@ invalid 属于人工整理状态，模型不自动输出 invalid。
 KEEP 中的事项只有在其内容已经形成稳定长期事实时，才可能进入 Long Memory。
 “尚待发生 / 等待结果 / 当前未完成”本身不构成长事实。
 
-【时间】
+【剧情日期/时间】
 
-Long Memory 的剧情时间范围由插件元数据维护，无需在每条长期事实中重复日期。
+Long Memory 的时间范围同样使用完整剧情日期时间（日期 / 星期 / 时间），由插件元数据维护，无需在每条长期事实中重复日期。
 某个明确日期 / 时间本身具有长期剧情意义时，在对应 FACT 正文中保留。
 缺失时间不得推算或补全。
 

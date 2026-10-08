@@ -294,7 +294,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.14.0');
+    assert.equal(PLUGIN_VERSION, '1.14.1');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);
@@ -309,11 +309,13 @@ test('default prompts adopt user-provided formats, new budgets apply and custom 
         assert.match(prompt, /不替人物得出统一结论/);
         assert.match(prompt, /记录证据和已成立事实，不替剧情解释人物/);
     }
+    assert.match(DEFAULT_PROMPTS.summary, /照录 SOURCE_METADATA 中最完整的剧情日期 \/ 星期 \/ 时间/);
+    assert.match(DEFAULT_PROMPTS.summary, /2025\/01\/01 周三 10:21/);
     assert.match(DEFAULT_PROMPTS.checkpoint, /\[RESOLVED_KEEP\][\s\S]*NEW_SUMMARIES 中的逐字证据[\s\S]*\[SUPERSEDED_KEEP\]/);
-    assert.match(DEFAULT_PROMPTS.checkpoint, /【时间与地点】[\s\S]*无需在 Checkpoint 正文重复计算或输出/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /【剧情日期\/时间与地点】[\s\S]*完整剧情日期时间[\s\S]*无需在 Checkpoint 正文重复计算或输出/);
     assert.doesNotMatch(DEFAULT_PROMPTS.checkpoint, /^\[KEEP\]$/m);
     assert.match(DEFAULT_PROMPTS.longMemory, /\[UPDATED_FACTS\][\s\S]*\[RETIRED_FACTS\]/);
-    assert.match(DEFAULT_PROMPTS.longMemory, /【时间】[\s\S]*缺失时间不得推算或补全/);
+    assert.match(DEFAULT_PROMPTS.longMemory, /【剧情日期\/时间】[\s\S]*时间范围同样使用完整剧情日期时间[\s\S]*缺失时间不得推算或补全/);
     const custom = normalizeSettings({ timeoutMs: 60000, prompts: { summary: '自定义模板' } });
     assert.equal(custom.timeoutMs, 60000);
     assert.equal(custom.prompts.summary, '自定义模板');

@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.14.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.14.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.14.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.14.0';
-import { downloadJson, getAssistantMessages } from './utils.js?v=1.14.0';
-import { collectKeepItems, projectLongFacts, readSection } from './continuity.js?v=1.14.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.14.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.14.0';
-import { parseFloorSummary } from './summarizer.js?v=1.14.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.14.1';
+import { effectiveInjectionMode } from './cache-control.js?v=1.14.1';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.14.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.14.1';
+import { downloadJson, getAssistantMessages } from './utils.js?v=1.14.1';
+import { collectKeepItems, projectLongFacts, readSection } from './continuity.js?v=1.14.1';
+import { buildStructuredSummary } from './summary-format.js?v=1.14.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.14.1';
+import { parseFloorSummary } from './summarizer.js?v=1.14.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -266,7 +266,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.14.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.14.1', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -656,7 +656,7 @@ export class CacheMemoryUI {
             if (record?.status === 'failed') {
                 body.append(this.line('错误', formatSummaryFailure(record)));
             } else if (record) {
-                body.append(this.line('剧情时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`),
+                body.append(this.line('剧情日期/时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`),
                     this.line('人物', record.characters), this.line('事件', record.event));
                 if (record.status === 'stale') body.append(this.line('状态', '原消息已编辑或切换了备选回复，请手动重新生成'));
             }
@@ -1067,13 +1067,13 @@ export class CacheMemoryUI {
                 else if (record.status === 'failed') body.append(this.element('pre', '', formatSummaryFailure(record)));
                 else if (this.isEditing('summary', entry.messageId)) this.inlineEditor(body, [
                     { key: 'title', label: 'Title', value: record.title },
-                    { key: 'storyTime', label: '剧情时间 StoryTime', value: record.storyTime },
+                    { key: 'storyTime', label: '剧情日期/时间 StoryTime', value: record.storyTime },
                     { key: 'location', label: '地点 Location', value: record.location },
                     ...[['characters', 'Characters', 3], ['event', 'Event', 7], ['state', 'State', 5], ['open', 'Open', 5], ['quote', 'Quote', 4], ['keep', 'KEEP', 5]]
                         .map(([key, label, rows]) => ({ key, label, rows, multiline: true, value: record[key] })),
                 ]);
                 else {
-                    body.append(this.line('标题', record.title), this.line('剧情时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`), this.line('人物', record.characters), this.line('事件', record.event),
+                    body.append(this.line('标题', record.title), this.line('剧情日期/时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`), this.line('人物', record.characters), this.line('事件', record.event),
                         this.line('状态', record.state), this.line('Open', record.open), this.line('原话', record.quote), this.line('KEEP', record.keep));
                 }
                 if (this.isEditing('summary', entry.messageId)) return;
@@ -1087,8 +1087,8 @@ export class CacheMemoryUI {
         const fields = parseCheckpointSections(item.content);
         return this.foldCard({ key: item.id, group: 'checkpoints', type: 'checkpoint', id: item.id,
             title: `${String(item.id).replace(/^checkpoint-/i, 'CP-').toUpperCase()}｜${item.startFloor}–${item.endFloor}层`, status: this.statusLabel(item), renderBody: body => {
-                body.append(this.line('剧情时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime),
-                    this.line('当前时间｜地点', `${item.currentStoryTime || '未提供'}｜${item.currentLocation || '未提供'}`));
+                body.append(this.line('剧情日期/时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime),
+                    this.line('当前剧情日期/时间｜地点', `${item.currentStoryTime || '未提供'}｜${item.currentLocation || '未提供'}`));
                 if (this.isEditing('checkpoint', item.id)) {
                     this.inlineEditor(body, fields ? CHECKPOINT_SECTIONS.map(([key, section, label]) => ({
                         key, label: `${label} · ${section}`, value: fields[key], multiline: true, rows: 5,
@@ -1121,7 +1121,7 @@ export class CacheMemoryUI {
                     return;
                 }
                 body.append(this.line('事实', parts.detail), this.line('来源', `${item.sourceId ?? '未知'}${item.startFloor ? ` · 第${item.startFloor}–${item.endFloor}层` : ''}`));
-                body.append(this.line('剧情时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime));
+                body.append(this.line('剧情日期/时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime));
                 if (item.reason) body.append(this.line('变更原因', item.reason));
                 if (item.evidence) body.append(this.line('证据', item.evidence));
                 const actions = this.element('div', 'cache-memory-actions');
@@ -1163,9 +1163,9 @@ export class CacheMemoryUI {
                     return;
                 }
                 body.append(this.line('内容', item.text),
-                    this.line('来源', `${item.sourceFloor ? `第 ${item.sourceFloor} 层` : '未知'} · 剧情 ${item.sourceStoryTime || '未提供'}｜${item.sourceLocation || '未提供'}`),
+                    this.line('来源', `${item.sourceFloor ? `第 ${item.sourceFloor} 层` : '未知'} · 剧情日期/时间 ${item.sourceStoryTime || '未提供'}｜${item.sourceLocation || '未提供'}`),
                     this.line('来源 ID', item.sourceId || '未知'), this.line('状态', labels[item.status] ?? item.status));
-                if (item.resolvedStoryTime) body.append(this.line('解决剧情时间', item.resolvedStoryTime));
+                if (item.resolvedStoryTime) body.append(this.line('解决剧情日期/时间', item.resolvedStoryTime));
                 if (item.reason) body.append(this.line('原因', item.reason));
                 if (item.evidence) body.append(this.line('证据', item.evidence));
                 if (item.replacedBy) body.append(this.line('替代项', item.replacedBy));
