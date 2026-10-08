@@ -34,7 +34,7 @@ test('old stores and custom prompts survive migration while former default promp
     assert.equal(settings.summaryMaxLength, 350);
     assert.equal(normalizeSettings().checkpointInterval, 5);
     assert.equal(normalizeSettings().summaryMaxLength, 350);
-    assert.equal(migrated.version, 4);
+    assert.equal(migrated.version, 5);
     assert.deepEqual(migrated.keepRegistry, {});
 });
 

@@ -1,7 +1,7 @@
-import { getAssistantMessages } from './utils.js?v=1.16.1';
-import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.16.1';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.17.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.17.0';
 
-export const STORE_VERSION = 4;
+export const STORE_VERSION = 5;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
 
 export function createEmptyStore(chatId = '') {
@@ -12,6 +12,7 @@ export function createEmptyStore(chatId = '') {
         checkpoints: [],
         longMemories: [],
         keepRegistry: {},
+        sync: { revision: 0, writerId: '', writeId: '', savedAt: '' },
         updatedAt: new Date().toISOString(),
     };
 }
@@ -30,6 +31,12 @@ export function normalizeStore(value, chatId = '') {
         checkpoints,
         longMemories,
         keepRegistry,
+        sync: {
+            revision: Math.max(0, Math.floor(Number(store.sync?.revision) || 0)),
+            writerId: String(store.sync?.writerId ?? ''),
+            writeId: String(store.sync?.writeId ?? ''),
+            savedAt: String(store.sync?.savedAt ?? ''),
+        },
         ...(store.injectionSnapshot && typeof store.injectionSnapshot.value === 'string' && Array.isArray(store.injectionSnapshot.blocks) ? { injectionSnapshot: store.injectionSnapshot } : {}),
         updatedAt: store.updatedAt ?? new Date().toISOString(),
     };
@@ -118,6 +125,7 @@ export class MemoryStore {
         this.saveMetadata = saveMetadata;
         this.onChange = onChange;
         this.aggregateBatches = new Map();
+        this.pendingMigrations = new Set();
     }
 
     current() {
@@ -126,19 +134,26 @@ export class MemoryStore {
         const normalized = normalizeStore(metadata.cache_memory, this.getChatId());
         if (metadata.cache_memory !== normalized) {
             metadata.cache_memory = normalized;
-            if (needsMigration) this.saveMetadata();
+            if (needsMigration) this.pendingMigrations.add(normalized.chatId);
         }
         return normalized;
     }
 
-    persist(reason = 'history metadata changed') {
+    persistMigration() {
+        const store = this.current();
+        if (!this.pendingMigrations.delete(store.chatId)) return false;
+        this.persist('store migration');
+        return true;
+    }
+
+    persist(reason = 'history metadata changed', { notify = true } = {}) {
         const store = this.current();
         store.updatedAt = new Date().toISOString();
-        this.saveMetadata();
+        this.saveMetadata(store, reason);
         const batch = this.aggregateBatches.get(store.chatId);
         if (batch && ['new checkpoint', 'new long memory', 'aggregate failed'].includes(reason)) {
             if (!batch.reason || reason === 'new long memory' || (batch.reason === 'aggregate failed' && reason === 'new checkpoint')) batch.reason = reason;
-        } else this.onChange(store, reason);
+        } else if (notify) this.onChange(store, reason);
         return store;
     }
 
@@ -159,13 +174,11 @@ export class MemoryStore {
     syncMessages(chat) {
         const store = this.current();
         const assistants = getAssistantMessages(chat);
-        const unmatched = new Set(Object.keys(store.summaries));
         let changed = false;
 
         for (const entry of assistants) {
             const record = store.summaries[entry.messageId];
             if (!record) continue;
-            unmatched.delete(entry.messageId);
             if (record.floor !== entry.floor || record.messageIndex !== entry.messageIndex || record.messageId !== entry.messageId) {
                 for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === record.messageId) keep.sourceFloor = entry.floor;
                 record.floor = entry.floor;
@@ -178,20 +191,32 @@ export class MemoryStore {
                 record.staleAt = new Date().toISOString();
                 changed = true;
             }
-        }
-
-        for (const key of unmatched) {
-            const record = store.summaries[key];
-            if (record && record.status !== 'orphaned') {
-                record.previousStatus = record.status;
-                record.status = 'orphaned';
-                record.orphanedAt = new Date().toISOString();
+            if (record.status === 'orphaned') {
+                record.status = record.previousStatus && record.previousStatus !== 'orphaned' ? record.previousStatus : 'frozen';
+                delete record.previousStatus;
+                delete record.orphanedAt;
                 changed = true;
             }
         }
 
+        // A chat array may be temporarily incomplete while SillyTavern is loading.
+        // Unmatched records are kept unchanged; only an explicit deletion event may
+        // mark a Summary as orphaned.
+
         if (changed) this.persist();
         return assistants;
+    }
+
+    markSummaryOrphanedAtMessageIndex(messageIndex) {
+        if (!Number.isInteger(Number(messageIndex))) return null;
+        const store = this.current();
+        const record = Object.values(store.summaries).find(item => Number(item?.messageIndex) === Number(messageIndex));
+        if (!record || record.status === 'orphaned') return record ?? null;
+        record.previousStatus = record.status;
+        record.status = 'orphaned';
+        record.orphanedAt = new Date().toISOString();
+        this.persist('history metadata changed');
+        return record;
     }
 
     rebindSummaryAtMessageIndex(messageIndex, chat) {
@@ -449,7 +474,7 @@ export class MemoryStore {
         const cleared = createEmptyStore(chatId);
         this.aggregateBatches.delete(String(chatId ?? ''));
         this.getMetadata().cache_memory = cleared;
-        this.saveMetadata();
+        this.saveMetadata(cleared, 'current chat cleared');
         this.onChange(cleared, 'current chat cleared');
         return cleared;
     }
@@ -460,4 +485,89 @@ export class MemoryStore {
         this.persist('manual edit');
         return normalized;
     }
+
+    merge(imported) {
+        const current = this.current();
+        const result = mergeMemoryStores(current, imported, current.chatId);
+        this.getMetadata().cache_memory = result.merged;
+        if (result.added.total) this.persist('manual edit');
+        return result;
+    }
+}
+
+const VOLATILE_RECORD_FIELDS = new Set(['createdAt', 'updatedAt', 'editedAt', 'staleAt', 'orphanedAt']);
+
+function stableClone(value, { omitVolatile = false } = {}) {
+    if (Array.isArray(value)) return value.map(item => stableClone(item, { omitVolatile }));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.keys(value).filter(key => !omitVolatile || !VOLATILE_RECORD_FIELDS.has(key)).sort()
+        .map(key => [key, stableClone(value[key], { omitVolatile })]));
+}
+
+export function memoryContentDigest(value) {
+    const store = value && typeof value === 'object' ? value : {};
+    const serialized = JSON.stringify(stableClone({
+        summaries: store.summaries ?? {},
+        checkpoints: store.checkpoints ?? [],
+        longMemories: store.longMemories ?? [],
+        keepRegistry: store.keepRegistry ?? {},
+        injectionSnapshot: store.injectionSnapshot ?? null,
+    }));
+    return `${serialized.length}:${fnv1a(serialized)}`;
+}
+
+function sameRecord(left, right) {
+    return JSON.stringify(stableClone(left, { omitVolatile: true })) === JSON.stringify(stableClone(right, { omitVolatile: true }));
+}
+
+export function mergeMemoryStores(currentValue, importedValue, chatId = '') {
+    const current = normalizeStore(structuredClone(currentValue), chatId);
+    const imported = normalizeStore(structuredClone(importedValue), chatId);
+    const merged = structuredClone(current);
+    const conflicts = [];
+    const added = { summaries: 0, checkpoints: 0, longMemories: 0, keeps: 0, total: 0 };
+
+    const summaryIds = new Map(Object.entries(merged.summaries).map(([key, item]) => [String(item?.messageId || key), key]));
+    for (const [sourceKey, item] of Object.entries(imported.summaries)) {
+        const id = String(item?.messageId || sourceKey);
+        const existingKey = summaryIds.get(id);
+        if (!existingKey) {
+            merged.summaries[id] = structuredClone({ ...item, messageId: id });
+            summaryIds.set(id, id);
+            added.summaries++;
+        } else if (!sameRecord(merged.summaries[existingKey], item)) {
+            conflicts.push({ type: 'Summary', id, current: structuredClone(merged.summaries[existingKey]), incoming: structuredClone(item) });
+        }
+    }
+
+    const mergeList = (key, label, counter) => {
+        const byId = new Map(merged[key].map(item => [String(item.id), item]));
+        for (const item of imported[key]) {
+            const id = String(item?.id ?? '');
+            if (!id) continue;
+            const existing = byId.get(id);
+            if (!existing) {
+                const copy = structuredClone(item);
+                merged[key].push(copy);
+                byId.set(id, copy);
+                added[counter]++;
+            } else if (!sameRecord(existing, item)) conflicts.push({ type: label, id, current: structuredClone(existing), incoming: structuredClone(item) });
+        }
+    };
+    mergeList('checkpoints', 'Checkpoint', 'checkpoints');
+    mergeList('longMemories', 'Long Memory', 'longMemories');
+    merged.checkpoints.sort((a, b) => (a.startFloor ?? 0) - (b.startFloor ?? 0));
+    merged.longMemories.sort((a, b) => (a.startFloor ?? 0) - (b.startFloor ?? 0));
+
+    for (const [sourceId, item] of Object.entries(imported.keepRegistry)) {
+        const id = String(sourceId).toUpperCase();
+        const existing = merged.keepRegistry[id];
+        if (!existing) {
+            merged.keepRegistry[id] = structuredClone(item);
+            added.keeps++;
+        } else if (!sameRecord(existing, item)) conflicts.push({ type: 'KEEP', id, current: structuredClone(existing), incoming: structuredClone(item) });
+    }
+    added.total = added.summaries + added.checkpoints + added.longMemories + added.keeps;
+    merged.updatedAt = new Date().toISOString();
+    return { merged, conflicts, added };
 }

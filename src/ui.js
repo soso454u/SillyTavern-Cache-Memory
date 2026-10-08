@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.16.1';
-import { effectiveInjectionMode } from './cache-control.js?v=1.16.1';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.16.1';
-import { HistoryBackfill } from './history-backfill.js?v=1.16.1';
-import { downloadJson, getAssistantMessages } from './utils.js?v=1.16.1';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.16.1';
-import { buildStructuredSummary } from './summary-format.js?v=1.16.1';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.16.1';
-import { parseFloorSummary } from './summarizer.js?v=1.16.1';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.17.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.17.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.17.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.17.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.17.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.17.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.17.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.17.0';
+import { parseFloorSummary } from './summarizer.js?v=1.17.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -57,6 +57,28 @@ function compactRanges(ranges) {
     return `${labels.join('、')}${ranges.length > labels.length ? ` 等 ${ranges.length} 段` : ''}`;
 }
 
+export function summaryHealthDetails(store, assistants) {
+    const summaries = store?.summaries && typeof store.summaries === 'object' ? store.summaries : {};
+    const entries = Array.isArray(assistants) ? assistants : [];
+    const matched = new Set();
+    const details = [];
+    for (const entry of entries) {
+        const record = summaries[entry.messageId];
+        if (record) matched.add(entry.messageId);
+        if (!record) details.push({ floor: entry.floor, messageId: entry.messageId, reason: 'missing', label: '真正缺失：当前消息没有 Summary' });
+        else if (record.status === 'failed') details.push({ floor: entry.floor, messageId: entry.messageId, reason: 'failed', label: `生成失败：${record.error || '未提供错误'}` });
+        else if (record.status === 'stale') details.push({ floor: entry.floor, messageId: entry.messageId, reason: 'stale', label: '原消息指纹已变化，需要人工确认或重新生成' });
+        else if (record.status === 'orphaned') details.push({ floor: entry.floor, messageId: entry.messageId, reason: 'orphaned', label: '已由明确消息删除事件标记为 orphaned' });
+    }
+    for (const [key, record] of Object.entries(summaries)) {
+        const id = String(record?.messageId || key);
+        if (matched.has(id)) continue;
+        details.push({ floor: Number(record?.floor) || 0, messageId: id, reason: record?.status === 'orphaned' ? 'orphaned' : 'source-unloaded',
+            label: record?.status === 'orphaned' ? '原消息已明确删除，摘要仍保留' : '来源消息当前未加载；摘要保留且不自动判定 orphaned' });
+    }
+    return details.sort((a, b) => a.floor - b.floor || a.messageId.localeCompare(b.messageId));
+}
+
 export function memoryOverviewStats(store, assistants, settings) {
     const safeStore = {
         summaries: {}, checkpoints: [], longMemories: [], keepRegistry: {},
@@ -72,15 +94,15 @@ export function memoryOverviewStats(store, assistants, settings) {
     const longRanges = completedRanges(latestFloor, longMemoryInterval);
     const usableSummaries = entries.filter(entry => safeStore.summaries[entry.messageId] && isUsableMemory(safeStore.summaries[entry.messageId]));
     const missingCheckpointRanges = checkpointRanges.filter(([start, end]) => !checkpoints.some(item => item.startFloor === start && item.endFloor === end));
-    const missingSummaryFloors = entries.filter(entry => missingCheckpointRanges.some(([start, end]) => entry.floor >= start && entry.floor <= end)
-        && (!safeStore.summaries[entry.messageId] || !isUsableMemory(safeStore.summaries[entry.messageId]))).map(entry => entry.floor);
+    const missingSummaryFloors = entries.filter(entry => !safeStore.summaries[entry.messageId]
+        || !isUsableMemory(safeStore.summaries[entry.messageId])).map(entry => entry.floor);
     const missingLongRanges = longRanges.filter(([start, end]) => !longMemories.some(item => item.startFloor === start && item.endFloor === end));
     const longDueThrough = longRanges.at(-1)?.[1] ?? 0;
     const checkpointGapsBlockingLong = missingCheckpointRanges.filter(([, end]) => end <= longDueThrough);
     const issues = [];
     if (missingSummaryFloors.length) {
         const visible = missingSummaryFloors.slice(0, 8).join('、');
-        issues.push(`Summary 缺失或不可用（第 ${visible}${missingSummaryFloors.length > 8 ? ` 等 ${missingSummaryFloors.length} 层` : ' 层'}），对应 Checkpoint 无法自动生成。`);
+        issues.push(`Summary 缺失或不可用（第 ${visible}${missingSummaryFloors.length > 8 ? ` 等 ${missingSummaryFloors.length} 层` : ' 层'}），对应 Checkpoint 无法自动生成；未到完整分组时将在到达边界后阻塞。`);
     }
     if (missingCheckpointRanges.length) {
         const suffix = checkpointGapsBlockingLong.length ? '，对应 Long Memory 无法自动生成' : '';
@@ -101,6 +123,7 @@ export function memoryOverviewStats(store, assistants, settings) {
         injectedCheckpoints: Math.max(blockCount, textCount),
         estimatedTokens: estimateTokenCount(injectionValue),
         recentBodyWindow: '由 SillyTavern 上下文设置控制',
+        summaryDetails: summaryHealthDetails(safeStore, entries),
         issues,
     };
 }
@@ -205,9 +228,18 @@ function managerPanelTemplate() {
             </nav>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
-                <button type="button" class="menu_button" data-import><i class="fa-solid fa-upload"></i> 导入 JSON</button>
-                <input type="file" accept="application/json,.json" data-import-file hidden>
+                <button type="button" class="menu_button" data-save-memory><i class="fa-solid fa-cloud-arrow-up"></i> 保存当前聊天记忆</button>
+                <button type="button" class="menu_button" data-import-merge><i class="fa-solid fa-code-merge"></i> 合并导入 JSON</button>
+                <input type="file" accept="application/json,.json" data-import-merge-file hidden>
                 <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
+            </div>
+            <div class="cache-memory-save-state" data-memory-save-box data-state="unknown">
+                <strong>记忆保存状态：</strong><span data-memory-save-status>状态未知</span>
+                <div class="cache-memory-actions" data-memory-conflict-actions hidden>
+                    <button type="button" class="menu_button" data-memory-conflict="merge">合并双方</button>
+                    <button type="button" class="menu_button" data-memory-conflict="export">导出冲突副本</button>
+                    <button type="button" class="menu_button cache-memory-danger" data-memory-conflict="restore">恢复本机副本</button>
+                </div>
             </div>
             <div class="cache-memory-manager-content" data-manager-content></div>
         </section>`;
@@ -313,7 +345,7 @@ export function configTemplate() {
 }
 
 export class CacheMemoryUI {
-    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, updateInjection }) {
+    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, updateInjection, persistence }) {
         this.root = resolveUIRoot();
         this.doc = this.root.document;
         this.getSettings = getSettings;
@@ -324,6 +356,7 @@ export class CacheMemoryUI {
         this.summarizer = summarizer;
         this.getChat = getChat;
         this.updateInjection = updateInjection;
+        this.persistence = persistence;
         this.manager = null;
         this.config = null;
         this.wandObserver = null;
@@ -339,6 +372,8 @@ export class CacheMemoryUI {
         this.managerEditing = null;
         this.keepBatchMode = false;
         this.settingsDirty = false;
+        this.showSummaryHealthDetails = false;
+        this.lastMergeReport = null;
         this.missingCheckpointController = null;
         this.missingCheckpointRunId = 0;
         this.missingCheckpointState = { status: 'idle', total: 0, processed: 0, created: 0, skipped: 0, failed: 0, currentRange: null, blocked: [], errors: [] };
@@ -355,7 +390,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.16.1', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.17.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -385,7 +420,7 @@ export class CacheMemoryUI {
         this.manager.addEventListener('input', event => this.handleManagerInput(event), { signal: this.controller.signal });
         this.manager.addEventListener('change', event => this.handleManagerInput(event), { signal: this.controller.signal });
         this.manager.addEventListener('keydown', event => this.handleManagerKeydown(event), { signal: this.controller.signal });
-        this.manager.querySelector('[data-import-file]').addEventListener('change', event => this.importFile(event), { signal: this.controller.signal });
+        this.manager.querySelector('[data-import-merge-file]').addEventListener('change', event => this.importMergeFile(event), { signal: this.controller.signal });
         this.doc.addEventListener('keydown', event => {
             if (event.key === 'Escape' && this.config && !this.config.hidden) this.closeSettings();
         }, { signal: this.controller.signal });
@@ -895,6 +930,7 @@ export class CacheMemoryUI {
 
     renderManager() {
         if (!this.manager || this.manager.hidden) return;
+        this.renderMemorySaveState();
         for (const tab of this.manager.querySelectorAll('[data-manager-view]')) {
             const active = tab.dataset.managerView === this.managerView;
             tab.classList.toggle('is-active', active);
@@ -908,6 +944,24 @@ export class CacheMemoryUI {
         else if (this.managerView === 'facts') content.append(this.renderFactPage());
         else content.append(this.renderKeepPage());
         this.renderBackfillProgress();
+    }
+
+    renderMemorySaveState() {
+        if (!this.manager) return;
+        const status = this.persistence?.getState?.(this.store?.current?.().chatId) ?? { state: 'unknown', detail: '' };
+        const labels = {
+            pending: '待保存', saving: '保存中', confirmed: '已确认保存', failed: '保存失败',
+            unknown: '状态未知', conflict: '跨设备冲突',
+        };
+        const box = this.manager.querySelector('[data-memory-save-box]');
+        const output = this.manager.querySelector('[data-memory-save-status]');
+        if (box) box.dataset.state = status.state;
+        if (output) {
+            output.textContent = `${labels[status.state] ?? '状态未知'}${status.detail ? ` · ${status.detail}` : ''}`;
+            output.title = status.at ? `最后更新：${formatDate(status.at)}` : '';
+        }
+        const conflictActions = this.manager.querySelector('[data-memory-conflict-actions]');
+        if (conflictActions) conflictActions.hidden = status.state !== 'conflict';
     }
 
     element(tag, className = '', text = '') {
@@ -956,9 +1010,26 @@ export class CacheMemoryUI {
             health.append(this.element('p', '', '已到期的 Summary、Checkpoint 与 Long Memory 链路完整。'));
         }
         health.append(this.element('small', '', `最近正文窗口：${overview.recentBodyWindow}。Token 为本地粗略估算，以实际模型 tokenizer 为准。`));
+        if (this.showSummaryHealthDetails) {
+            const detailSection = this.element('div', 'cache-memory-summary-health-details');
+            detailSection.append(this.element('h5', '', '摘要异常明细'));
+            if (!overview.summaryDetails.length) detailSection.append(this.element('p', '', '没有发现缺失、失败、过期或孤立摘要。'));
+            else {
+                const list = this.element('ul');
+                for (const item of overview.summaryDetails) list.append(this.element('li', '', `第 ${item.floor || '未知'} 层 · ${item.label}`));
+                detailSection.append(list);
+            }
+            health.append(detailSection);
+        }
+        if (this.lastMergeReport) {
+            const report = this.element('div', 'cache-memory-merge-report');
+            report.append(this.element('strong', '', `最近合并：新增 ${this.lastMergeReport.added.total} 条；冲突 ${this.lastMergeReport.conflicts.length} 条。`));
+            for (const conflict of this.lastMergeReport.conflicts.slice(0, 10)) report.append(this.element('p', '', `${conflict.type} ${conflict.id}：同 ID 内容不同，未覆盖当前记录。`));
+            health.append(report);
+        }
         root.append(grid, health);
         const quick = this.element('div', 'cache-memory-actions');
-        quick.innerHTML = '<button type="button" class="menu_button cache-memory-primary" data-backfill-action="missing">补齐缺失摘要</button><button type="button" class="menu_button" data-backfill-action="failed">重试失败摘要</button><button type="button" class="menu_button" data-reinject>重新注入</button><button type="button" class="menu_button" data-reparse-summaries>重新解析结构化摘要</button>';
+        quick.innerHTML = '<button type="button" class="menu_button cache-memory-primary" data-backfill-action="missing">补齐缺失摘要</button><button type="button" class="menu_button" data-backfill-action="failed">重试失败摘要</button><button type="button" class="menu_button" data-view-summary-health>查看缺失楼层</button><button type="button" class="menu_button" data-reinject>重新注入</button><button type="button" class="menu_button" data-reparse-summaries>重新解析结构化摘要</button>';
         root.append(quick, this.backfillPanel(), this.aggregationPanel());
         return root;
     }
@@ -1403,7 +1474,7 @@ export class CacheMemoryUI {
             button.disabled = action === 'pause' ? s.status !== 'running' : action === 'resume' ? !['paused', 'pausing'].includes(s.status)
                 : action === 'cancel' ? !['running', 'pausing', 'paused'].includes(s.status) : this.backfill.active || this.isMissingCheckpointBackfillActive() || !latest;
         }
-        for (const button of this.manager.querySelectorAll('[data-manager-action], [data-fill-missing], [data-continue-checkpoint], [data-import], [data-fill-missing-checkpoints], [data-aggregate-continue]')) {
+        for (const button of this.manager.querySelectorAll('[data-manager-action], [data-fill-missing], [data-continue-checkpoint], [data-import-merge], [data-fill-missing-checkpoints], [data-aggregate-continue]')) {
             const messageId = button.closest('[data-memory-type="summary"]')?.dataset.memoryId;
             button.disabled = this.backfill.active || this.isMissingCheckpointBackfillActive() || Boolean(messageId && this.summarizer.isSummarizing(messageId));
         }
@@ -1418,6 +1489,60 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
+        if (event.target.closest('[data-view-summary-health]')) {
+            this.showSummaryHealthDetails = !this.showSummaryHealthDetails;
+            this.renderManager();
+            return;
+        }
+        if (event.target.closest('[data-save-memory]')) {
+            const chatId = this.store.current().chatId;
+            this.persistence?.enqueue(this.store.current(), 'manual save');
+            const status = await this.persistence?.flush(chatId);
+            this.renderMemorySaveState();
+            notify(status?.state === 'confirmed' ? 'success' : 'warning', status?.state === 'confirmed'
+                ? '当前聊天记忆已从服务器读回确认保存'
+                : `当前聊天记忆尚未确认保存：${status?.detail || '状态未知'}`);
+            return;
+        }
+        if (event.target.closest('[data-import-merge]')) {
+            this.manager.querySelector('[data-import-merge-file]').click();
+            return;
+        }
+        const conflictAction = event.target.closest('[data-memory-conflict]');
+        if (conflictAction) {
+            const chatId = this.store.current().chatId || 'chat';
+            const bundle = this.persistence?.conflictBundle(chatId);
+            if (!bundle) return;
+            if (conflictAction.dataset.memoryConflict === 'export') {
+                downloadJson(`cache-memory-conflict-${chatId}.json`, bundle, this.doc);
+                return;
+            }
+            if (conflictAction.dataset.memoryConflict === 'merge') {
+                downloadJson(`cache-memory-before-conflict-merge-${chatId}.json`, bundle.remote, this.doc);
+                const result = this.persistence.resolveConflictByMerge(chatId);
+                this.lastMergeReport = result;
+                if (!result.conflicts.length) await this.persistence.flush(chatId);
+                notify(result.conflicts.length ? 'warning' : 'success', result.conflicts.length
+                    ? `已合并不冲突记录；仍有 ${result.conflicts.length} 个同 ID 冲突，未自动覆盖。`
+                    : `已合并双方数据，新增 ${result.added.total} 条。`);
+                this.renderManager();
+                this.renderMessageMemories();
+                return;
+            }
+            const confirmed = await this.showPluginDialog({
+                title: '恢复本机待保存副本',
+                message: '这会先自动导出当前服务器副本，再以本机待保存副本作为下一次保存内容。仅在你确认本机副本应优先时使用。',
+                confirmLabel: '备份并恢复本机副本',
+                danger: true,
+            });
+            if (!confirmed) return;
+            downloadJson(`cache-memory-before-local-restore-${chatId}.json`, bundle.remote, this.doc);
+            this.persistence.resolveConflictByRestore(chatId);
+            await this.persistence.flush(chatId);
+            this.renderManager();
+            this.renderMessageMemories();
+            return;
+        }
         if (event.target.closest('[data-cancel-missing-checkpoints]')) {
             this.cancelMissingCheckpointBackfill();
             return;
@@ -1561,7 +1686,6 @@ export class CacheMemoryUI {
             downloadJson(`cache-memory-${chatId}.json`, this.store.current(), this.doc);
             return;
         }
-        if (event.target.closest('[data-import]')) return this.manager.querySelector('[data-import-file]').click();
         const batchButton = event.target.closest('[data-backfill-action]');
         if (batchButton) {
             const action = batchButton.dataset.backfillAction;
@@ -1759,22 +1883,33 @@ export class CacheMemoryUI {
         return this.summarizer.enqueueForCurrentChat(() => this.summarizer.generateLongMemory(checkpoints, { overwrite: true }));
     }
 
-    async importFile(event) {
+    async importMergeFile(event) {
         const file = event.target.files?.[0];
         event.target.value = '';
         if (!file) return;
         try {
             const data = JSON.parse(await file.text());
-            if (![1, 2, 3, 4].includes(Number(data.version)) || !data.summaries || !Array.isArray(data.checkpoints) || !Array.isArray(data.longMemories)) {
+            if (![1, 2, 3, 4, 5].includes(Number(data.version)) || !data.summaries || !Array.isArray(data.checkpoints) || !Array.isArray(data.longMemories)) {
                 throw new Error('不是有效的 Cache Memory JSON');
             }
-            if (!await this.showPluginDialog({ title: '导入记忆数据', message: '导入将替换当前聊天的 Cache Memory 数据，但不会修改聊天正文。', confirmLabel: '确认导入', danger: true })) return;
-            this.store.replace(data);
+            const current = this.store.current();
+            if (data.chatId && current.chatId && String(data.chatId) !== String(current.chatId)) throw new Error('JSON 属于另一个聊天，已阻止合并');
+            if (!await this.showPluginDialog({
+                title: '合并导入记忆数据',
+                message: '将按稳定 Summary 身份、Checkpoint / Long Memory ID 和 KEEP ID 合并。相同 ID 内容不同会报告冲突，不会按时间戳覆盖；合并前会自动导出当前数据备份。',
+                confirmLabel: '备份并合并',
+            })) return;
+            downloadJson(`cache-memory-before-merge-${current.chatId || 'chat'}.json`, current, this.doc);
+            const result = this.store.merge(data);
+            this.lastMergeReport = result;
+            if (result.added.total) await this.persistence?.flush(current.chatId);
             this.renderManager();
             this.renderMessageMemories();
-            notify('success', '记忆数据已导入当前聊天');
+            notify(result.conflicts.length ? 'warning' : 'success', result.conflicts.length
+                ? `合并新增 ${result.added.total} 条；${result.conflicts.length} 个同 ID 内容冲突未覆盖，请在概览查看。`
+                : `记忆合并完成：新增 ${result.added.total} 条，没有内容冲突。`);
         } catch (error) {
-            notify('error', `导入失败：${error.message}`);
+            notify('error', `合并导入失败：${error.message}`);
         }
     }
 

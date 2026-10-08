@@ -1,8 +1,8 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.16.1';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.16.1';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.16.1';
-import { extractSummarySource } from './summary-source.js?v=1.16.1';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.16.1';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.17.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.17.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.17.0';
+import { extractSummarySource } from './summary-source.js?v=1.17.0';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.17.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');

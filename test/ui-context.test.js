@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveUIRoot, viewportSize } from '../src/ui-context.js';
-import { buildCheckpointContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections } from '../src/ui.js';
+import { buildCheckpointContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections, summaryHealthDetails } from '../src/ui.js';
 
 test('overview reports expected memory counts, injection size and broken chains locally', () => {
     const assistants = Array.from({ length: 10 }, (_, index) => ({ floor: index + 1, messageId: `m${index + 1}` }));
@@ -33,6 +33,27 @@ test('memory manager is a settings tab instead of a second dialog', () => {
     assert.doesNotMatch(html, /data-manager-back|data-manager-close|aria-label="记忆管理"/);
     assert.match(html, /data-save-settings/);
     assert.match(html, /data-settings-save-state[^>]*>已保存/);
+    assert.match(html, /data-save-memory/);
+    assert.match(html, /data-import-merge/);
+    assert.match(html, /data-memory-save-status[^>]*>状态未知/);
+});
+
+test('summary health separates missing, failed, stale, orphaned and temporarily unloaded sources', () => {
+    const assistants = [
+        { floor: 1, messageId: 'missing' },
+        { floor: 2, messageId: 'failed' },
+        { floor: 3, messageId: 'stale' },
+        { floor: 4, messageId: 'orphaned-visible' },
+    ];
+    const details = summaryHealthDetails({ summaries: {
+        failed: { messageId: 'failed', floor: 2, status: 'failed', error: 'timeout' },
+        stale: { messageId: 'stale', floor: 3, status: 'stale' },
+        'orphaned-visible': { messageId: 'orphaned-visible', floor: 4, status: 'orphaned' },
+        unloaded: { messageId: 'unloaded', floor: 5, status: 'frozen' },
+        'orphaned-hidden': { messageId: 'orphaned-hidden', floor: 6, status: 'orphaned' },
+    } }, assistants);
+    assert.deepEqual(details.map(item => item.reason), ['missing', 'failed', 'stale', 'orphaned', 'source-unloaded', 'orphaned']);
+    assert.match(details.find(item => item.messageId === 'unloaded').label, /当前未加载/);
 });
 
 test('explicit settings save re-persists current realtime settings and clears dirty feedback', async () => {

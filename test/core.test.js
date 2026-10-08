@@ -89,6 +89,16 @@ test('assistant floor scan excludes user, system, narrator and tool messages', (
     assert.deepEqual(entries.map(item => item.messageIndex), [2, 6]);
 });
 
+test('saved message identity and fingerprint stay stable after cross-device JSON loading', () => {
+    const original = message('同一段已保存正文', '2026-10-08T10:00:00.000Z', { gen_id: 12345, model: 'model-a' });
+    original.swipe_id = 2;
+    const restored = JSON.parse(JSON.stringify(original));
+    const [first] = getAssistantMessages([original]);
+    const [second] = getAssistantMessages([restored]);
+    assert.equal(first.messageId, second.messageId);
+    assert.equal(first.fingerprint, second.fingerprint);
+});
+
 test('legacy messages without timestamps get distinct content fallback identities', () => {
     const entries = getAssistantMessages([
         { is_user: true, mes: 'user' },

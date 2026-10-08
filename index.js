@@ -10,16 +10,17 @@ import {
     saveSettingsDebounced,
     setExtensionPrompt,
 } from '../../../../script.js';
-import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
+import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.16.1';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.16.1';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.16.1';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.16.1';
-import { getAssistantMessages } from './src/utils.js?v=1.16.1';
-import { MemoryStore } from './src/memory-store.js?v=1.16.1';
-import { MemorySummarizer } from './src/summarizer.js?v=1.16.1';
-import { CacheMemoryUI } from './src/ui.js?v=1.16.1';
+import { SummaryApiClient } from './src/api-client.js?v=1.17.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.17.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.17.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.17.0';
+import { getAssistantMessages } from './src/utils.js?v=1.17.0';
+import { MemoryStore } from './src/memory-store.js?v=1.17.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.17.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.17.0';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.17.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -90,10 +91,26 @@ function persistSettings() {
     return saveSettingsDebounced.flush?.();
 }
 
+const persistence = new MemoryPersistenceCoordinator({
+    getChatId: () => getCurrentChatId() ?? '',
+    getMetadata: () => chat_metadata,
+    storage: window.localStorage,
+    readRemoteStore: chatId => readSillyTavernRemoteStore(getContext, chatId, window.fetch.bind(window)),
+    saveMetadata: async chatId => {
+        const context = getContext();
+        if (String(context.chatId ?? '') !== String(chatId ?? '')) throw new Error('聊天已切换，取消旧聊天保存');
+        await context.saveMetadata();
+    },
+    onStatus: (chatId) => {
+        if (String(getCurrentChatId() ?? '') !== chatId) return;
+        queueMicrotask(() => ui?.renderManager());
+    },
+});
+
 const store = new MemoryStore({
     getMetadata: () => chat_metadata,
     getChatId: () => getCurrentChatId() ?? '',
-    saveMetadata: () => saveMetadataDebounced(),
+    saveMetadata: (snapshot, reason) => persistence.enqueue(snapshot, reason),
     onChange: (changedStore, reason) => {
         queueMicrotask(() => {
             ui?.renderMessageMemories();
@@ -126,21 +143,25 @@ function updateInjection(reason = 'manual edit') {
     if (!settings || !shouldRefreshInjection(settings, reason)) return;
     const current = store.current();
     const result = refreshSnapshot(current, settings, reason);
-    if (!result.skipped) saveMetadataDebounced();
+    if (!result.skipped) store.persist('injection snapshot', { notify: false });
     const placement = injectionPublisher.publish(result.value, { forceRelocate: reason === 'manual reinject' });
     return { ...result, placement };
 }
 
-function refreshChatState() {
+function refreshChatState({ serverLoaded = false } = {}) {
     if (!settings) return;
+    let current = store.current();
+    const chatId = current.chatId;
+    if (chatId !== activeChatId || serverLoaded) current = persistence.activate(chatId, current) ?? current;
+    store.persistMigration();
     store.syncMessages(chat);
-    const chatId = store.current().chatId;
     if (chatId !== activeChatId) {
         summarizer.invalidateContext();
         ui?.backfill?.cancel({ discard: true });
         ui?.cancelMissingCheckpointBackfill({ discard: true });
         activeChatId = chatId;
         updateInjection('chat changed');
+        persistence.verify(chatId);
     } else if (!settings.strictCacheMode) updateInjection('history metadata changed');
     nextFrame(() => ui?.renderMessageMemories());
 }
@@ -170,7 +191,7 @@ function bindEvents() {
         if (!settings.enabled || !settings.autoSummarize || !settings.independentApi) return;
         schedule(() => summarizer.enqueueLatest(), 100);
     });
-    bindEvent(event_types.CHAT_CHANGED, () => schedule(refreshChatState));
+    bindEvent(event_types.CHAT_CHANGED, () => schedule(() => refreshChatState({ serverLoaded: true })));
     bindEvent(event_types.CHAT_LOADED, () => schedule(refreshChatState));
     bindEvent(event_types.CHARACTER_MESSAGE_RENDERED, () => nextFrame(() => ui?.renderMessageMemories()));
     bindEvent(event_types.MORE_MESSAGES_LOADED, () => nextFrame(() => ui?.renderMessageMemories()));
@@ -183,7 +204,11 @@ function bindEvents() {
             refreshChatState();
         }, 50);
     });
-    for (const name of [event_types.MESSAGE_EDITED, event_types.MESSAGE_UPDATED, event_types.MESSAGE_DELETED]) {
+    bindEvent(event_types.MESSAGE_DELETED, messageIndex => {
+        store.markSummaryOrphanedAtMessageIndex(Number(messageIndex));
+        schedule(refreshChatState);
+    });
+    for (const name of [event_types.MESSAGE_EDITED, event_types.MESSAGE_UPDATED]) {
         bindEvent(name, () => schedule(refreshChatState));
     }
 }
@@ -202,6 +227,7 @@ function initialize() {
         summarizer,
         getChat: () => chat,
         updateInjection,
+        persistence,
     });
     if (!ui.mountSettings()) {
         mountObserver = new ui.root.MutationObserver(() => {
