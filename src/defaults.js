@@ -1,6 +1,6 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.14.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.15.0';
 
-export const PLUGIN_VERSION = '1.14.1';
+export const PLUGIN_VERSION = '1.15.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -963,13 +963,15 @@ KEEP → 本层首次产生、跨多个场景或较长剧情后仍必须持续�
 
 【KEEP】
 
-[KEEP] 默认写“无”。
+[KEEP] 在没有符合下述条件的新增长期事项时写“无”。
 
-仅当本层首次产生新的长期事项时填写：
+以下属于强 KEEP 候选：
 
-重大秘密 / 持续人物认知差或重要误会 / 未兑现的重要承诺 / 未完成长期计划 / 明确长线伏笔或异常 / 重要物品长期去向 / 持续伤害、损失、债务或责任 / 长期边界 / 持续影响后续的重大事件或关系变化。
+重大秘密 / 持续人物认知差或重要误会 / 明确长期边界 / 未兑现的重要承诺 / 持续监控、调查或追踪 / 未完成长期计划 / 明确长线伏笔或异常 / 重要物品长期去向 / 持续伤害、损失、债务、责任或重大后果。
 
-已有长期事实再次出现时，无需重新创建 KEEP。
+上述事项在当前正文中有明确依据，且具有跨场景或长期持续性时，应进入 KEEP；不得因为“多数楼层可以写无”而强行省略。
+
+已有 KEEP 或 Long Fact 再次出现时，不要重复创建。
 
 当天安排 / 几小时内完成的计划 / 当前姿势与衣着 / 临时规则 / 当前地点 / 普通未读消息 / 当场尚未结束的小冲突 → State 或 Open。
 
@@ -984,7 +986,7 @@ keep-id 由插件分配。
 {{maxLength}} 为常规上限，信息密集时最多允许超过约 15%。
 
 建议预算：
-Event 约 140–180 字 / State 约 60–90 字 / Open 0–2 项 / Quote 0–2 句且总计尽量不超过 50 字 / KEEP 通常为无，确有新增长期事项时 1–2 项。
+Event 约 140–180 字 / State 约 60–90 字 / Open 0–2 项 / Quote 0–2 句且总计尽量不超过 50 字 / KEEP 无新增长期候选时为无，有明确候选时通常 1–2 项。
 
 压缩顺序：
 重复信息 > 场景细节 > 普通动作 > 次要台词 > 已结束的短期状态。
@@ -1312,6 +1314,7 @@ const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     '22f294b', '2c877097', '70e7b1ca',
     'ac098231', '381ae99', 'c46c449c',
     '1a72c808', '42c25580', 'e248ab35',
+    'f8eef0b7', '1aef5262', '4c50078f',
 ]);
 
 function promptFingerprint(value) {
@@ -1338,7 +1341,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     recentCheckpointCount: 2,
     strictCacheMode: true,
     cacheDebug: false,
-    injectionMode: INJECTION_MODES.NONE,
+    injectionMode: INJECTION_MODES.CHECKPOINT_BOUNDARY,
     provider: API_PROVIDERS.OPENAI_COMPATIBLE,
     apiBaseUrl: '',
     model: '',
@@ -1377,7 +1380,7 @@ export function normalizeSettings(saved = {}) {
     }
     const injectionMode = Object.values(INJECTION_MODES).includes(source.injectionMode)
         ? source.injectionMode
-        : INJECTION_MODES.NONE;
+        : DEFAULT_SETTINGS.injectionMode;
     // Legacy provider values (including Doubao/Ark names) are migrated to the
     // single OpenAI-compatible implementation while preserving URL and model.
     const provider = API_PROVIDERS.OPENAI_COMPATIBLE;
@@ -1433,4 +1436,12 @@ export function normalizeSettings(saved = {}) {
         injectionMode,
         prompts,
     };
+}
+
+export function normalizeLoadedSettings(saved) {
+    const hasSavedConfiguration = saved && typeof saved === 'object' && Object.keys(saved).length > 0;
+    if (hasSavedConfiguration && !Object.hasOwn(saved, 'injectionMode')) {
+        return normalizeSettings({ ...saved, injectionMode: INJECTION_MODES.NONE });
+    }
+    return normalizeSettings(hasSavedConfiguration ? saved : DEFAULT_SETTINGS);
 }

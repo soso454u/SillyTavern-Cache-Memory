@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CacheDiagnostics, effectiveInjectionMode, refreshSnapshot, shouldRefreshInjection } from '../src/cache-control.js';
-import { INJECTION_MODES, normalizeSettings } from '../src/defaults.js';
+import { INJECTION_MODES, normalizeLoadedSettings, normalizeSettings } from '../src/defaults.js';
 import { MemoryStore, normalizeStore } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { getAssistantMessages, fnv1a } from '../src/utils.js';
@@ -21,10 +21,15 @@ function checkpoint(floor, content = `阶段${floor}`) {
     return { id: `checkpoint-${String(floor / 5).padStart(3, '0')}`, startFloor: floor - 4, endFloor: floor, content, status: 'frozen', frozen: true };
 }
 
-test('fresh defaults are strict, no injection, CP5/Long50; existing custom intervals survive', () => {
+test('fresh defaults use strict checkpoint-boundary injection while saved choices remain unchanged', () => {
     const settings = normalizeSettings();
     assert.equal(settings.strictCacheMode, true);
-    assert.equal(settings.injectionMode, INJECTION_MODES.NONE);
+    assert.equal(settings.injectionMode, INJECTION_MODES.CHECKPOINT_BOUNDARY);
+    assert.equal(normalizeLoadedSettings(undefined).injectionMode, INJECTION_MODES.CHECKPOINT_BOUNDARY);
+    assert.equal(normalizeLoadedSettings({}).injectionMode, INJECTION_MODES.CHECKPOINT_BOUNDARY);
+    assert.equal(normalizeLoadedSettings({ strictCacheMode: true }).injectionMode, INJECTION_MODES.NONE);
+    assert.equal(normalizeLoadedSettings({ injectionMode: INJECTION_MODES.NONE }).injectionMode, INJECTION_MODES.NONE);
+    assert.equal(normalizeLoadedSettings({ injectionMode: INJECTION_MODES.LONG_BOUNDARY }).injectionMode, INJECTION_MODES.LONG_BOUNDARY);
     assert.equal(settings.checkpointInterval, 5);
     assert.equal(settings.longMemoryInterval, 50);
     assert.equal(settings.generationTransport, 'auto');

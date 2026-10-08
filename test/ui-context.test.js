@@ -1,7 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveUIRoot, viewportSize } from '../src/ui-context.js';
-import { buildCheckpointContent, CacheMemoryUI, configTemplate, parseCheckpointSections } from '../src/ui.js';
+import { buildCheckpointContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections } from '../src/ui.js';
+
+test('overview reports expected memory counts, injection size and broken chains locally', () => {
+    const assistants = Array.from({ length: 10 }, (_, index) => ({ floor: index + 1, messageId: `m${index + 1}` }));
+    const summaries = Object.fromEntries(assistants.filter(entry => entry.floor !== 8)
+        .map(entry => [entry.messageId, { floor: entry.floor, status: 'frozen', frozen: true }]));
+    const store = {
+        summaries,
+        checkpoints: [{ id: 'checkpoint-001', startFloor: 1, endFloor: 5, status: 'frozen', frozen: true }],
+        longMemories: [],
+        keepRegistry: { 'KEEP-0001': { status: 'active', sourceFloor: 1 } },
+        injectionSnapshot: { blocks: [{ type: 'checkpoint' }], value: '<CACHE_MEMORY>\n[CHECKPOINT_001]\n中文 memory\n</CACHE_MEMORY>' },
+    };
+    const stats = memoryOverviewStats(store, assistants, { checkpointInterval: 5, longMemoryInterval: 10 });
+    assert.deepEqual(stats.summaries, { actual: 9, expected: 10 });
+    assert.deepEqual(stats.checkpoints, { actual: 1, expected: 2 });
+    assert.deepEqual(stats.longMemories, { actual: 0, expected: 1 });
+    assert.equal(stats.activeKeeps, 1);
+    assert.equal(stats.injectedCheckpoints, 1);
+    assert.ok(stats.estimatedTokens > 0);
+    assert.match(stats.issues.join('\n'), /Summary 缺失[\s\S]*Checkpoint 无法自动生成/);
+    assert.match(stats.issues.join('\n'), /Checkpoint 缺失[\s\S]*Long Memory 无法自动生成/);
+    assert.equal(estimateTokenCount(''), 0);
+});
 
 test('memory manager is a settings tab instead of a second dialog', () => {
     const html = configTemplate();

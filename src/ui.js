@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.14.1';
-import { effectiveInjectionMode } from './cache-control.js?v=1.14.1';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.14.1';
-import { HistoryBackfill } from './history-backfill.js?v=1.14.1';
-import { downloadJson, getAssistantMessages } from './utils.js?v=1.14.1';
-import { collectKeepItems, projectLongFacts, readSection } from './continuity.js?v=1.14.1';
-import { buildStructuredSummary } from './summary-format.js?v=1.14.1';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.14.1';
-import { parseFloorSummary } from './summarizer.js?v=1.14.1';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.15.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.15.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.15.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.15.0';
+import { downloadJson, getAssistantMessages } from './utils.js?v=1.15.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.15.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.15.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.15.0';
+import { parseFloorSummary } from './summarizer.js?v=1.15.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -24,6 +24,86 @@ const CHECKPOINT_SECTIONS = Object.freeze([
     ['openThreads', 'Open Threads', '未解决事项'],
     ['continuityLocks', 'Continuity Locks', '连续性锁'],
 ]);
+
+export function estimateTokenCount(value) {
+    let tokens = 0;
+    let asciiLength = 0;
+    const flushAscii = () => {
+        tokens += Math.ceil(asciiLength / 4);
+        asciiLength = 0;
+    };
+    for (const character of String(value ?? '')) {
+        if (character.codePointAt(0) <= 0x7f) {
+            if (!/\s/.test(character)) asciiLength += 1;
+        } else {
+            flushAscii();
+            if (!/\s/u.test(character)) tokens += 1;
+        }
+    }
+    flushAscii();
+    return tokens;
+}
+
+function completedRanges(latestFloor, interval) {
+    const ranges = [];
+    for (let startFloor = 1; startFloor + interval - 1 <= latestFloor; startFloor += interval) {
+        ranges.push([startFloor, startFloor + interval - 1]);
+    }
+    return ranges;
+}
+
+function compactRanges(ranges) {
+    const labels = ranges.slice(0, 4).map(([start, end]) => `第${start}–${end}层`);
+    return `${labels.join('、')}${ranges.length > labels.length ? ` 等 ${ranges.length} 段` : ''}`;
+}
+
+export function memoryOverviewStats(store, assistants, settings) {
+    const safeStore = {
+        summaries: {}, checkpoints: [], longMemories: [], keepRegistry: {},
+        ...(store && typeof store === 'object' ? store : {}),
+    };
+    const entries = Array.isArray(assistants) ? assistants : [];
+    const checkpointInterval = Math.max(1, Number(settings?.checkpointInterval) || 5);
+    const longMemoryInterval = Math.max(checkpointInterval, Number(settings?.longMemoryInterval) || 50);
+    const latestFloor = entries.at(-1)?.floor ?? 0;
+    const checkpoints = safeStore.checkpoints.filter(isUsableMemory);
+    const longMemories = safeStore.longMemories.filter(isUsableMemory);
+    const checkpointRanges = completedRanges(latestFloor, checkpointInterval);
+    const longRanges = completedRanges(latestFloor, longMemoryInterval);
+    const usableSummaries = entries.filter(entry => safeStore.summaries[entry.messageId] && isUsableMemory(safeStore.summaries[entry.messageId]));
+    const missingCheckpointRanges = checkpointRanges.filter(([start, end]) => !checkpoints.some(item => item.startFloor === start && item.endFloor === end));
+    const missingSummaryFloors = entries.filter(entry => missingCheckpointRanges.some(([start, end]) => entry.floor >= start && entry.floor <= end)
+        && (!safeStore.summaries[entry.messageId] || !isUsableMemory(safeStore.summaries[entry.messageId]))).map(entry => entry.floor);
+    const missingLongRanges = longRanges.filter(([start, end]) => !longMemories.some(item => item.startFloor === start && item.endFloor === end));
+    const longDueThrough = longRanges.at(-1)?.[1] ?? 0;
+    const checkpointGapsBlockingLong = missingCheckpointRanges.filter(([, end]) => end <= longDueThrough);
+    const issues = [];
+    if (missingSummaryFloors.length) {
+        const visible = missingSummaryFloors.slice(0, 8).join('、');
+        issues.push(`Summary 缺失或不可用（第 ${visible}${missingSummaryFloors.length > 8 ? ` 等 ${missingSummaryFloors.length} 层` : ' 层'}），对应 Checkpoint 无法自动生成。`);
+    }
+    if (missingCheckpointRanges.length) {
+        const suffix = checkpointGapsBlockingLong.length ? '，对应 Long Memory 无法自动生成' : '';
+        issues.push(`Checkpoint 缺失或不可用（${compactRanges(missingCheckpointRanges)}）${suffix}。`);
+    }
+    if (missingLongRanges.length && !checkpointGapsBlockingLong.length) {
+        issues.push(`Long Memory 缺失或不可用（${compactRanges(missingLongRanges)}）。`);
+    }
+    const injectionValue = String(safeStore.injectionSnapshot?.value ?? '');
+    const blockCount = (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'checkpoint').length;
+    const textCount = injectionValue.match(/^\[(?:LATEST_)?CHECKPOINT(?:_[^\]\n]+)?(?:\s*\|[^\]\n]+)?\]/gm)?.length ?? 0;
+    return {
+        summaries: { actual: usableSummaries.length, expected: entries.length },
+        checkpoints: { actual: checkpoints.length, expected: checkpointRanges.length },
+        longMemories: { actual: longMemories.length, expected: longRanges.length },
+        activeLongFacts: projectLongFacts(safeStore).facts.filter(item => item.status === 'active').length,
+        activeKeeps: collectKeepItems(safeStore).filter(item => item.status === 'active').length,
+        injectedCheckpoints: Math.max(blockCount, textCount),
+        estimatedTokens: estimateTokenCount(injectionValue),
+        recentBodyWindow: '由 SillyTavern 上下文设置控制',
+        issues,
+    };
+}
 
 export function parseCheckpointSections(content) {
     const text = String(content ?? '');
@@ -209,7 +289,7 @@ export function configTemplate() {
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
                         <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择发送请求时附加到上下文的冻结记忆层。</p></div></div>
-                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入（默认，缓存最安全）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（推荐只读最近 5 层正文时使用）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">长期记忆 + 阶段记忆 + 近期小总结</option></select></label>
+                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入（缓存最安全）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（新安装默认）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">长期记忆 + 阶段记忆 + 近期小总结</option></select></label>
                         <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>严格模式不注入逐层小总结；Checkpoint / Long Memory 提交后更新一次，其余楼层逐字冻结。Long Memory 边界可替换其覆盖的阶段注入，原始记录仍保留。</span></div>
                         <p class="cache-memory-warning" data-cache-mode-warning></p>
                         <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>仅记录 hash、过滤来源和字符数；不记录正文</small></span><input type="checkbox" data-setting="cacheDebug"></label>
@@ -266,7 +346,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.14.1', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.15.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -809,13 +889,13 @@ export class CacheMemoryUI {
         const root = this.element('div', 'cache-memory-manager-page');
         const assistants = this.store.syncMessages(this.getChat());
         const store = this.store.current();
-        const records = assistants.map(entry => store.summaries[entry.messageId]);
-        const facts = projectLongFacts(store).facts.filter(item => item.status === 'active');
-        const keeps = collectKeepItems(store).filter(item => item.status === 'active');
+        const overview = memoryOverviewStats(store, assistants, this.getSettings());
         const stats = [
-            ['assistant 楼层数', assistants.length], ['成功摘要数', records.filter(item => item && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen')).length],
-            ['缺失摘要数', records.filter(item => !item).length], ['失败摘要数', records.filter(item => item?.status === 'failed').length],
-            ['Checkpoint 数', store.checkpoints.length], ['长期有效 Fact 数', facts.length], ['Active KEEP 数', keeps.length],
+            ['摘要：实际 / 应有', `${overview.summaries.actual} / ${overview.summaries.expected}`],
+            ['Checkpoint：实际 / 应有', `${overview.checkpoints.actual} / ${overview.checkpoints.expected}`],
+            ['Long Memory：实际 / 应有', `${overview.longMemories.actual} / ${overview.longMemories.expected}`],
+            ['Active Long Facts', overview.activeLongFacts], ['Active KEEP', overview.activeKeeps],
+            ['当前注入 Checkpoint', overview.injectedCheckpoints], ['CACHE_MEMORY 预计 tokens', `≈ ${overview.estimatedTokens}`],
         ];
         const grid = this.element('div', 'cache-memory-stats');
         for (const [label, value] of stats) {
@@ -823,7 +903,19 @@ export class CacheMemoryUI {
             card.append(this.element('strong', '', String(value)), this.element('span', '', label));
             grid.append(card);
         }
-        root.append(grid);
+        const health = this.element('section', 'cache-memory-health');
+        health.dataset.state = overview.issues.length ? 'incomplete' : 'healthy';
+        health.append(this.element('h4', '', '记忆健康 / 当前注入'));
+        health.append(this.element('strong', '', overview.issues.length ? '记忆链不完整' : '记忆链完整'));
+        if (overview.issues.length) {
+            const list = this.element('ul');
+            for (const issue of overview.issues) list.append(this.element('li', '', issue));
+            health.append(list);
+        } else {
+            health.append(this.element('p', '', '已到期的 Summary、Checkpoint 与 Long Memory 链路完整。'));
+        }
+        health.append(this.element('small', '', `最近正文窗口：${overview.recentBodyWindow}。Token 为本地粗略估算，以实际模型 tokenizer 为准。`));
+        root.append(grid, health);
         const quick = this.element('div', 'cache-memory-actions');
         quick.innerHTML = '<button type="button" class="menu_button cache-memory-primary" data-backfill-action="missing">补齐缺失摘要</button><button type="button" class="menu_button" data-backfill-action="failed">重试失败摘要</button><button type="button" class="menu_button" data-reparse-summaries>重新解析结构化摘要</button>';
         root.append(quick, this.backfillPanel(), this.aggregationPanel());

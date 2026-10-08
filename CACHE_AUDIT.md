@@ -123,3 +123,10 @@ Cache Debug 仅在启用时读主 RP 的发送前事件；独立记忆 API 不�
 - 无标签管道分隔状态栏仅在首段含明确日期或时间时读取第二段为地点；未改变既有字段或 Store 结构。
 - Summary、Checkpoint 与 Long Memory 默认提示词统一将 StoryTime 解释为完整剧情日期时间；旧默认提示词指纹仍会自动迁移，自定义提示词不受影响。
 - 设置页与记忆管理页共用同一窗口宽度；切换到记忆页不再放大窗口。
+
+## v1.15.0 维护审查（2026-10-08）
+
+- 仅在现代 Summary 默认 Prompt 中补充强 KEEP 候选：新增持续监控/调查/追踪，并明确已有 KEEP 或 Long Fact 不重复创建。输出结构、ID 和证据规则未改。
+- 新安装默认启用严格缓存的 Checkpoint Boundary。载入已有设置时，显式注入选择原样保留；旧设置如缺少该字段，按旧默认 `NONE` 处理。
+- 概览页本地计算三层记忆实际/应有数、Active Fact/KEEP、已注入 Checkpoint 数和 CACHE_MEMORY 粗略 token；Summary→Checkpoint 或 Checkpoint→Long 缺口会显示“记忆链不完整”。不读取或修改 ST 正文窗口设置。
+- Era Memory 未增加；Long Memory、UPDATED_FACTS、RETIRED_FACTS 和去重架构保持不变。
