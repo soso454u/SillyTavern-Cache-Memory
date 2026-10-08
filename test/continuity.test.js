@@ -278,6 +278,22 @@ test('manual fact edits rebuild the visible projection and evidence-based retire
     assert.equal(store.current().longMemories[0].factUpdates[0].text, '陆雾尚欠江珩两笔债务');
 });
 
+test('inline fact edits preserve fact identity and source metadata', () => {
+    const { store } = fixture();
+    store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 10, memoryKind: 'facts',
+        storyStartTime: '2025/01/02 09:16', storyEndTime: '2025/01/02 12:24',
+        content: '[LONG_MEMORY]\n- 【陆雾｜债务】陆雾尚欠江珩一笔债务',
+        factUpdates: [{ id: 'fact-debt', action: 'add', text: '【陆雾｜债务】陆雾尚欠江珩一笔债务' }], status: 'frozen', frozen: true });
+    store.updateFact('fact-debt', '【陆雾｜债务】陆雾尚欠江珩两笔债务');
+    const fact = projectLongFacts(store.current()).facts[0];
+    assert.equal(fact.id, 'fact-debt');
+    assert.equal(fact.sourceId, 'long-001');
+    assert.equal(fact.storyStartTime, '2025/01/02 09:16');
+    assert.match(fact.text, /两笔债务/);
+    assert.match(store.current().longMemories[0].content, /两笔债务/);
+    assert.equal(store.current().longMemories[0].status, 'manual-edited');
+});
+
 test('non-strict KEEP and new summaries are available before the first checkpoint without a recent-count gap', () => {
     const { store } = fixture();
     addSummary(store, 1, '刚刚作出的约定');

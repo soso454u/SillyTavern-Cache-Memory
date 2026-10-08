@@ -294,16 +294,24 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.12.0');
+    assert.equal(PLUGIN_VERSION, '1.13.0');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);
     assert.deepEqual([settings.summaryMaxLength, settings.checkpointMaxLength, settings.longMemoryMaxLength], [350, 1000, 2200]);
     assert.match(DEFAULT_PROMPTS.summary, /\[State\][\s\S]*\[Open\]/);
     assert.match(DEFAULT_PROMPTS.summary, /keep-id 由插件分配/);
+    for (const prompt of Object.values(DEFAULT_PROMPTS)) {
+        assert.match(prompt, /【第三方客观记录】/);
+        assert.match(prompt, /人物自述、判断、猜测、谎言、误会不得升级为客观事实/);
+        assert.match(prompt, /关系未明确时只记录具体行为，关系状态保持未知/);
+        assert.match(prompt, /不替人物得出统一关系结论/);
+    }
     assert.match(DEFAULT_PROMPTS.checkpoint, /\[RESOLVED_KEEP\][\s\S]*NEW_SUMMARIES 中的逐字证据[\s\S]*\[SUPERSEDED_KEEP\]/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /【时间与地点】[\s\S]*阶段剧情时间范围由插件依据 Summary 元数据维护/);
     assert.doesNotMatch(DEFAULT_PROMPTS.checkpoint, /^\[KEEP\]$/m);
     assert.match(DEFAULT_PROMPTS.longMemory, /\[UPDATED_FACTS\][\s\S]*\[RETIRED_FACTS\]/);
+    assert.match(DEFAULT_PROMPTS.longMemory, /【时间】[\s\S]*不得推算缺失时间/);
     const custom = normalizeSettings({ timeoutMs: 60000, prompts: { summary: '自定义模板' } });
     assert.equal(custom.timeoutMs, 60000);
     assert.equal(custom.prompts.summary, '自定义模板');

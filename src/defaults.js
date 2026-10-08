@@ -1,6 +1,6 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.12.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.13.0';
 
-export const PLUGIN_VERSION = '1.12.0';
+export const PLUGIN_VERSION = '1.13.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -875,6 +875,16 @@ UPDATED_FACTS 与 RETIRED_FACTS 的证据必须从 NEW_SUMMARIES 中逐字复制
 无退休写无。`,
 });
 
+const THIRD_PARTY_OBJECTIVE_RULES = `【第三方客观记录】
+
+- 只记录正文明确发生、明确说出或明确成立的信息。
+- 人物自述、判断、猜测、谎言、误会不得升级为客观事实，必须保留信息来源与人物认知归属。
+- 正文明示的心理可以记录，但必须写明“谁明确想到 / 感到 / 决定”，不得从该心理继续推断隐藏动机、关系或结果。
+- 关系只依据正文明确身份、称谓、约定或正式关系变化判定。
+- 接吻、性行为、暧昧、照顾、嫉妒、争吵、控制、同床等行为不得自动推断爱情、恋爱、和好、依赖、占有、臣服、关系升温或恶化。
+- 关系未明确时只记录具体行为，关系状态保持未知。
+- 人物之间认知不一致时分别记录各自认知，不替人物得出统一关系结论。`;
+
 export const DEFAULT_PROMPTS = Object.freeze({
     summary: `你是长期 RP 剧情连续性的事实记录员。
 
@@ -891,6 +901,8 @@ export const DEFAULT_PROMPTS = Object.freeze({
 [SOURCE_METADATA] 插件从完整 assistant message.mes 中提取的明确剧情时间与地点；“无”表示没有明确值。
 [SUMMARY_SOURCE] 按现有过滤策略得到的摘要正文。
 StoryTime / Location 只能照录 SOURCE_METADATA，不得从上下文推算或补全。
+
+${THIRD_PARTY_OBJECTIVE_RULES}
 
 【记录规则】
 
@@ -1044,6 +1056,8 @@ Event 约 140–180 字 / State 约 60–90 字 / Open 0–2 项 / Quote 0–2 �
 任务：
 以上一份仍有效状态为基础，合并本阶段明确新增 / 改变 / 解决的信息，输出新的当前世界状态，并识别本阶段发生的 KEEP 状态变化。
 
+${THIRD_PARTY_OBJECTIVE_RULES}
+
 【继承规则】
 
 - 未变化的重要状态持续继承；本阶段未再次提及不构成失效依据。
@@ -1076,6 +1090,12 @@ Event 约 140–180 字 / State 约 60–90 字 / Open 0–2 项 / Quote 0–2 �
 删除某条历史信息后若会导致无法理解人物当前行动 / 冲突来源 / 边界来源 / 承诺或责任 / 人物认知差，则继续保留。
 
 已经失去当前影响的旧剧情可省略。
+
+【时间与地点】
+
+NEW_SUMMARIES 中存在明确 StoryTime / Location 时，[Current State] 保留阶段结束时最新明确的剧情时间与地点。
+缺失时保持未知，不推算、不补全。
+阶段剧情时间范围由插件依据 Summary 元数据维护，无需在正文重复输出。
 
 【KEEP 状态变化】
 
@@ -1178,6 +1198,8 @@ invalid 属于人工整理状态，模型不自动输出 invalid。
 
 旧事实持续有效时保持原状。
 
+${THIRD_PARTY_OBJECTIVE_RULES}
+
 【长期保存范围】
 
 稳定身份与明确关系 / 长期偏好、禁忌、原则、规则与边界 / 重大关系转折及必要原因 / 已成立的重要承诺、誓言与持续责任 / 长期目标与计划 / 持续冲突、债务与义务 / 重大秘密及人物知情范围 / 长期谎言、误会与认知差 / 严重伤害、损失及持续后果 / 长期重要物品及归属 / 长期重要地点、身份、制度与规则 / 持续影响人物选择和剧情逻辑的重大事件。
@@ -1189,6 +1211,12 @@ invalid 属于人工整理状态，模型不自动输出 invalid。
 
 KEEP 中的事项只有在其内容已经形成稳定长期事实时，才可能进入 Long Memory。
 “尚待发生 / 等待结果 / 当前未完成”本身不构成长事实。
+
+【时间】
+
+Long Memory 的剧情时间范围由插件元数据维护，无需在每条长期事实中重复日期。
+某个明确日期 / 时间本身具有长期剧情意义时，在对应 FACT 正文中保留。
+不得推算缺失时间。
 
 【新增事实】
 
@@ -1280,6 +1308,8 @@ UPDATED_FACTS 与 RETIRED_FACTS 的证据必须从 NEW_SUMMARIES 中逐字复制
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
     'f0e493be', '5cff9164', '92f409f1',
+    '22f294b', '2c877097', '70e7b1ca',
+    'ac098231', '381ae99', 'c46c449c',
 ]);
 
 function promptFingerprint(value) {

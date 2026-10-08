@@ -1,12 +1,12 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.12.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.12.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.12.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.12.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.12.0';
-import { collectKeepItems, projectLongFacts } from './continuity.js?v=1.12.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.12.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.12.0';
-import { parseFloorSummary } from './summarizer.js?v=1.12.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.13.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.13.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.13.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.13.0';
+import { downloadJson, getAssistantMessages } from './utils.js?v=1.13.0';
+import { collectKeepItems, projectLongFacts, readSection } from './continuity.js?v=1.13.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.13.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.13.0';
+import { parseFloorSummary } from './summarizer.js?v=1.13.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -15,6 +15,27 @@ const CONFIG_ID = 'cache-memory-config';
 const MANAGER_ID = 'cache-memory-manager';
 const WAND_CONTAINER_ID = 'cache-memory-wand-container';
 const WAND_ENTRY_ID = 'cache-memory-wand-entry';
+
+const CHECKPOINT_SECTIONS = Object.freeze([
+    ['storySoFar', 'Story So Far', '必要前情'],
+    ['characters', 'Characters', '人物状态'],
+    ['currentState', 'Current State', '当前世界状态'],
+    ['secretsKnowledge', 'Secrets & Knowledge', '秘密与认知差'],
+    ['openThreads', 'Open Threads', '未解决事项'],
+    ['continuityLocks', 'Continuity Locks', '连续性锁'],
+]);
+
+export function parseCheckpointSections(content) {
+    const text = String(content ?? '');
+    if (!/^\s*\[CHECKPOINT\]\s*$/im.test(text)) return null;
+    const fields = Object.fromEntries(CHECKPOINT_SECTIONS.map(([key, section]) => [key, readSection(text, section)]));
+    return Object.values(fields).some(Boolean) ? fields : null;
+}
+
+export function buildCheckpointContent(fields) {
+    return ['[CHECKPOINT]', ...CHECKPOINT_SECTIONS.flatMap(([key, section]) => [`[${section}]`, String(fields[key] ?? '').trim() || '无'])]
+        .join('\n');
+}
 
 function notify(type, message) {
     const toaster = resolveUIRoot().toastr;
@@ -212,6 +233,7 @@ export class CacheMemoryUI {
         this.managerState = { summaryStatus: 'all', summaryQuery: '', summaryPage: 1, checkpointPage: 1, factStatus: 'active', factPage: 1, keepStatus: 'active', keepQuery: '', keepPage: 1 };
         this.keepSelection = new Set();
         this.managerExpanded = { summaries: new Set(), checkpoints: new Set(), facts: new Set(), keeps: new Set() };
+        this.managerEditing = null;
         if (summarizer && store && getChat) this.backfill = new HistoryBackfill({
             summarizer, store, getChat, onProgress: () => this.renderBackfillProgress(),
         });
@@ -225,7 +247,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.12.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.13.0', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -405,7 +427,7 @@ export class CacheMemoryUI {
                 return;
             }
             if (event.target.closest('[data-clear-api-key]')) {
-                if (!this.root.confirm('清除当前浏览器保存的缓存记忆 API 密钥？')) return;
+                if (!await this.showPluginDialog({ title: '清除 API 密钥', message: '清除当前浏览器保存的缓存记忆 API 密钥？', confirmLabel: '确认清除', danger: true })) return;
                 this.apiClient.clearApiKey();
                 this.populateSettings();
                 notify('success', 'API 密钥已清除');
@@ -605,8 +627,7 @@ export class CacheMemoryUI {
             if (record?.status === 'failed') {
                 body.append(this.line('错误', formatSummaryFailure(record)));
             } else if (record) {
-                body.append(this.line('剧情时间', record.storyTime), this.line('剧情地点', record.location),
-                    this.line('生成时间', record.createdAt ? formatDate(record.createdAt) : ''),
+                body.append(this.line('剧情时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`),
                     this.line('人物', record.characters), this.line('事件', record.event));
                 if (record.status === 'stale') body.append(this.line('状态', '原消息已编辑或切换了备选回复，请手动重新生成'));
             }
@@ -637,12 +658,13 @@ export class CacheMemoryUI {
             if (!button || !widget) return;
             const { messageId } = widget.dataset;
             if (button.dataset.memoryAction === 'delete') {
-                if (this.root.confirm('删除这条小总结？历史 assistant 正文不会被修改。')) this.store.deleteSummary(messageId);
+                const confirmed = await this.showPluginDialog({ title: '删除楼层摘要', message: '删除这条小总结？历史 assistant 正文不会被修改。', confirmLabel: '确认删除', danger: true });
+                if (confirmed) this.store.deleteSummary(messageId);
             } else if (button.dataset.memoryAction === 'edit') {
                 await this.editSummary(messageId);
             } else if (button.dataset.memoryAction === 'regenerate') {
                 const record = this.store.getSummary(messageId);
-                if (record && record.status !== 'failed' && !this.root.confirm('重新生成会替换这条摘要，但不会修改原始 assistant 正文。继续？')) return;
+                if (record && record.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成楼层摘要', message: '重新生成会替换这条摘要，但不会修改原始 assistant 正文。', confirmLabel: '确认重新生成' })) return;
                 button.disabled = true;
                 try {
                     await this.summarizer.summarizeMessage(messageId, { overwrite: Boolean(record) });
@@ -702,28 +724,19 @@ export class CacheMemoryUI {
         });
     }
 
-    async editSummary(messageId) {
+    editSummary(messageId) {
         const record = this.store.getSummary(messageId);
         if (!record) return;
-        const values = await this.showPluginDialog({ title: `编辑第 ${record.floor} 层 Summary`, confirmLabel: '保存', fields: [
-            { key: 'title', label: 'Title', value: record.title },
-            ...[['characters', 'Characters', 3], ['event', 'Event', 6], ['state', 'State', 4], ['open', 'Open', 4], ['quote', 'Quote', 3], ['keep', 'KEEP', 4]]
-                .map(([key, label, rows]) => ({ key, label, rows, multiline: true, value: record[key] ?? '' })),
-        ] });
-        if (!values) return;
-        const fields = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value).trim()]));
-        fields.title ||= '未命名摘要';
-        fields.storyTime = record.storyTime ?? '';
-        fields.location = record.location ?? '';
-        this.store.updateSummary(messageId, {
-            ...fields,
-            raw: buildStructuredSummary(fields),
-            format: 'structured',
-            manualEdited: true,
-            frozen: true,
-            status: 'manual-edited',
-            editedAt: new Date().toISOString(),
-        });
+        const entries = this.store.syncMessages(this.getChat()).reverse();
+        const index = entries.findIndex(entry => entry.messageId === messageId);
+        this.managerView = 'summaries';
+        this.managerState.summaryStatus = 'all';
+        this.managerState.summaryQuery = '';
+        this.managerState.summaryPage = Math.floor(Math.max(0, index) / 20) + 1;
+        this.managerExpanded.summaries.add(messageId);
+        this.managerEditing = { type: 'summary', id: messageId };
+        this.openManager();
+        this.renderManager();
     }
 
     openManager() {
@@ -900,7 +913,7 @@ export class CacheMemoryUI {
         const projection = projectLongFacts(this.store.current());
         let items = [...projection.facts, ...projection.legacy.map(item => ({ id: item.id, text: item.content, status: 'active',
             floor: item.endFloor, sourceId: item.id, startFloor: item.startFloor, endFloor: item.endFloor,
-            storyStartTime: item.storyStartTime ?? '', storyEndTime: item.storyEndTime ?? '', createdAt: item.createdAt ?? '' }))];
+            storyStartTime: item.storyStartTime ?? '', storyEndTime: item.storyEndTime ?? '', legacy: true }))];
         items = items.filter(item => this.managerState.factStatus === 'active' ? item.status === 'active' : item.status !== 'active');
         const page = this.paginate(items.sort((a, b) => (b.floor ?? 0) - (a.floor ?? 0)), this.managerState.factPage, 15);
         this.managerState.factPage = page.page;
@@ -979,7 +992,7 @@ export class CacheMemoryUI {
         return nav;
     }
 
-    foldCard({ key, group, title, status, time, type, id, renderBody }) {
+    foldCard({ key, group, title, status, type, id, renderBody }) {
         const card = this.element('details', 'cache-memory-card cache-memory-fold-card');
         card.dataset.cardKey = key; card.dataset.cardGroup = group;
         if (type) card.dataset.memoryType = type;
@@ -987,7 +1000,6 @@ export class CacheMemoryUI {
         card.open = this.managerExpanded[group].has(key);
         const summary = this.element('summary', 'cache-memory-card-summary');
         summary.append(this.element('span', 'cache-memory-card-arrow', '▶'), this.element('strong', 'cache-memory-card-title', title), this.element('span', 'cache-memory-card-status', status));
-        if (time) summary.append(this.element('time', '', time));
         card.append(summary);
         const materialize = () => {
             card.querySelector('.cache-memory-card-body')?.remove();
@@ -1004,6 +1016,56 @@ export class CacheMemoryUI {
         return card;
     }
 
+    isEditing(type, id) {
+        return this.managerEditing?.type === type && this.managerEditing?.id === id;
+    }
+
+    inlineEditor(body, fields) {
+        const form = this.element('div', 'cache-memory-inline-editor');
+        for (const field of fields) {
+            const label = this.element('label', 'cache-memory-inline-field');
+            label.append(this.element('span', '', field.label));
+            let input;
+            if (field.options) {
+                input = this.element('select');
+                for (const [value, text] of field.options) {
+                    const option = this.element('option', '', text);
+                    option.value = value;
+                    input.append(option);
+                }
+            } else if (field.multiline) {
+                input = this.element('textarea');
+                input.rows = field.rows ?? 4;
+            } else {
+                input = this.element('input');
+                input.type = 'text';
+            }
+            input.dataset.editField = field.key;
+            input.value = String(field.value ?? '');
+            label.append(input);
+            form.append(label);
+        }
+        const actions = this.element('div', 'cache-memory-actions cache-memory-inline-actions');
+        actions.innerHTML = '<button type="button" class="menu_button cache-memory-primary" data-manager-edit-save>保存</button><button type="button" class="menu_button" data-manager-edit-cancel>取消</button>';
+        form.append(actions);
+        body.append(form);
+    }
+
+    checkpointDisplay(body, item) {
+        const fields = parseCheckpointSections(item.content);
+        if (!fields) {
+            body.append(this.element('div', 'cache-memory-raw-content', item.status === 'failed' ? item.error || item.content : item.content));
+            return;
+        }
+        const sections = this.element('div', 'cache-memory-structured-sections');
+        for (const [key, , label] of CHECKPOINT_SECTIONS) {
+            const section = this.element('section', 'cache-memory-structured-section');
+            section.append(this.element('h5', '', label), this.element('p', '', fields[key] || '无'));
+            sections.append(section);
+        }
+        body.append(sections);
+    }
+
     summaryCard({ entry, record }) {
         const baseStatus = this.statusLabel(record);
         const count = record && record.status !== 'failed' ? [record.title, record.characters, record.event, record.state, record.open, record.quote, record.keep]
@@ -1011,14 +1073,21 @@ export class CacheMemoryUI {
         const limit = this.getSettings().summaryMaxLength;
         const status = count ? `${baseStatus} · ${count}/${limit} 字${count > limit * 1.15 ? ' · 偏长' : ''}` : baseStatus;
         return this.foldCard({ key: entry.messageId, group: 'summaries', type: 'summary', id: entry.messageId,
-            title: `第${entry.floor}层｜${record?.title ?? status}`, status, time: record?.createdAt ? `生成：${formatDate(record.createdAt)}` : '', renderBody: body => {
+            title: `第${entry.floor}层｜${record?.title ?? status}`, status, renderBody: body => {
                 if (!record) body.append(this.element('p', '', '该楼层尚未生成 Summary。'));
                 else if (record.status === 'failed') body.append(this.element('pre', '', formatSummaryFailure(record)));
+                else if (this.isEditing('summary', entry.messageId)) this.inlineEditor(body, [
+                    { key: 'title', label: 'Title', value: record.title },
+                    { key: 'storyTime', label: '剧情时间 StoryTime', value: record.storyTime },
+                    { key: 'location', label: '地点 Location', value: record.location },
+                    ...[['characters', 'Characters', 3], ['event', 'Event', 7], ['state', 'State', 5], ['open', 'Open', 5], ['quote', 'Quote', 4], ['keep', 'KEEP', 5]]
+                        .map(([key, label, rows]) => ({ key, label, rows, multiline: true, value: record[key] })),
+                ]);
                 else {
-                    body.append(this.line('标题', record.title), this.line('人物', record.characters), this.line('剧情时间', record.storyTime),
-                        this.line('剧情地点', record.location), this.line('生成时间', record.createdAt ? formatDate(record.createdAt) : ''), this.line('事件', record.event),
+                    body.append(this.line('标题', record.title), this.line('剧情时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`), this.line('人物', record.characters), this.line('事件', record.event),
                         this.line('状态', record.state), this.line('Open', record.open), this.line('原话', record.quote), this.line('KEEP', record.keep));
                 }
+                if (this.isEditing('summary', entry.messageId)) return;
                 const actions = this.element('div', 'cache-memory-actions');
                 actions.innerHTML = `<button type="button" class="menu_button" data-manager-action="regenerate">${record?.status === 'failed' ? '重试' : record ? '重新生成' : '生成本层记忆'}</button>${record && record.status !== 'failed' ? '<button type="button" class="menu_button" data-manager-action="edit">编辑</button>' : ''}${record ? '<button type="button" class="menu_button" data-manager-action="delete">删除</button>' : ''}`;
                 body.append(actions);
@@ -1026,12 +1095,18 @@ export class CacheMemoryUI {
     }
 
     checkpointCard(item) {
+        const fields = parseCheckpointSections(item.content);
         return this.foldCard({ key: item.id, group: 'checkpoints', type: 'checkpoint', id: item.id,
-            title: `${String(item.id).replace(/^checkpoint-/i, 'CP-').toUpperCase()}｜${item.startFloor}–${item.endFloor}层`, status: this.statusLabel(item), time: item.createdAt ? `生成：${formatDate(item.createdAt)}` : '', renderBody: body => {
+            title: `${String(item.id).replace(/^checkpoint-/i, 'CP-').toUpperCase()}｜${item.startFloor}–${item.endFloor}层`, status: this.statusLabel(item), renderBody: body => {
                 body.append(this.line('剧情时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime),
-                    this.line('当前剧情时间', item.currentStoryTime), this.line('当前地点', item.currentLocation),
-                    this.line('生成时间', item.createdAt ? formatDate(item.createdAt) : ''),
-                    this.element('pre', '', item.status === 'failed' ? item.error || item.content : item.content));
+                    this.line('当前时间｜地点', `${item.currentStoryTime || '未提供'}｜${item.currentLocation || '未提供'}`));
+                if (this.isEditing('checkpoint', item.id)) {
+                    this.inlineEditor(body, fields ? CHECKPOINT_SECTIONS.map(([key, section, label]) => ({
+                        key, label: `${label} · ${section}`, value: fields[key], multiline: true, rows: 5,
+                    })) : [{ key: 'rawContent', label: '原始 Checkpoint（旧格式）', value: item.content, multiline: true, rows: 14 }]);
+                    return;
+                }
+                this.checkpointDisplay(body, item);
                 const actions = this.element('div', 'cache-memory-actions');
                 actions.innerHTML = '<button type="button" class="menu_button" data-manager-action="regenerate">重新生成</button><button type="button" class="menu_button" data-manager-action="edit">编辑</button><button type="button" class="menu_button" data-manager-action="delete">删除</button>';
                 body.append(actions);
@@ -1046,13 +1121,23 @@ export class CacheMemoryUI {
 
     factCard(item) {
         const parts = this.factParts(item.text);
-        return this.foldCard({ key: item.id, group: 'facts', title: `${String(item.id).toUpperCase()}｜${parts.subject}｜${parts.category}`,
+        return this.foldCard({ key: item.id, group: 'facts', type: 'fact', id: item.id, title: `${String(item.id).toUpperCase()}｜${parts.subject}｜${parts.category}`,
             status: item.status === 'active' ? '有效' : item.status === 'retired' ? '已退休' : '已替代', renderBody: body => {
+                if (this.isEditing('fact', item.id)) {
+                    this.inlineEditor(body, item.legacy
+                        ? [{ key: 'rawContent', label: '长期记忆原始内容（旧格式）', value: item.text, multiline: true, rows: 14 }]
+                        : [{ key: 'subject', label: '事实标题 / 人物 / 主题', value: parts.subject },
+                            { key: 'category', label: '类别', value: parts.category },
+                            { key: 'detail', label: '事实正文', value: parts.detail, multiline: true, rows: 7 }]);
+                    return;
+                }
                 body.append(this.line('事实', parts.detail), this.line('来源', `${item.sourceId ?? '未知'}${item.startFloor ? ` · 第${item.startFloor}–${item.endFloor}层` : ''}`));
-                body.append(this.line('剧情时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime),
-                    this.line('生成时间', item.createdAt ? formatDate(item.createdAt) : ''));
+                body.append(this.line('剧情时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime));
                 if (item.reason) body.append(this.line('变更原因', item.reason));
                 if (item.evidence) body.append(this.line('证据', item.evidence));
+                const actions = this.element('div', 'cache-memory-actions');
+                actions.innerHTML = '<button type="button" class="menu_button" data-manager-action="edit">编辑</button>';
+                body.append(actions);
             } });
     }
 
@@ -1077,15 +1162,26 @@ export class CacheMemoryUI {
         select.setAttribute('aria-label', `选择 ${item.id}`);
         const card = this.foldCard({ key: item.id, group: 'keeps', type: 'keep', id: item.id, title: `${String(item.id).toUpperCase()}｜${category}｜${short}`,
             status: labels[item.status] ?? item.status, renderBody: body => {
-                body.append(this.line('内容', item.text), this.line('来源', `${item.sourceFloor ? `第 ${item.sourceFloor} 层` : '未知'}${item.sourceStoryTime ? ` · 剧情 ${item.sourceStoryTime}` : ''}`),
-                    this.line('来源地点', item.sourceLocation), this.line('来源 ID', item.sourceId || '未知'),
-                    this.line('解决剧情时间', item.resolvedStoryTime), this.line('生成时间', item.createdAt ? formatDate(item.createdAt) : ''),
-                    this.line('状态', labels[item.status] ?? item.status));
+                if (this.isEditing('keep', item.id)) {
+                    const status = this.managerEditing?.presetStatus ?? item.status;
+                    this.inlineEditor(body, [
+                        { key: 'text', label: 'KEEP 内容', value: item.text, multiline: true, rows: 6 },
+                        { key: 'status', label: '状态', value: status, options: Object.entries(labels) },
+                        { key: 'reason', label: '状态备注 / 原因', value: item.reason, multiline: true, rows: 3 },
+                        { key: 'evidence', label: '证据备注', value: item.evidence, multiline: true, rows: 3 },
+                        { key: 'replacedBy', label: '替代 KEEP ID', value: item.replacedBy },
+                    ]);
+                    return;
+                }
+                body.append(this.line('内容', item.text),
+                    this.line('来源', `${item.sourceFloor ? `第 ${item.sourceFloor} 层` : '未知'} · 剧情 ${item.sourceStoryTime || '未提供'}｜${item.sourceLocation || '未提供'}`),
+                    this.line('来源 ID', item.sourceId || '未知'), this.line('状态', labels[item.status] ?? item.status));
+                if (item.resolvedStoryTime) body.append(this.line('解决剧情时间', item.resolvedStoryTime));
                 if (item.reason) body.append(this.line('原因', item.reason));
                 if (item.evidence) body.append(this.line('证据', item.evidence));
                 if (item.replacedBy) body.append(this.line('替代项', item.replacedBy));
                 const actions = this.element('div', 'cache-memory-actions');
-                actions.innerHTML = '<button type="button" class="menu_button" data-keep-edit>编辑内容</button><button type="button" class="menu_button" data-keep-single-status="resolved">标记已解决</button><button type="button" class="menu_button" data-keep-single-status="superseded">标记已替代</button><button type="button" class="menu_button" data-keep-single-status="invalid">标记无效</button><button type="button" class="menu_button" data-keep-single-status="active">恢复有效</button>';
+                actions.innerHTML = '<button type="button" class="menu_button" data-manager-action="edit">编辑</button><button type="button" class="menu_button" data-keep-single-status="resolved">标记已解决</button><button type="button" class="menu_button" data-keep-single-status="superseded">标记已替代</button><button type="button" class="menu_button" data-keep-single-status="invalid">标记无效</button><button type="button" class="menu_button" data-keep-single-status="active">恢复有效</button>';
                 body.append(actions);
             } });
         wrapper.append(select, card);
@@ -1122,7 +1218,7 @@ export class CacheMemoryUI {
     }
 
     async startBackfill(options) {
-        if (options.mode === 'all' && !this.root.confirm('强制重新生成会替换所选范围内已有的小总结，冻结的阶段记忆仍保留。继续？')) return;
+        if (options.mode === 'all' && !await this.showPluginDialog({ title: '强制重新生成', message: '强制重新生成会替换所选范围内已有的小总结，冻结的阶段记忆仍保留。', confirmLabel: '确认重新生成' })) return;
         try { await this.backfill.start(options); }
         catch (error) { notify('error', error.message); }
         this.renderManager();
@@ -1132,6 +1228,16 @@ export class CacheMemoryUI {
     async handleManagerClick(event) {
         if (event.target.closest('[data-manager-back]')) return this.closeManager();
         if (event.target === this.manager || event.target.closest('[data-manager-close]')) return this.closeManager();
+        const editCard = event.target.closest('[data-memory-type]');
+        if (editCard && event.target.closest('[data-manager-edit-cancel]')) {
+            this.managerEditing = null;
+            this.renderManager();
+            return;
+        }
+        if (editCard && event.target.closest('[data-manager-edit-save]')) {
+            this.saveInlineEdit(editCard);
+            return;
+        }
         const clearButton = event.target.closest('[data-clear-current-chat]');
         if (clearButton) {
             const confirmed = await this.showPluginDialog({
@@ -1173,7 +1279,7 @@ export class CacheMemoryUI {
             return;
         }
         if (event.target.closest('[data-keep-organize]')) {
-            if (!this.root.confirm('仅在本地规范化 KEEP 文本，并把完全相同的重复项标记为无效；不会调用模型或删除记录。继续？')) return;
+            if (!await this.showPluginDialog({ title: '整理 KEEP', message: '仅在本地规范化 KEEP 文本，并把完全相同的重复项标记为无效；不会调用模型或删除记录。', confirmLabel: '确认整理' })) return;
             const result = this.store.organizeKeepRegistry();
             notify('success', `整理完成：规范化 ${result.normalized} 条，标记精确重复/空白 ${result.duplicates} 条。`);
             this.renderManager();
@@ -1189,19 +1295,10 @@ export class CacheMemoryUI {
             return;
         }
         const keepRow = event.target.closest('[data-memory-type="keep"]');
-        if (keepRow && event.target.closest('[data-keep-edit]')) {
-            const id = keepRow.dataset.memoryId;
-            const item = collectKeepItems(this.store.current()).find(entry => entry.id === id);
-            const text = this.root.prompt(`编辑 ${id}（ID 不会改变）`, item?.text ?? '');
-            if (text !== null && text.trim()) {
-                this.store.updateKeep(id, { text: text.trim() });
-                this.renderManager();
-            }
-            return;
-        }
         const keepStatus = event.target.closest('[data-keep-single-status]');
         if (keepRow && keepStatus) {
-            if (this.applyKeepStatus([keepRow.dataset.memoryId], keepStatus.dataset.keepSingleStatus)) this.renderManager();
+            this.beginInlineEdit('keep', keepRow.dataset.memoryId, { presetStatus: keepStatus.dataset.keepSingleStatus });
+            this.renderManager();
             return;
         }
         const view = event.target.closest('[data-manager-view]');
@@ -1261,7 +1358,7 @@ export class CacheMemoryUI {
             if (!latest || this.backfill.active) return;
             if (action === 'latest') {
                 const record = this.store.getSummary(latest.messageId);
-                if (record && record.status !== 'failed' && !this.root.confirm('重新生成当前最新层摘要？')) return;
+                if (record && record.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成最新摘要', message: '重新生成当前最新层摘要？', confirmLabel: '确认重新生成' })) return;
                 batchButton.disabled = true;
                 try { await this.summarizer.summarizeMessage(latest.messageId, { overwrite: Boolean(record) }); }
                 catch (error) { notify('error', error.message); }
@@ -1299,15 +1396,14 @@ export class CacheMemoryUI {
         const id = card.dataset.memoryId;
         const action = button.dataset.managerAction;
         if (action === 'delete') {
-            if (!this.root.confirm('删除这条记忆？聊天正文不会被修改。')) return;
+            if (!await this.showPluginDialog({ title: '删除记忆', message: '删除这条记忆？聊天正文不会被修改。', confirmLabel: '确认删除', danger: true })) return;
             if (type === 'summary') this.store.deleteSummary(id);
             else this.store.deleteAggregate(type, id);
         } else if (action === 'edit') {
-            if (type === 'summary') await this.editSummary(id);
-            else this.editAggregate(type, id);
+            this.beginInlineEdit(type, id);
         } else if (action === 'regenerate') {
             const existing = type === 'summary' ? this.store.getSummary(id) : true;
-            if (existing && existing.status !== 'failed' && !this.root.confirm('仅按该条记忆的固定来源重新生成并替换它。继续？')) return;
+            if (existing && existing.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成记忆', message: '仅按该条记忆的固定来源重新生成并替换它。继续？', confirmLabel: '确认重新生成' })) return;
             button.disabled = true;
             try { await this.regenerate(type, id); } catch (error) { notify('error', error.message); }
         }
@@ -1320,6 +1416,7 @@ export class CacheMemoryUI {
         this.managerState = { summaryStatus: 'all', summaryQuery: '', summaryPage: 1, checkpointPage: 1, factStatus: 'active', factPage: 1, keepStatus: 'active', keepQuery: '', keepPage: 1 };
         this.keepSelection.clear();
         for (const expanded of Object.values(this.managerExpanded)) expanded.clear();
+        this.managerEditing = null;
         this.backfillFormChatId = null;
     }
 
@@ -1379,32 +1476,63 @@ export class CacheMemoryUI {
     applyKeepStatus(ids, status) {
         const labels = { active: '恢复有效', resolved: '标记已解决', superseded: '标记已替代', invalid: '标记无效' };
         if (!labels[status]) return false;
-        let reason = '';
-        let replacedBy = '';
-        if (status !== 'active') {
-            const answer = this.root.prompt(`${labels[status]}：可填写原因${status === 'superseded' ? '或替代它的 KEEP ID' : ''}`, status === 'invalid' ? '人工整理：不应作为长期 KEEP' : '');
-            if (answer === null) return false;
-            reason = answer.trim() || `人工${labels[status]}`;
-            if (status === 'superseded' && /^KEEP-\d+$/i.test(reason)) replacedBy = reason.toUpperCase();
-        }
-        this.store.setKeepStatus(ids, status, { reason, replacedBy });
+        const reason = status === 'active' ? '' : status === 'invalid' ? '人工整理：不应作为长期 KEEP' : `人工${labels[status]}`;
+        this.store.setKeepStatus(ids, status, { reason });
         notify('success', `${labels[status]} ${ids.length} 条 KEEP。`);
         return true;
     }
 
-    editAggregate(type, id) {
-        const list = type === 'long' ? this.store.current().longMemories : this.store.current().checkpoints;
-        const item = list.find(entry => entry.id === id);
-        if (!item) return;
-        const content = this.root.prompt('记忆内容', item.content);
-        if (content === null) return;
-        this.store.updateAggregate(type, id, {
-            content: content.trim(),
-            manualEdited: true,
-            frozen: true,
-            status: 'manual-edited',
-            editedAt: new Date().toISOString(),
-        });
+    beginInlineEdit(type, id, extra = {}) {
+        const groups = { summary: 'summaries', checkpoint: 'checkpoints', fact: 'facts', keep: 'keeps' };
+        const group = groups[type];
+        if (!group) return;
+        this.managerExpanded[group].add(id);
+        this.managerEditing = { type, id, ...extra };
+    }
+
+    inlineEditValues(card) {
+        return Object.fromEntries([...card.querySelectorAll('[data-edit-field]')]
+            .map(input => [input.dataset.editField, String(input.value ?? '').trim()]));
+    }
+
+    saveInlineEdit(card) {
+        const type = card.dataset.memoryType;
+        const id = card.dataset.memoryId;
+        if (!this.isEditing(type, id)) return;
+        const values = this.inlineEditValues(card);
+        const edited = { manualEdited: true, frozen: true, status: 'manual-edited', editedAt: new Date().toISOString() };
+        if (type === 'summary') {
+            values.title ||= '未命名摘要';
+            this.store.updateSummary(id, { ...values, raw: buildStructuredSummary(values), format: 'structured', ...edited });
+        } else if (type === 'checkpoint') {
+            const content = Object.hasOwn(values, 'rawContent') ? values.rawContent : buildCheckpointContent(values);
+            this.store.updateAggregate('checkpoint', id, { content, ...edited });
+        } else if (type === 'fact') {
+            const legacy = this.store.current().longMemories.find(item => item.id === id && item.memoryKind !== 'facts');
+            if (legacy) this.store.updateAggregate('long', id, { content: values.rawContent, ...edited });
+            else {
+                const subject = values.subject || '未分类';
+                const category = values.category || '长期事实';
+                const detail = values.detail || '无';
+                this.store.updateFact(id, `【${subject}｜${category}】${detail}`);
+            }
+        } else if (type === 'keep') {
+            if (!values.text) {
+                notify('warning', 'KEEP 内容不能为空。');
+                return;
+            }
+            const updates = {
+                text: values.text,
+                status: values.status,
+                reason: values.status === 'active' ? '' : values.reason,
+                evidence: values.status === 'active' ? '' : values.evidence,
+                replacedBy: values.status === 'active' ? '' : values.replacedBy,
+            };
+            this.store.updateKeep(id, updates);
+        }
+        this.managerEditing = null;
+        this.renderMessageMemories();
+        this.renderManager();
     }
 
     async regenerate(type, id) {
@@ -1427,7 +1555,7 @@ export class CacheMemoryUI {
             if (![1, 2, 3, 4].includes(Number(data.version)) || !data.summaries || !Array.isArray(data.checkpoints) || !Array.isArray(data.longMemories)) {
                 throw new Error('不是有效的 Cache Memory JSON');
             }
-            if (!this.root.confirm('导入将替换当前聊天的 Cache Memory 数据，但不会修改聊天正文。继续？')) return;
+            if (!await this.showPluginDialog({ title: '导入记忆数据', message: '导入将替换当前聊天的 Cache Memory 数据，但不会修改聊天正文。', confirmLabel: '确认导入', danger: true })) return;
             this.store.replace(data);
             this.renderManager();
             this.renderMessageMemories();

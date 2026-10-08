@@ -99,3 +99,13 @@ Cache Debug 仅在启用时读主 RP 的发送前事件；独立记忆 API 不�
 - 剧情时间/地点从完整 assistant `message.mes` 的明确标签、字段或数值时间中确定性提取；发送给模型的正文仍来自既有过滤器。模型返回的时间/地点不会覆盖提取值，缺失时保持空字符串。
 - Checkpoint、Long Memory 和 KEEP 的元数据由来源 Summary 确定性投影；Store v3→v4 只补 KEEP 元数据空字段，不调用模型或重建旧 Summary/Checkpoint/Long Memory。
 - Strict Cache、Checkpoint Boundary、注入投影、历史补齐、KEEP Registry 状态机和 API transport 的控制路径未改变。100 项模拟自动测试、语法检查与补丁空白检查通过；未调用真实模型 API。
+
+## v1.13.0 维护审查（2026-10-08）
+
+- Checkpoint 展示改为 Story So Far、Characters、Current State、Secrets & Knowledge、Open Threads、Continuity Locks 六个结构化栏目；KEEP 生命周期增量不进入普通正文栏目。
+- Summary、Checkpoint、Long Fact/旧 Long Memory 与 KEEP 全部在当前展开卡片内切换编辑表单；保存后原地恢复，取消不写 Store。Summary 同步重建 `raw`，Checkpoint 同步重建结构化 `content`，Fact 编辑保持 fact-id 与来源字段不变。
+- 移除 UI 中的浏览器原生 `prompt/confirm`；编辑不调用模型、不改 `message.mes`、不自动重算其他记忆层。Summary 删除或修改 KEEP 仍不回删 Registry。
+- 各记忆页隐藏 `createdAt/updatedAt`，仅展示明确剧情时间、剧情时间范围与地点；缺失值显示“未提供”。数据字段仍原样保留。
+- 默认 Checkpoint/Long Memory 提示词补充时间元数据约束，旧默认提示词指纹会自动迁移，用户自定义提示词保持不变。
+- Summary、Checkpoint、Long Memory 三个默认 Prompt 共用同一段第三方客观记录约束；人物认知不升级为事实，明示心理保留主体归属，具体亲密/冲突行为不自动推导关系结论。
+- 定向语法检查、Checkpoint 结构解析/重建、Fact 身份与来源保持、提示词迁移及相关记忆链路测试通过；未调用真实模型 API。

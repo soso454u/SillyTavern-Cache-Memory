@@ -175,15 +175,25 @@
 .cache-memory-fold-card { padding: 0; overflow: clip; }
 .cache-memory-fold-card > summary { list-style: none; }
 .cache-memory-fold-card > summary::-webkit-details-marker { display: none; }
-.cache-memory-card-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 12px; cursor: pointer; user-select: none; }
+.cache-memory-card-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 12px; cursor: pointer; user-select: none; }
 .cache-memory-card-arrow { color: var(--cm-teal); transition: transform 0.15s ease; }
 .cache-memory-fold-card[open] .cache-memory-card-arrow { transform: rotate(90deg); }
 .cache-memory-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cache-memory-card-status { padding: 3px 7px; border-radius: 999px; background: #eaf8f5; color: var(--cm-teal-dark); font-size: 10px; font-weight: 700; white-space: nowrap; }
-.cache-memory-card-summary time { color: var(--cm-muted); font-size: 11px; white-space: nowrap; }
 .cache-memory-card-body { padding: 0 14px 14px 36px; border-top: 1px solid var(--cm-line); }
 .cache-memory-card-body p { margin: 9px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cache-memory-card-body pre { margin: 12px 0 0; padding: 10px; max-height: 320px; overflow: auto; border-radius: 7px; background: var(--cm-soft); color: #27364a; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.55; }
+.cache-memory-structured-sections { display: grid; gap: 10px; margin-top: 12px; }
+.cache-memory-structured-section { padding: 11px 13px; border: 1px solid var(--cm-line); border-radius: 9px; background: var(--cm-soft); }
+.cache-memory-structured-section h5 { margin: 0 0 6px; color: var(--cm-teal-dark); font-size: 13px; }
+.cache-memory-structured-section p { margin: 0; line-height: 1.65; }
+.cache-memory-raw-content { margin-top: 12px; padding: 11px 13px; border: 1px solid var(--cm-line); border-radius: 9px; background: var(--cm-soft); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.cache-memory-inline-editor { display: grid; gap: 14px; padding-top: 14px; }
+.cache-memory-inline-field { display: grid; gap: 7px; color: #344258; font-size: 13px; font-weight: 750; }
+.cache-memory-inline-field input, .cache-memory-inline-field select, .cache-memory-inline-field textarea { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #b7c4d3; border-radius: 8px; outline: none; background: #fff; color: var(--cm-ink); box-sizing: border-box; font: inherit; font-weight: 500; line-height: 1.55; }
+.cache-memory-inline-field textarea { min-height: 92px; resize: vertical; }
+.cache-memory-inline-field input:focus, .cache-memory-inline-field select:focus, .cache-memory-inline-field textarea:focus { border-color: var(--cm-teal); box-shadow: 0 0 0 3px rgba(8, 127, 114, 0.13); }
+.cache-memory-inline-actions { position: sticky; bottom: 0; justify-content: flex-end; margin-top: 2px; padding: 10px 0 2px; background: linear-gradient(transparent, #fff 22%); }
 .cache-memory-aggregation h4, .cache-memory-aggregation p { margin-top: 0; }
 .cache-memory-aggregate-controls label { display: flex; align-items: center; gap: 8px; color: var(--cm-muted); font-size: 12px; }
 .cache-memory-aggregate-controls input { width: 100px; }
@@ -256,7 +266,6 @@ body.cache-memory-config-open, body.cache-memory-manager-open { overflow: hidden
     .cache-memory-manager-tabs button { min-height: 44px; padding-inline: 12px; }
     .cache-memory-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .cache-memory-card-summary { grid-template-columns: auto minmax(0, 1fr) auto; min-height: 58px; }
-    .cache-memory-card-summary time { display: none; }
     .cache-memory-card-body { padding-left: 14px; }
     .cache-memory-pagination { justify-content: flex-start; }
     .cache-memory-page-status { flex-basis: 100%; order: -1; margin: 0; text-align: center; }

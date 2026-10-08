@@ -1,7 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveUIRoot, viewportSize } from '../src/ui-context.js';
-import { CacheMemoryUI } from '../src/ui.js';
+import { buildCheckpointContent, CacheMemoryUI, parseCheckpointSections } from '../src/ui.js';
+
+test('Checkpoint cards parse and rebuild only the six visible structured sections', () => {
+    const content = '[CHECKPOINT]\n[Story So Far]\n必要前情\n[Characters]\n人物状态\n[Current State]\n当前世界\n[Secrets & Knowledge]\n认知差\n[Open Threads]\n未解决\n[Continuity Locks]\n锁定\n[RESOLVED_KEEP]\nKEEP-0001 | 已解决 | 证据文本';
+    const fields = parseCheckpointSections(content);
+    assert.deepEqual(fields, { storySoFar: '必要前情', characters: '人物状态', currentState: '当前世界', secretsKnowledge: '认知差', openThreads: '未解决', continuityLocks: '锁定' });
+    const rebuilt = buildCheckpointContent({ ...fields, openThreads: '' });
+    assert.match(rebuilt, /\[Open Threads\]\n无/);
+    assert.doesNotMatch(rebuilt, /RESOLVED_KEEP|SUPERSEDED_KEEP/);
+    assert.equal(parseCheckpointSections('旧格式纯文本'), null);
+});
 
 test('UI parent mounting probes document inside try/catch, and cross-origin falls back', () => {
     const root = { document: {} };

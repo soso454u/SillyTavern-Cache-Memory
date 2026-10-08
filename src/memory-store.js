@@ -1,5 +1,5 @@
-import { getAssistantMessages } from './utils.js?v=1.12.0';
-import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.12.0';
+import { getAssistantMessages } from './utils.js?v=1.13.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.13.0';
 
 export const STORE_VERSION = 4;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
@@ -392,6 +392,31 @@ export class MemoryStore {
         store.longMemories.sort((a, b) => a.startFloor - b.startFloor);
         this.persist(record.frozen !== false && record.status !== 'failed' ? (replacesFrozen ? 'manual edit' : 'new long memory') : 'aggregate failed');
         return record;
+    }
+
+    updateFact(id, text) {
+        const store = this.current();
+        const key = String(id ?? '');
+        const value = String(text ?? '').trim();
+        if (!key || !value) return null;
+        for (const memory of store.longMemories) {
+            const update = memory.factUpdates?.find(item => item.id === key && item.action !== 'retire');
+            if (!update) continue;
+            const previousText = String(update.text ?? '');
+            update.text = value;
+            if (previousText && String(memory.content ?? '').includes(previousText)) {
+                memory.content = memory.content.replace(previousText, value);
+            }
+            Object.assign(memory, {
+                manualEdited: true,
+                frozen: true,
+                status: 'manual-edited',
+                editedAt: new Date().toISOString(),
+            });
+            this.persist('manual edit');
+            return { ...update };
+        }
+        return null;
     }
 
     updateAggregate(type, id, updates) {
