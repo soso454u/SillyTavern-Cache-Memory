@@ -108,10 +108,12 @@ function requireIdentity(request, response) {
 
 export async function init(router) {
     router.get('/status', (request, response) => {
+        response.set?.('Cache-Control', 'no-store');
         if (!userId(request)) return response.sendStatus(401);
         return response.json({ id: info.id, version: VERSION, atomic: true, revisionCheck: true, userScoped: true });
     });
     router.get('/memory/:chatId', async (request, response) => {
+        response.set?.('Cache-Control', 'no-store');
         const user = requireIdentity(request, response); if (!user) return;
         const chatId = safeId(request.params.chatId); if (!chatId) return response.status(400).json({ error: 'chatId required' });
         const record = await readFile(user, chatId);

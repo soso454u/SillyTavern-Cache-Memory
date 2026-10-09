@@ -1,12 +1,19 @@
-import { normalizeStore, STORE_VERSION, mergeMemoryStores, memoryContentDigest, applyMemoryTombstones } from './memory-store.js?v=1.22.0';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.0';
-import { projectLongFacts } from './continuity.js?v=1.22.0';
+import { normalizeStore, STORE_VERSION, mergeMemoryStores, memoryContentDigest, applyMemoryTombstones } from './memory-store.js?v=1.22.1';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.1';
+import { projectLongFacts } from './continuity.js?v=1.22.1';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
-export function inspectMemoryImport(data, chatId) {
+export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
     if (!object(data) || !Number.isInteger(data.version) || data.version < 1 || data.version > STORE_VERSION
         || !object(data.summaries) || !Array.isArray(data.checkpoints) || !Array.isArray(data.longMemories)) throw new Error('不是支持的 Cache Memory JSON（v1–v6）');
-    if (!data.chatId || String(data.chatId) !== String(chatId)) throw new Error('JSON 聊天身份缺失或不匹配，已阻止导入');
+    let legacyIdentity = false;
+    if (!data.chatId || String(data.chatId) !== String(chatId)) {
+        let scope; try { scope = JSON.parse(chatId); } catch { /* Non-scoped test/legacy caller. */ }
+        const records = Object.entries(data.summaries);
+        legacyIdentity = data.version <= 4 && Array.isArray(scope) && scope.length === 3 && data.chatId === scope[2] && records.length > 0
+            && records.every(([id, row]) => assistants.some(entry => entry.messageId === id || row?.sourceFingerprint && row.sourceFingerprint === entry.fingerprint));
+        if (!legacyIdentity) throw new Error('JSON 聊天身份缺失或不匹配，已阻止导入');
+    }
     for (const section of ['keepRegistry', 'stateOverrides', 'recovery', 'tombstones']) if (data[section] != null && !object(data[section])) throw new Error(`${section} 格式错误`);
     const guardKeys = value => {
         if (!value || typeof value !== 'object') return;
@@ -16,10 +23,10 @@ export function inspectMemoryImport(data, chatId) {
         }
     };
     guardKeys(data);
-    const warnings = [];
+    const warnings = legacyIdentity ? ['旧版文件的聊天名和全部摘要来源已与当前聊天核对'] : [];
     for (const [id, row] of Object.entries(data.summaries)) {
         if (!object(row) || row.messageId !== id || !Number.isInteger(row.floor) || row.floor < 1) throw new Error(`Summary ${id} 身份或楼层格式错误`);
-        for (const field of ['raw', 'event', 'state', 'open', 'keep', 'quote', 'title', 'characters', 'sourceFingerprint']) if (row[field] != null && typeof row[field] !== 'string') throw new Error(`Summary ${id} 的 ${field} 格式错误`);
+        for (const field of ['raw', 'event', 'state', 'open', 'keep', 'quote', 'title', 'characters', 'sourceFingerprint', 'sourceContentFingerprint']) if (row[field] != null && typeof row[field] !== 'string') throw new Error(`Summary ${id} 的 ${field} 格式错误`);
         if (row.stateChanges != null && (!Array.isArray(row.stateChanges) || row.stateChanges.some(change => !object(change) || !change.id || !['thread', 'state'].includes(change.kind) || typeof change.entity !== 'string' || typeof change.key !== 'string' || typeof change.value !== 'string'))) throw new Error(`Summary ${id} 的状态变化格式错误`);
     }
     for (const section of ['checkpoints', 'longMemories']) {
@@ -53,14 +60,29 @@ export function inspectMemoryImport(data, chatId) {
     return { store, counts, warnings, sourceVersion: data.version };
 }
 
-export function prepareMemoryImport(current, inspected, { mode = 'merge', preference = 'local' } = {}) {
+export function prepareMemoryImport(current, inspected, { mode = 'replace', preference = 'local' } = {}) {
     const result = mode === 'replace' ? { merged: structuredClone(inspected.store), conflicts: [], added: { total: 0 } }
         : preference === 'incoming' ? mergeMemoryStores(inspected.store, current, current.chatId) : mergeMemoryStores(current, inspected.store, current.chatId);
     const merged = result.merged;
-    merged.tombstones = { ...current.tombstones, ...merged.tombstones };
+    if (mode === 'replace') {
+        // A confirmed file restore may undo an earlier deletion. Mark records
+        // omitted by the file explicitly, so an old window cannot re-add them.
+        merged.tombstones = { ...current.tombstones, ...merged.tombstones };
+        for (const [section, type] of [['summaries', 'Summary'], ['checkpoints', 'Checkpoint'], ['longMemories', 'Long Memory'], ['keepRegistry', 'KEEP'], ['stateOverrides', 'stateOverrides']]) {
+            const ids = value => Array.isArray(value) ? value.map(row => row.id) : Object.keys(value);
+            const restored = new Set(ids(merged[section]));
+            for (const id of restored) delete merged.tombstones[`${type}:${id}`];
+            for (const id of ids(current[section])) if (!restored.has(id)) merged.tombstones[`${type}:${id}`] = { reason: 'confirmed-json-restore', deletedAt: new Date().toISOString() };
+        }
+    } else merged.tombstones = { ...current.tombstones, ...merged.tombstones };
+    const incomingRecovery = merged.recovery;
+    merged.recovery = { ...current.recovery, ...incomingRecovery };
+    for (const [id, row] of Object.entries(current.recovery)) {
+        if (incomingRecovery[id] && JSON.stringify(row) !== JSON.stringify(incomingRecovery[id])) merged.recovery[`preserved:${id}:${memoryContentDigest({ recovery: { [id]: row } })}`] = structuredClone(row);
+    }
     applyMemoryTombstones(merged);
-    merged.recovery = { ...current.recovery, ...merged.recovery };
-    merged.recovery[`import-backup:${memoryContentDigest(current)}`] = { kind: 'import-backup', snapshot: structuredClone(current), incoming: structuredClone(inspected.store) };
+    const backup = value => { const copy = structuredClone(value); delete copy.recovery; return copy; };
+    merged.recovery[`import-backup:${memoryContentDigest(current)}`] = { kind: 'import-backup', snapshot: backup(current), incoming: backup(inspected.store) };
     if (current.injectionSnapshot) merged.injectionSnapshot = structuredClone(current.injectionSnapshot);
     else delete merged.injectionSnapshot;
     return result;

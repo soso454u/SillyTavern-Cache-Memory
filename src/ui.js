@@ -1,17 +1,17 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.0';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.0';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.0';
-import { parseFloorSummary } from './summarizer.js?v=1.22.0';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.0';
+import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.1';
+import { effectiveInjectionMode } from './cache-control.js?v=1.22.1';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.22.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.1';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.1';
+import { buildStructuredSummary } from './summary-format.js?v=1.22.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.1';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.1';
+import { parseFloorSummary } from './summarizer.js?v=1.22.1';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.1';
 
-import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.0';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.0';
+import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.1';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -99,6 +99,10 @@ export function memoryOverviewStats(store, assistants, settings) {
     const checkpointRanges = completedRanges(latestFloor, checkpointInterval);
     const longRanges = completedRanges(latestFloor, longMemoryInterval);
     const usableSummaries = entries.filter(entry => safeStore.summaries[entry.messageId] && isUsableMemory(safeStore.summaries[entry.messageId]));
+    const generatedSummaries = entries.filter(entry => {
+        const row = safeStore.summaries[entry.messageId];
+        return row && row.status !== 'failed' && row.frozen !== false && ['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(row[key] ?? '').trim());
+    });
     const missingCheckpointRanges = checkpointRanges.filter(([start, end]) => !checkpoints.some(item => item.startFloor === start && item.endFloor === end));
     const missingSummaryFloors = entries.filter(entry => !safeStore.summaries[entry.messageId]
         || !isUsableMemory(safeStore.summaries[entry.messageId])).map(entry => entry.floor);
@@ -124,7 +128,7 @@ export function memoryOverviewStats(store, assistants, settings) {
     const blockCount = (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'checkpoint').length;
     const textCount = injectionValue.match(/^\[(?:LATEST_)?CHECKPOINT(?:_[^\]\n]+)?(?:\s*\|[^\]\n]+)?\]/gm)?.length ?? 0;
     return {
-        summaries: { actual: usableSummaries.length, expected: entries.length },
+        summaries: { actual: usableSummaries.length, generated: generatedSummaries.length, expected: entries.length },
         checkpoints: { actual: checkpoints.length, expected: checkpointRanges.length },
         longMemories: { actual: longMemories.length, expected: longRanges.length },
         activeLongFacts: projectLongFacts(safeStore).facts.filter(item => isTrackedActive(item)).length,
@@ -241,7 +245,12 @@ function managerPanelTemplate() {
             <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
                 <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button>
             </nav>
-            <details class="cache-memory-backup"><summary>备份、恢复与诊断</summary><p>保留导入、导出和恢复副本；有问题时可读取服务器或检查来源。</p>
+            <div class="cache-memory-manager-toolbar">
+                <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 下载记忆 JSON</button>
+                <button type="button" class="menu_button" data-import-merge><i class="fa-solid fa-upload"></i> 导入记忆 JSON</button>
+                <input type="file" accept="application/json,.json" data-import-merge-file hidden>
+            </div>
+            <details class="cache-memory-backup"><summary>恢复与诊断</summary><p>内部备份和恢复数据会保留；导入不会自动下载文件。</p>
             <div class="cache-memory-actions cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-read-server>重新读取服务器记忆</button>
                 <button type="button" class="menu_button" data-save-memory>保存当前聊天记忆</button>
@@ -250,15 +259,10 @@ function managerPanelTemplate() {
                 <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
             </div><p data-memory-diagnostics></p>
             <div class="cache-memory-manager-toolbar">
-                <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 导出 JSON</button>
                 <button type="button" class="menu_button" data-export-recovery>导出待保存与恢复副本</button>
-                <button type="button" class="menu_button" data-import-merge><i class="fa-solid fa-code-merge"></i> 导入记忆 JSON</button>
-                <input type="file" accept="application/json,.json" data-import-merge-file hidden>
                 <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
             </div>
-            </details>
-            <div class="cache-memory-save-state" data-memory-save-box data-state="unknown">
-                <strong>记忆保存状态：</strong><span data-memory-save-status>状态未知</span>
+            <div>
                 <div class="cache-memory-actions" data-memory-conflict-actions hidden>
                     <button type="button" class="menu_button" data-memory-conflict="merge">合并双方</button>
                     <button type="button" class="menu_button" data-memory-conflict="export">导出冲突副本</button>
@@ -267,6 +271,8 @@ function managerPanelTemplate() {
                 </div>
             </div>
             <div data-conflict-details></div>
+            </details>
+            <div class="cache-memory-save-state" data-memory-save-box data-state="unknown"><strong>记忆保存状态：</strong><span data-memory-save-status>状态未知</span></div>
             <div class="cache-memory-manager-content" data-manager-content></div>
         </section>`;
 }
@@ -444,7 +450,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.22.1', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -890,7 +896,7 @@ export class CacheMemoryUI {
             this.doc.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
             return;
         }
-        const assistants = this.store.syncMessages(this.getChat());
+        const assistants = getAssistantMessages(this.getChat());
         const store = this.store.current();
         const opened = new Set([...this.doc.querySelectorAll('.cache-memory-message[open]')].map(element => element.dataset.messageId));
         this.doc.querySelectorAll('.cache-memory-message').forEach(element => element.remove());
@@ -1102,11 +1108,11 @@ export class CacheMemoryUI {
 
     renderOverview() {
         const root = this.element('div', 'cache-memory-manager-page');
-        const assistants = this.store.syncMessages(this.getChat());
+        const assistants = getAssistantMessages(this.getChat());
         const store = this.store.current();
         const overview = memoryOverviewStats(store, assistants, this.getSettings());
         const stats = [
-            ['摘要：实际 / 应有', `${overview.summaries.actual} / ${overview.summaries.expected}`],
+            ['摘要：已生成 / 应有', `${overview.summaries.generated} / ${overview.summaries.expected}`],
             ['阶段记忆：已生成 / 到期', `${store.checkpoints.filter(item => item.content?.trim() && item.status !== 'failed' && item.frozen !== false).length} / ${overview.checkpoints.expected}`],
             ['长期记忆：已生成 / 到期', `${store.longMemories.filter(item => item.content?.trim() && item.status !== 'failed' && item.frozen !== false).length} / ${overview.longMemories.expected}`],
             ['有效 KEEP', overview.activeKeeps],
@@ -1120,6 +1126,7 @@ export class CacheMemoryUI {
         const health = this.element('section', 'cache-memory-health');
         health.dataset.state = overview.issues.length ? 'incomplete' : 'healthy';
         health.append(this.element('h4', '', '记忆状态'));
+        health.append(this.element('p', '', `摘要已生成 ${overview.summaries.generated} 条，其中有效 ${overview.summaries.actual} 条。已确认保存表示本机与服务器读回一致，生成失败或来源待核对仍需处理。`));
         health.append(this.element('strong', '', overview.issues.length ? '有待处理问题' : '记忆正常'));
         if (overview.issues.length) {
             const details = this.element('details');
@@ -1334,7 +1341,7 @@ export class CacheMemoryUI {
         controls.querySelector('[data-summary-query]').value = this.managerState.summaryQuery;
         root.append(controls);
         const store = this.store.current();
-        let items = this.store.syncMessages(this.getChat()).map(entry => ({ entry, record: store.summaries[entry.messageId] })).reverse();
+        let items = getAssistantMessages(this.getChat()).map(entry => ({ entry, record: store.summaries[entry.messageId] })).reverse();
         items = items.filter(({ record }) => this.managerState.summaryStatus === 'all'
             || (this.managerState.summaryStatus === 'missing' && !record)
             || (this.managerState.summaryStatus === 'failed' && record?.status === 'failed')
@@ -1780,6 +1787,7 @@ export class CacheMemoryUI {
             const action = conflictAction.dataset.memoryConflict;
             if (action === 'export') { downloadJson('cache-memory-conflict.json', bundle, this.doc); return; }
             if (this.isMissingCheckpointBackfillActive() || this.backfill?.active) throw new Error('请先安全停止正在运行的维护');
+            if (!await this.showPluginDialog({ title: '确认恢复冲突记忆', message: `将按${action === 'server' ? '服务器' : '本机'}副本处理差异，保留双方恢复数据，并重新核对服务器。`, confirmLabel: '确认恢复', danger: true })) return;
             if (this.store.current().chatId !== chatId || this.persistence.epoch !== epoch) return;
             const result = await (action === 'merge' ? this.persistence.resolveConflictByMerge(chatId) : this.persistence.resolveConflict(chatId, action));
             if (!result) return;
@@ -1818,7 +1826,7 @@ export class CacheMemoryUI {
         if (clearButton) {
             const confirmed = await this.showPluginDialog({
                 title: '清空当前聊天记忆',
-                message: '只会清空当前聊天的 Summary / Checkpoint / Long Memory / KEEP，不影响原聊天正文和插件设置。清空前保留自动恢复副本；建议同时导出 JSON。',
+                message: '只会清空当前聊天的 Summary / Checkpoint / Long Memory / KEEP，不影响原聊天正文和插件设置。清空前保留内部恢复副本，不会自动下载文件。',
                 confirmLabel: '确认清空',
                 danger: true,
             });
@@ -2136,42 +2144,43 @@ export class CacheMemoryUI {
 
     async importMergeFile(event) {
         const file = event.target.files?.[0]; event.target.value = '';
-        if (!file) return;
+        if (!file || this.importingMemory) return;
+        this.importingMemory = true;
         const chatId = this.store.current().chatId, epoch = this.persistence?.epoch;
-        const initialDigest = memoryContentDigest(this.store.current());
-        const active = () => this.store.current().chatId === chatId && this.persistence?.epoch === epoch && memoryContentDigest(this.store.current()) === initialDigest;
+        const active = () => this.store.current().chatId === chatId && this.persistence?.epoch === epoch;
         try {
-            if (this.persistence?.getState().state === 'conflict') throw new Error('请先解决跨设备冲突，再导入');
-            if (this.isMissingCheckpointBackfillActive() || this.backfill?.active) throw new Error('请先停止维护队列，再导入');
-            const inspected = inspectMemoryImport(JSON.parse(await file.text()), chatId);
+            if (!chatId || !this.persistence) throw new Error('请先打开要恢复的聊天');
+            if (this.isMissingCheckpointBackfillActive() || this.backfill?.active || (this.summarizer.inFlight?.size || this.summarizer.pendingSummaries?.size)) throw new Error('请先停止维护队列，再导入');
+            const inspected = inspectMemoryImport(JSON.parse(await file.text()), chatId, { assistants: getAssistantMessages(this.getChat()) });
             if (!active()) return;
-            const preview = mergeMemoryStores(this.store.current(), inspected.store, chatId);
-            const decision = await this.showPluginDialog({
-                title: `导入记忆 JSON · 来源 v${inspected.sourceVersion}`,
-                message: `${Object.entries(inspected.counts).map(([name, count]) => `${name}：${count}`).join('\n')}\n同 ID 差异：${preview.conflicts.length}\n${inspected.warnings.join('\n')}\n导入前自动备份，不更改插件设置和提示词。`,
-                fields: [ { key: 'mode', label: '导入方式', value: 'merge', options: [['merge', '合并导入（保留无冲突记录）'], ['replace', '替换当前聊天记忆（危险）']] },
-                    { key: 'preference', label: '同 ID 差异选择', value: 'local', options: [['local', '保留本机版本'], ['incoming', '采用 JSON 版本']] } ],
-                confirmLabel: '继续检查',
-            });
-            if (!decision || !active()) return;
-            if (decision.mode === 'replace' || preview.conflicts.length) {
-                const diffs = preview.conflicts.map(row => `${row.type} ${row.id} · 来源${row.current.floor || row.current.startFloor || row.current.sourceFloor || '?'} / ${row.incoming.floor || row.incoming.startFloor || row.incoming.sourceFloor || '?'}层\n本机 ${JSON.stringify(row.current)}\nJSON ${JSON.stringify(row.incoming)}`).join('\n\n');
-                if (!await this.showPluginDialog({ title: decision.mode === 'replace' ? '再次确认替换当前聊天记忆' : '确认导入冲突选择',
-                    message: `模式：${decision.mode === 'replace' ? '替换' : '合并'}；差异采用：${decision.preference === 'incoming' ? 'JSON' : '本机'}。双方会备份到恢复记录。\n${diffs}`,
-                    confirmLabel: '备份并确认导入', danger: true })) return;
-            }
+            const prepared = await this.persistence.prepareRestore(chatId);
             if (!active()) return;
-            const result = prepareMemoryImport(this.store.current(), inspected, decision);
-            downloadJson('cache-memory-before-import.json', { current: this.store.current(), incoming: inspected.store }, this.doc);
-            // No awaits between the final scope check and replacing the in-memory store.
+            const before = structuredClone(this.store.current());
+            const digest = memoryContentDigest(before);
+            if (!await this.showPluginDialog({
+                title: '导入记忆 JSON',
+                message: `文件与当前聊天匹配。\n${Object.entries(inspected.counts).map(([name, count]) => `${name}：${count}`).join('\n')}\n${inspected.warnings.join('\n')}\n确认后按此文件恢复当前聊天记忆，原记忆保留为内部备份。`,
+                confirmLabel: '确认导入',
+            })) return;
+            if (!active()) return;
+            if (memoryContentDigest(this.store.current()) !== digest) throw new Error('确认期间当前记忆发生变化，请重新选择文件');
+            const result = prepareMemoryImport(before, inspected);
+            if (prepared.pending || prepared.conflict) result.merged.recovery[`pre-import:${digest}`] = {
+                kind: 'pre-import-pending', pending: prepared.pending, conflict: prepared.conflict,
+            };
+            this.persistence.acceptRestoreBase(prepared);
+            // Enqueue with restore intent; persistence checks this exact server
+            // baseline again before writing and retains both sides on a race.
             this.summarizer.invalidateContext();
-            this.store.replace(result.merged, 'memory import'); this.store.syncMessages(this.getChat());
-            this.lastMergeReport = { ...result, conflicts: [] };
-            const status = await this.persistence?.flush(chatId);
-            if (this.store.current().chatId !== chatId || this.persistence?.epoch !== epoch) return;
+            this.store.replace(result.merged, 'memory import');
+            this.store.syncMessages(this.getChat());
+            this.lastMergeReport = null;
+            const status = await this.persistence.flush(chatId);
+            if (!active()) return;
             this.renderManager(); this.renderMessageMemories();
-            notify(status?.state === 'confirmed' ? 'success' : 'warning', status?.state === 'confirmed' ? '导入完成并已从服务器读回确认' : `导入副本保留，尚未确认保存：${status?.detail || '状态未知'}`);
-        } catch (error) { notify('error', `导入未完成：${error.message}；原记忆或自动备份保留`); }
+            notify(status.state === 'confirmed' ? 'success' : 'warning', status.state === 'confirmed' ? '导入完成并已从服务器读回确认' : `导入尚未确认，原记忆与导入副本均已保留：${status.detail}`);
+        } catch (error) { notify('error', `导入未完成：${error.message}；原记忆或内部备份保留`); }
+        finally { this.importingMemory = false; }
     }
 
     destroy() {

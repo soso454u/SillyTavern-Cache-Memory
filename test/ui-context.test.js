@@ -6,7 +6,7 @@ import { buildCheckpointContent, CacheMemoryUI, configTemplate, estimateTokenCou
 test('overview reports expected memory counts, injection size and broken chains locally', () => {
     const assistants = Array.from({ length: 10 }, (_, index) => ({ floor: index + 1, messageId: `m${index + 1}` }));
     const summaries = Object.fromEntries(assistants.filter(entry => entry.floor !== 8)
-        .map(entry => [entry.messageId, { floor: entry.floor, status: 'frozen', frozen: true }]));
+        .map(entry => [entry.messageId, { floor: entry.floor, event: 'saved content', status: 'frozen', frozen: true }]));
     const store = {
         summaries,
         checkpoints: [{ id: 'checkpoint-001', startFloor: 1, endFloor: 5, content: '完整阶段记忆', status: 'frozen', frozen: true }],
@@ -15,7 +15,7 @@ test('overview reports expected memory counts, injection size and broken chains 
         injectionSnapshot: { blocks: [{ type: 'checkpoint' }], value: '<CACHE_MEMORY>\n[CHECKPOINT_001]\n中文 memory\n</CACHE_MEMORY>' },
     };
     const stats = memoryOverviewStats(store, assistants, { checkpointInterval: 5, longMemoryInterval: 10 });
-    assert.deepEqual(stats.summaries, { actual: 9, expected: 10 });
+    assert.deepEqual(stats.summaries, { actual: 9, generated: 9, expected: 10 });
     assert.deepEqual(stats.checkpoints, { actual: 1, expected: 2 });
     assert.deepEqual(stats.longMemories, { actual: 0, expected: 1 });
     assert.equal(stats.activeKeeps, 1);

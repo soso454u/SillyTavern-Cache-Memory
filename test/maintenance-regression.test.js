@@ -96,8 +96,9 @@ test('a shared baseline distinguishes a server-only edit from genuinely concurre
     f.remote.summaries.same.event = 'new server content';
     assert.equal((await f.p.reread()).state, 'confirmed'); assert.equal(f.metadata.cache_memory.summaries.same.event, 'new server content');
     f.metadata.cache_memory.summaries.same.event = 'local change'; f.remote.summaries.same.event = 'remote change';
-    assert.equal((await f.p.reread()).state, 'confirmed'); assert.equal(f.remote.summaries.same.event, 'local change');
-    assert.ok(Object.values(f.remote.recovery).some(item => item.kind === 'conflict-backup' && item.remote.summaries.same.event === 'remote change'));
+    assert.equal((await f.p.reread()).state, 'conflict'); assert.equal(f.remote.summaries.same.event, 'remote change');
+    assert.equal(f.p.conflictBundle().local.summaries.same.event, 'local change');
+    assert.equal(f.p.conflictBundle().remote.summaries.same.event, 'remote change');
 });
 
 test('readback metadata differences and disjoint writes are reconciled without manual conflict', async () => {
@@ -111,7 +112,7 @@ test('readback metadata differences and disjoint writes are reconciled without m
     assert.ok(f.remote.summaries.local); assert.ok(f.remote.summaries.other); assert.ok(calls <= 2);
 });
 
-for (const current of ['edit', 'delete']) test(`current-chat ${current} wins delete/edit collisions with automatic recovery copies`, async () => {
+for (const current of ['edit', 'delete']) test(`concurrent ${current} and remote edit/delete retain both sides without an automatic overwrite`, async () => {
     const f = persistenceFixture();
     f.metadata.cache_memory.summaries.same = row('same'); f.remote = structuredClone(f.metadata.cache_memory); f.p.activate('a', f.metadata.cache_memory);
     const edited = current === 'edit' ? f.metadata.cache_memory : f.remote;
@@ -119,10 +120,8 @@ for (const current of ['edit', 'delete']) test(`current-chat ${current} wins del
     edited.summaries.same.event = 'reviewed edit';
     delete deleted.summaries.same; deleted.tombstones['Summary:same'] = { deletedAt: 'explicit deletion' };
     f.p.enqueue(f.metadata.cache_memory); await f.p.flush();
-    assert.equal(f.p.getState().state, 'confirmed'); assert.equal(f.p.conflicts.size, 0);
-    assert.equal(Boolean(f.remote.summaries.same), current === 'edit');
-    assert.equal(Boolean(f.remote.tombstones['Summary:same']), current === 'delete');
-    assert.ok(Object.values(f.remote.recovery).some(item => item.kind === 'conflict-backup'));
+    assert.equal(f.p.getState().state, 'conflict'); assert.equal(f.writes, 0);
+    assert.ok(f.p.conflictBundle().local); assert.ok(f.p.conflictBundle().remote);
 });
 
 test('same-ID timestamps and missing validation metadata alone never choose facts', () => {

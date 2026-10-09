@@ -26,7 +26,7 @@ function aggregateFixture() {
     const chat = Array.from({ length: 10 }, (_, i) => ({ name: '合成人物', mes: `合成正文 ${i + 1}`, gen_started: `g${i}` }));
     const metadata = { cache_memory: createEmptyStore('a') }, reasons = [], calls = [];
     const store = new MemoryStore({ getChatId: () => 'a', getMetadata: () => metadata, saveMetadata: () => {}, onChange: (_, reason) => reasons.push(reason) });
-    for (const entry of getAssistantMessages(chat)) store.addSummary({ ...row(entry.messageId, entry.floor), sourceFingerprint: entry.fingerprint, messageIndex: entry.messageIndex });
+    for (const entry of getAssistantMessages(chat)) store.addSummary({ ...row(entry.messageId, entry.floor), sourceFingerprint: entry.fingerprint, sourceContentFingerprint: entry.contentFingerprint, messageIndex: entry.messageIndex });
     const cp = (start, end, id, prev = null) => {
         const summaries = Object.values(store.current().summaries).filter(item => item.floor >= start && item.floor <= end);
         return { id, startFloor: start, endFloor: end, content: `旧 ${id}`, status: 'frozen', frozen: true,
@@ -143,7 +143,7 @@ test('merge and replace imports keep frozen snapshot and backup both versions, h
         const result = prepareMemoryImport(current, inspected, { mode, preference: 'incoming' });
         assert.equal(result.merged.summaries.m1.event, 'incoming'); assert.equal(result.merged.injectionSnapshot.value, '冻结本机');
         assert.ok(Object.values(result.merged.recovery).some(item => item.kind === 'import-backup'));
-        assert.equal(result.merged.summaries.gone, undefined);
+        assert.equal(Boolean(result.merged.summaries.gone), mode === 'replace');
         assert.equal(Boolean(result.merged.summaries.extra), mode === 'merge');
     }
     assert.equal(current.summaries.m1.event, 'local');

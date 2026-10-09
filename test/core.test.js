@@ -164,6 +164,7 @@ test('message sync keeps identity through array index shifts and marks edited so
         floor: 1,
         messageIndex: 1,
         sourceFingerprint: entry.fingerprint,
+        sourceContentFingerprint: entry.contentFingerprint,
         title: 'frozen',
         status: 'frozen',
     });

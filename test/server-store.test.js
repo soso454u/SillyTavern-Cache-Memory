@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createEmptyStore } from '../src/memory-store.js';
+import { createEmptyStore, memoryContentDigest } from '../src/memory-store.js';
+import { MemoryPersistenceCoordinator } from '../src/persistence.js';
+import { inspectMemoryImport, prepareMemoryImport } from '../src/memory-import.js';
 
 test('server routes enforce authenticated isolation, atomic CAS and reject old schema/wrong chat', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cache-memory-cas-test-'));
@@ -34,6 +36,27 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         const persisted = JSON.parse(await fs.readFile(path.join(directory, 'cache-memory', files[0]), 'utf8'));
         assert.equal(persisted.store.sync.revision, 2); assert.ok(persisted.store.summaries.b);
         assert.ok(persisted.store.tombstones['Summary:gone']);
+        const metadata = { cache_memory: structuredClone(persisted.store) };
+        const coordinator = new MemoryPersistenceCoordinator({ getChatId: () => 'synthetic-chat', getMetadata: () => metadata,
+            readAuthoritativeStore: async () => (await request('GET')).data,
+            commitAuthoritative: async (_, payload) => {
+                const response = await request('POST', payload);
+                if (response.status !== 200) throw Object.assign(new Error(response.data.error), { status: response.status, data: response.data });
+                return response.data;
+            },
+        });
+        coordinator.activate('synthetic-chat', metadata.cache_memory);
+        assert.equal((await coordinator.verify()).state, 'confirmed');
+        const imported = createEmptyStore('synthetic-chat');
+        imported.summaries.restored = { messageId: 'restored', floor: 1, event: 'restored file', status: 'frozen' };
+        metadata.cache_memory = prepareMemoryImport(metadata.cache_memory, inspectMemoryImport(imported, 'synthetic-chat')).merged;
+        coordinator.enqueue(metadata.cache_memory, 'memory import');
+        assert.equal((await coordinator.flush()).state, 'confirmed');
+        const diskReadback = (await request('GET')).data;
+        assert.equal(diskReadback.revision, 3); assert.ok(diskReadback.store.summaries.restored);
+        assert.equal(diskReadback.store.summaries.a, undefined); assert.equal(diskReadback.store.summaries.b, undefined);
+        assert.ok(diskReadback.store.tombstones['Summary:a']);
+        assert.equal(memoryContentDigest(diskReadback.store), memoryContentDigest(metadata.cache_memory));
     } finally {
         if (previous === undefined) delete process.env.SILLYTAVERN_DATA_DIR; else process.env.SILLYTAVERN_DATA_DIR = previous;
         await fs.rm(directory, { recursive: true, force: true });

@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.0';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.0';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.0';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.1';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.1';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.1';
 
 export const STORE_VERSION = 6;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
@@ -190,12 +190,13 @@ export class MemoryStore {
         const assistants = getAssistantMessages(chat);
         let changed = false;
         const matched = new Set();
+        const repairedLegacyIds = new Set();
 
         for (const entry of assistants) {
             let record = store.summaries[entry.messageId];
             let recordKey = entry.messageId;
             if (!record && entry.fingerprint) {
-                const matches = Object.entries(store.summaries).filter(([key, candidate]) => !matched.has(key) && candidate?.sourceFingerprint === entry.fingerprint);
+                const matches = Object.entries(store.summaries).filter(([key, candidate]) => !matched.has(key) && (candidate?.sourceFingerprint === entry.fingerprint || candidate?.sourceContentFingerprint === entry.contentFingerprint));
                 const match = matches.length === 1 ? matches[0] : null;
                 if (match) {
                     recordKey = match[0];
@@ -206,6 +207,8 @@ export class MemoryStore {
                     for (const aggregate of [...store.checkpoints, ...store.longMemories]) {
                         if (aggregate.sourceVersions?.[recordKey]) { aggregate.sourceVersions[entry.messageId] = aggregate.sourceVersions[recordKey]; delete aggregate.sourceVersions[recordKey]; }
                         if (aggregate.summaryIds) aggregate.summaryIds = aggregate.summaryIds.map(id => id === recordKey ? entry.messageId : id);
+                        if (aggregate.invalidSourceIds) aggregate.invalidSourceIds = aggregate.invalidSourceIds.map(id => id === recordKey ? entry.messageId : id);
+                        if (aggregate.invalidSourceVersions?.[recordKey]) { aggregate.invalidSourceVersions[entry.messageId] = aggregate.invalidSourceVersions[recordKey]; delete aggregate.invalidSourceVersions[recordKey]; }
                     }
                     for (const override of Object.values(store.stateOverrides)) if (override.sourceId === recordKey) override.sourceId = entry.messageId;
                     changed = true;
@@ -215,7 +218,17 @@ export class MemoryStore {
             matched.add(entry.messageId);
             const sameContent = record.sourceContentFingerprint && record.sourceContentFingerprint === entry.contentFingerprint;
             const validity = record.sourceContentFingerprint ? (sameContent ? 'valid' : 'changed')
-                : record.sourceFingerprint ? (record.sourceFingerprint === entry.fingerprint ? 'valid' : 'changed') : 'unverified';
+                : record.sourceFingerprint === entry.fingerprint ? 'valid' : 'unverified';
+            // A legacy hash includes swipe and identity metadata, so a mismatch
+            // cannot prove that the source text changed. Retain the old evidence
+            // and remove only the invalidation that depended on that weak hash.
+            if (!record.sourceContentFingerprint && validity === 'unverified' && record.status === 'stale') {
+                this.archive(store, 'legacy-source-validation', record);
+                record.status = record.previousStatus === 'manual-edited' || record.manualEdited ? 'manual-edited' : 'frozen';
+                delete record.previousStatus; delete record.staleAt; delete record.staleReason;
+                repairedLegacyIds.add(entry.messageId);
+                changed = true;
+            }
             if (validity === 'valid' && !record.sourceContentFingerprint) { record.sourceContentFingerprint = entry.contentFingerprint; changed = true; }
             if (sameContent && record.sourceFingerprint !== entry.fingerprint) {
                 for (const override of Object.values(store.stateOverrides)) if (override.sourceId === record.messageId && override.sourceFingerprint === record.sourceFingerprint) override.sourceFingerprint = entry.fingerprint;
@@ -244,6 +257,12 @@ export class MemoryStore {
 
         for (const [id, record] of Object.entries(store.summaries)) {
             if (!matched.has(id) && record.sourceValidity !== 'unmatched') { record.sourceValidity = 'unmatched'; changed = true; }
+        }
+        if (repairedLegacyIds.size) for (const aggregate of [...store.checkpoints, ...store.longMemories]) {
+            if (!aggregate.invalidSourceIds?.some(id => repairedLegacyIds.has(id)) || aggregate.factCorrection) continue;
+            this.archive(store, 'legacy-dependency-validation', aggregate);
+            aggregate.invalidSourceIds = aggregate.invalidSourceIds.filter(id => !repairedLegacyIds.has(id));
+            for (const id of repairedLegacyIds) if (aggregate.invalidSourceVersions) delete aggregate.invalidSourceVersions[id];
         }
         if (assistants.length) changed = this.validateDependencies(store) || changed;
 
@@ -355,12 +374,12 @@ export class MemoryStore {
         const record = store.summaries[previousKey];
         this.archive(store, 'summary', record);
         delete store.summaries[previousKey];
+        const changedContent = record.sourceContentFingerprint && record.sourceContentFingerprint !== entry.contentFingerprint;
         Object.assign(record, {
             messageId: entry.messageId,
             floor: entry.floor,
             messageIndex: entry.messageIndex,
-            status: 'stale',
-            staleAt: new Date().toISOString(),
+            ...(changedContent ? { status: 'stale', staleAt: new Date().toISOString() } : {}),
         });
         store.summaries[entry.messageId] = record;
         for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === previousKey) keep.sourceId = entry.messageId;
@@ -842,8 +861,27 @@ export function mergeMemoryStoresThreeWay(baseValue, localValue, remoteValue, ch
     return { merged, conflicts };
 }
 
-// The user-selected policy: current chat content wins genuinely concurrent
-// changes. Keep remote-only changes and retain recoverable copies automatically.
+// Automatic synchronization only accepts changes that a shared baseline can
+// explain. Keep the explicit recovery policy below for deliberate user choices.
+export function mergeMemoryStoresSafely(base, localValue, remoteValue, chatId = '') {
+    const local = normalizeStore(structuredClone(localValue), chatId);
+    const remote = normalizeStore(structuredClone(remoteValue), chatId);
+    for (const section of ['summaries', 'checkpoints', 'longMemories']) {
+        const list = Array.isArray(local[section]);
+        for (const item of list ? [...local[section]] : Object.values(local[section])) {
+            const id = list ? item.id : item.messageId;
+            const complete = list ? remote[section].find(row => row.id === id) : remote[section][id];
+            if (!(item.status === 'failed' || item.frozen === false || item.startFloor !== undefined && !hasAggregateContent(item)) || !isUsableMemory(complete)) continue;
+            local.recovery[`failed-local:${id}:${fnv1a(JSON.stringify(item))}`] = { kind: 'failed-local', record: structuredClone(item) };
+            if (list) local[section] = local[section].map(row => row.id === id ? structuredClone(complete) : row);
+            else local[section][id] = structuredClone(complete);
+        }
+    }
+    return mergeMemoryStoresThreeWay(base ?? createEmptyStore(chatId), local, remote, chatId);
+}
+
+// Explicit recovery policy only: the selected branch wins concurrent changes.
+// Automatic synchronization uses mergeMemoryStoresSafely instead.
 export function mergeForCurrentChat(base, localValue, remoteValue, chatId = '') {
     const local = normalizeStore(structuredClone(localValue), chatId);
     const remote = normalizeStore(structuredClone(remoteValue), chatId);

@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.22.0';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.0';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.0';
-import { getAssistantMessages } from './src/utils.js?v=1.22.0';
-import { MemoryStore } from './src/memory-store.js?v=1.22.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.22.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.22.0';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.0';
-import { MemoryServerClient } from './src/memory-server.js?v=1.22.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.22.1';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.1';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.1';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.1';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.1';
+import { getAssistantMessages } from './src/utils.js?v=1.22.1';
+import { MemoryStore } from './src/memory-store.js?v=1.22.1';
+import { MemorySummarizer } from './src/summarizer.js?v=1.22.1';
+import { CacheMemoryUI } from './src/ui.js?v=1.22.1';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.1';
+import { MemoryServerClient } from './src/memory-server.js?v=1.22.1';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -133,9 +133,16 @@ const persistence = new MemoryPersistenceCoordinator({
     readAuthoritativeStore: async (chatId, options) => memoryServer.read(chatId, options),
     commitAuthoritative: async (chatId, payload) => memoryServer.commit(chatId, payload),
     authoritativeAvailable: () => memoryServer.available,
-    onStatus: (chatId) => {
+    onStatus: (chatId, status) => {
         if (memoryChatId() !== chatId) return;
-        queueMicrotask(() => ui?.renderMemorySaveState());
+        queueMicrotask(() => {
+            if (memoryChatId() !== chatId) return;
+            ui?.renderMemorySaveState();
+            if (status.state === 'confirmed' || status.state === 'conflict') {
+                ui?.renderManager();
+                ui?.renderMessageMemories();
+            }
+        });
     },
 });
 
@@ -190,7 +197,7 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     if (!chatId) return;
     if (chatId !== activeChatId || serverLoaded) summarizer.invalidateContext();
     if (chatId !== activeChatId || serverLoaded) current = persistence.activate(chatId, current) ?? current;
-    if (memoryServer.available && (chatId !== activeChatId || serverLoaded)) current = await persistence.sync(chatId, current);
+    if (chatId !== activeChatId || serverLoaded) await persistence.verify(chatId);
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     store.persistMigration();
     store.syncMessages(chat);
@@ -201,7 +208,6 @@ async function refreshChatState({ serverLoaded = false } = {}) {
         ui?.cancelMissingCheckpointBackfill({ discard: true });
         activeChatId = chatId;
         updateInjection('chat changed');
-        persistence.verify(chatId);
     } else if (serverLoaded) updateInjection('chat changed');
     else if (!settings.strictCacheMode) updateInjection('history metadata changed');
     nextFrame(() => ui?.renderMessageMemories());
@@ -233,9 +239,9 @@ function bindEvents() {
         schedule(() => summarizer.enqueueLatest(), 100);
     });
     bindEvent(event_types.CHAT_CHANGED, () => schedule(() => refreshChatState({ serverLoaded: true })));
-    bindEvent(event_types.CHAT_LOADED, () => schedule(refreshChatState));
-    bindEvent(event_types.CHARACTER_MESSAGE_RENDERED, () => nextFrame(() => ui?.renderMessageMemories()));
-    bindEvent(event_types.MORE_MESSAGES_LOADED, () => nextFrame(() => ui?.renderMessageMemories()));
+    bindEvent(event_types.CHAT_LOADED, () => schedule(() => refreshChatState({ serverLoaded: true })));
+    bindEvent(event_types.CHARACTER_MESSAGE_RENDERED, () => nextFrame(() => { store.syncMessages(chat); ui?.renderMessageMemories(); }));
+    bindEvent(event_types.MORE_MESSAGES_LOADED, () => nextFrame(() => { store.syncMessages(chat); ui?.renderMessageMemories(); }));
     bindEvent(event_types.MESSAGE_SWIPED, messageIndex => {
         pendingSwipeIndex = Number(messageIndex);
         schedule(() => {
@@ -294,6 +300,7 @@ function initialize() {
         }
     };
     window.addEventListener('online', onlineHandler, { signal: runtimeController.signal });
+    window.addEventListener('focus', onlineHandler, { signal: runtimeController.signal });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') onlineHandler().catch(error => console.warn(LOG_PREFIX, error));
         else persistence.persistPending();

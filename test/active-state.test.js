@@ -94,7 +94,7 @@ test('same Summary request extracts state, no additional calls; disabled mode pr
 test('source edits invalidate dependent CP/Long without deleting earlier summaries or changing source text', () => {
     const chat = [1, 2].map(floor => ({ name: 'A', mes: `正文${floor}`, gen_started: `g${floor}` })), metadata = {};
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata: () => {} });
-    for (const entry of getAssistantMessages(chat)) store.addSummary({ messageId: entry.messageId, sourceFingerprint: entry.fingerprint, floor: entry.floor, messageIndex: entry.messageIndex, event: 'test', status: 'frozen' });
+    for (const entry of getAssistantMessages(chat)) store.addSummary({ messageId: entry.messageId, sourceFingerprint: entry.fingerprint, sourceContentFingerprint: entry.contentFingerprint, floor: entry.floor, messageIndex: entry.messageIndex, event: 'test', status: 'frozen' });
     const versions = Object.fromEntries(Object.values(store.current().summaries).map(item => [item.messageId, summaryVersion(item)]));
     store.addCheckpoint({ id: 'checkpoint-001', startFloor: 1, endFloor: 2, content: 'CP', sourceVersions: versions, status: 'frozen' });
     store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 2, checkpointIds: ['checkpoint-001'], status: 'frozen', content: 'Long' });

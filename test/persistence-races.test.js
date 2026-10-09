@@ -59,7 +59,7 @@ test('hung read releases queue and a later retry confirms normally', async () =>
     f.p.readRemoteStore = read; assert.equal((await f.p.flush()).state, 'confirmed');
 });
 
-test('legacy pending conflicts automatically recover using current chat data after reload', async () => {
+test('legacy pending conflicts survive reload until explicitly resolved', async () => {
     const f = fixture(); add(f.remote, 'one'); f.remote.summaries.one.event = 'remote differs'; add(f.metadata.cache_memory, 'one'); add(f.remote, 'other');
     f.p.conflicts.set('a', { local: structuredClone(f.metadata.cache_memory), remote: structuredClone(f.remote) });
     f.p.setState('a', 'conflict');
@@ -67,9 +67,11 @@ test('legacy pending conflicts automatically recover using current chat data aft
     add(f.metadata.cache_memory, 'two'); f.p.enqueue(f.metadata.cache_memory);
     const reload = new MemoryPersistenceCoordinator(f.options);
     reload.activate('a', f.metadata.cache_memory); await reload.flush();
-    assert.equal(reload.getState().state, 'confirmed'); assert.equal(reload.conflicts.size, 0);
-    assert.ok(f.remote.summaries.two); assert.ok(f.remote.summaries.other); assert.equal(f.remote.summaries.one.event, 'one');
-    assert.ok(Object.values(f.remote.recovery).some(item => item.kind === 'conflict-backup'));
+    assert.equal(reload.getState().state, 'conflict'); assert.equal(reload.conflicts.size, 1);
+    assert.ok(reload.pending.get('a').snapshot.summaries.two);
+    assert.ok(f.remote.summaries.other); assert.equal(f.remote.summaries.one.event, 'remote differs');
+    await reload.resolveConflict('a', 'local');
+    assert.equal(reload.getState().state, 'confirmed'); assert.ok(f.remote.summaries.two);
 });
 
 test('page activation alone cannot confirm pending data', () => {

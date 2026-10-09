@@ -1,4 +1,4 @@
-import { createEmptyStore, memoryContentDigest, mergeForCurrentChat, normalizeStore } from './memory-store.js?v=1.22.0';
+import { memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.22.1';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -28,6 +28,21 @@ function writerId() {
     return `writer-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function normalizeRemote(value, chatId) {
+    if (value?.chatId && String(value.chatId) !== chatId) {
+        let scope; try { scope = JSON.parse(chatId); } catch { /* Non-scoped caller. */ }
+        if (!(Number(value.version) <= 4 && Array.isArray(scope) && scope.length === 3 && value.chatId === scope[2])) throw new Error('服务器记忆的聊天身份不匹配，已停止同步');
+    }
+    return normalizeStore(value, chatId);
+}
+
+function validateAuthoritativeRecord(record, chatId) {
+    if (!record || !Object.hasOwn(record, 'store') || !Number.isInteger(record.revision) || record.revision < 0
+        || record.chatId && record.chatId !== chatId || record.store?.chatId && record.store.chatId !== chatId) throw new Error('权威库返回无法验证的聊天版本');
+    if (!record.store && record.revision !== 0) throw new Error('权威库已有版本但记忆为空，已停止同步');
+    return record;
+}
+
 export class MemoryPersistenceCoordinator {
     constructor({ getChatId, getMetadata, readRemoteStore, saveMetadata, readAuthoritativeStore = null, commitAuthoritative = null, authoritativeAvailable = () => true, storage = null, onStatus = () => {}, timeoutMs = 45000 }) {
         this.getChatId = getChatId;
@@ -40,6 +55,8 @@ export class MemoryPersistenceCoordinator {
         this.storage = storage;
         this.onStatus = onStatus;
         this.writerId = writerId();
+        this.storageKey = typeof storage?.key === 'function' ? `${STORAGE_KEY}:${this.writerId}` : STORAGE_KEY;
+        this.restoredJournals = new Map();
         this.sequence = 0;
         this.timeoutMs = timeoutMs;
         this.epoch = 0;
@@ -56,24 +73,61 @@ export class MemoryPersistenceCoordinator {
 
     restorePending() {
         if (!this.storage) return;
+        const keys = new Set([STORAGE_KEY]);
         try {
-            const entries = JSON.parse(this.storage.getItem(STORAGE_KEY) || '[]');
-            for (const entry of Array.isArray(entries) ? entries : []) {
-                if (!entry?.chatId || !entry?.snapshot) continue;
-                this.pending.set(String(entry.chatId), entry);
-                this.sequence = Math.max(this.sequence, Number(entry.sequence) || 0);
-                if (entry.conflict) this.conflicts.set(String(entry.chatId), entry.conflict);
-                this.states.set(String(entry.chatId), { state: entry.conflict ? MEMORY_SAVE_STATES.CONFLICT : MEMORY_SAVE_STATES.PENDING, detail: '浏览器中有尚未确认写入服务器的记忆', at: new Date().toISOString() });
+            for (let i = 0; i < (this.storage.length ?? 0); i++) {
+                const key = this.storage.key(i);
+                if (key?.startsWith(`${STORAGE_KEY}:`)) keys.add(key);
             }
-        } catch (error) {
-            console.warn('[Cache Memory] Unable to restore pending memory saves:', error);
-        }
+            for (const key of keys) {
+                const raw = this.storage.getItem(key);
+                if (!raw) continue;
+                let entries;
+                try { entries = JSON.parse(raw); } catch (error) { console.warn('[Cache Memory] Pending journal retained:', error); continue; }
+                if (!Array.isArray(entries)) continue;
+                let complete = true;
+                for (const saved of entries) {
+                    if (!saved?.chatId || !saved?.snapshot) { complete = false; continue; }
+                    const id = String(saved.chatId), previous = this.pending.get(id);
+                    let entry = clone(previous?.digest === saved.digest && (previous.conflict || previous.restore) ? previous : saved);
+                    if (previous && previous.digest !== saved.digest) {
+                        const merge = mergeMemoryStoresSafely(previous.baseDigest === saved.baseDigest ? previous.baseSnapshot : null, previous.snapshot, saved.snapshot, id);
+                        entry = { ...previous, snapshot: merge.merged, digest: memoryContentDigest(merge.merged) };
+                        if (merge.conflicts.length || previous.restore || saved.restore || previous.conflict || saved.conflict) {
+                            entry = { ...previous, snapshot: clone(previous.snapshot), conflict: { local: clone(previous.snapshot), remote: clone(saved.snapshot), recordConflicts: merge.conflicts } };
+                            for (const conflict of [previous.conflict, saved.conflict].filter(Boolean)) {
+                                entry.snapshot.recovery ??= {};
+                                const key = `pending-conflict:${memoryContentDigest({ recovery: conflict })}`;
+                                entry.snapshot.recovery[key] = { kind: 'pending-conflict', conflict: clone(conflict) };
+                            }
+                            entry.digest = memoryContentDigest(entry.snapshot);
+                            entry.conflict.local = clone(entry.snapshot);
+                        }
+                    }
+                    this.pending.set(id, entry);
+                    this.sequence = Math.max(this.sequence, Number(entry.sequence) || 0);
+                    if (entry.conflict) this.conflicts.set(id, entry.conflict);
+                    this.states.set(id, { state: entry.conflict ? MEMORY_SAVE_STATES.CONFLICT : MEMORY_SAVE_STATES.PENDING, detail: '浏览器中有尚未确认写入服务器的记忆', at: new Date().toISOString() });
+                }
+                if (complete) this.restoredJournals.set(key, raw);
+            }
+        } catch (error) { console.warn('[Cache Memory] Unable to restore pending memory saves:', error); }
     }
 
     persistPending() {
         if (!this.storage) return true;
         try {
-            this.storage.setItem(STORAGE_KEY, JSON.stringify([...this.pending.values()]));
+            // Each window owns a separate journal. A pagehide in an old window
+            // cannot replace another window's pending snapshots with an empty list.
+            this.storage.setItem(this.storageKey, JSON.stringify([...this.pending.values()]));
+            for (const [key, raw] of this.restoredJournals) {
+                if (key !== this.storageKey && this.storage.getItem(key) === raw) {
+                    if (this.storage.removeItem) this.storage.removeItem(key);
+                    else this.storage.setItem(key, '[]');
+                }
+                this.restoredJournals.delete(key);
+            }
+            if (!this.pending.size) this.storage.removeItem?.(this.storageKey);
             return true;
         } catch (error) {
             console.warn('[Cache Memory] Unable to persist pending memory saves locally:', error);
@@ -115,8 +169,7 @@ export class MemoryPersistenceCoordinator {
         const pending = this.pending.get(id);
         if (pending?.conflict) {
             this.getMetadata().cache_memory = clone(pending.snapshot);
-            this.setState(id, MEMORY_SAVE_STATES.PENDING, '已恢复本机副本，正在按当前聊天内容自动合并');
-            queueMicrotask(() => this.flush(id));
+            this.setState(id, MEMORY_SAVE_STATES.CONFLICT, '已保留未解决冲突的双方副本；请核对后恢复');
             return this.getMetadata().cache_memory;
         }
         if (!pending) {
@@ -139,6 +192,7 @@ export class MemoryPersistenceCoordinator {
 
     async sync(chatId = this.getChatId(), loadedValue = this.getMetadata().cache_memory) {
         const id = String(chatId ?? '');
+        if (this.conflicts.has(id)) return this.getMetadata().cache_memory;
         if (!id || !this.readAuthoritativeStore || !this.authoritativeAvailable() || String(this.getChatId() ?? '') !== id) return loadedValue;
         if (this.pending.has(id)) { await this.flush(id); return String(this.getChatId()) === id ? this.getMetadata().cache_memory : loadedValue; }
         const epoch = this.epoch;
@@ -146,7 +200,7 @@ export class MemoryPersistenceCoordinator {
         const signal = this.beginRead();
         const initialDigest = memoryContentDigest(this.getMetadata().cache_memory);
         try {
-            const record = await withDeadline(() => this.readAuthoritativeStore(id, { signal }), this.timeoutMs);
+            const record = validateAuthoritativeRecord(await withDeadline(() => this.readAuthoritativeStore(id, { signal }), this.timeoutMs), id);
             if (String(this.getChatId()) !== id || epoch !== this.epoch || readSequence !== this.readSequence) return loadedValue;
             if (this.pending.has(id) || memoryContentDigest(this.getMetadata().cache_memory) !== initialDigest) return this.getMetadata().cache_memory;
             if (!record?.store) {
@@ -156,8 +210,8 @@ export class MemoryPersistenceCoordinator {
                     } catch (error) { throw new Error(`迁移备份失败，未迁移：${error.message}`); }
                 }
                 this.baselines.set(id, { digest: memoryContentDigest(normalizeStore(loadedValue, id)), revision: 0, snapshot: clone(normalizeStore(loadedValue, id)) });
-                if (loadedValue) this.enqueue(loadedValue, 'initial authoritative migration');
-                return loadedValue;
+                if (loadedValue) { this.enqueue(loadedValue, 'initial authoritative migration'); await this.flush(id); }
+                return String(this.getChatId()) === id ? this.getMetadata().cache_memory : loadedValue;
             }
             const remote = normalizeStore(clone(record.store), id);
             remote.sync.revision = Number(record.revision || 0);
@@ -186,7 +240,8 @@ export class MemoryPersistenceCoordinator {
 
     reconcileRead(chatId, local, remote, useBaseline = true, authoritative = false) {
         const baseline = useBaseline ? this.baselines.get(chatId)?.snapshot : null;
-        const result = mergeForCurrentChat(baseline ?? createEmptyStore(chatId), local, remote, chatId);
+        const result = mergeMemoryStoresSafely(baseline, local, remote, chatId);
+        if (result.conflicts.length) return this.holdConflict(chatId, local, remote, result.conflicts);
         this.conflicts.delete(chatId);
         this.getMetadata().cache_memory = clone(result.merged);
         this.baselines.set(chatId, { digest: memoryContentDigest(remote), revision: remote.sync.revision, snapshot: clone(remote), authoritative });
@@ -198,9 +253,14 @@ export class MemoryPersistenceCoordinator {
         return this.setState(chatId, MEMORY_SAVE_STATES.CONFIRMED, '已同步当前聊天记忆');
     }
 
+    holdConflict(chatId, local, remote, recordConflicts = []) {
+        this.conflicts.set(chatId, { local: clone(local), remote: clone(remote), recordConflicts: clone(recordConflicts) });
+        return this.setState(chatId, MEMORY_SAVE_STATES.CONFLICT, '服务器与本机存在无法安全判定的变化；双方副本已保留，未覆盖服务器');
+    }
+
     async verify(chatId = this.getChatId()) {
         const id = String(chatId ?? '');
-        if (!id) return this.getState(id);
+        if (!id || this.conflicts.has(id)) return this.getState(id);
         if (this.readAuthoritativeStore && this.authoritativeAvailable()) return this.sync(id, this.getMetadata().cache_memory).then(() => this.getState(id));
         if (this.pending.has(id)) return this.flush(id);
         if (String(this.getChatId() ?? '') !== id) return this.getState(id);
@@ -211,7 +271,7 @@ export class MemoryPersistenceCoordinator {
         const localDigest = memoryContentDigest(local);
         let remote;
         try {
-            remote = normalizeStore(await withDeadline(() => this.readRemoteStore(id, { signal }), this.timeoutMs), id);
+            remote = normalizeRemote(await withDeadline(() => this.readRemoteStore(id, { signal }), this.timeoutMs), id);
         } catch (error) {
             if (!active()) return this.getState(id);
             this.setState(id, MEMORY_SAVE_STATES.FAILED, `无法验证服务器持久化状态：${error.message}`);
@@ -234,6 +294,35 @@ export class MemoryPersistenceCoordinator {
         return this.getState(id);
     }
 
+    async prepareRestore(chatId = this.getChatId()) {
+        const id = String(chatId ?? ''), epoch = this.epoch;
+        if (this.running.has(id)) await this.running.get(id);
+        if (!id || String(this.getChatId()) !== id || this.epoch !== epoch) throw new Error('聊天已切换，未准备导入');
+        const localDigest = memoryContentDigest(this.getMetadata().cache_memory);
+        const sequence = this.pending.get(id)?.sequence;
+        const authority = Boolean(this.readAuthoritativeStore && this.authoritativeAvailable());
+        const record = await withDeadline(() => authority ? this.readAuthoritativeStore(id) : this.readRemoteStore(id), this.timeoutMs);
+        if (String(this.getChatId()) !== id || this.epoch !== epoch || memoryContentDigest(this.getMetadata().cache_memory) !== localDigest
+            || this.pending.get(id)?.sequence !== sequence) throw new Error('读取期间记忆发生变化，请重新选择文件');
+        if (authority) validateAuthoritativeRecord(record, id);
+        const remote = normalizeRemote(clone(authority ? record.store : record), id);
+        if (authority) remote.sync.revision = record.revision;
+        return { chatId: id, epoch, localDigest, sequence, authority, remote,
+            pending: clone(this.pending.get(id)), conflict: clone(this.conflicts.get(id)) };
+    }
+
+    acceptRestoreBase(prepared) {
+        const id = prepared.chatId;
+        if (String(this.getChatId()) !== id || this.epoch !== prepared.epoch || this.running.has(id)
+            || memoryContentDigest(this.getMetadata().cache_memory) !== prepared.localDigest
+            || this.pending.get(id)?.sequence !== prepared.sequence) throw new Error('确认期间当前记忆发生变化，请重新选择文件');
+        // Called only after explicit file confirmation; the caller first retains
+        // any pending/conflict branches inside the new import's recovery data.
+        this.baselines.set(id, { digest: memoryContentDigest(prepared.remote), revision: prepared.remote.sync.revision,
+            snapshot: clone(prepared.remote), authoritative: prepared.authority });
+        this.conflicts.delete(id); this.pending.delete(id);
+    }
+
     enqueue(value, reason = 'memory changed') {
         const snapshot = normalizeStore(clone(value), value?.chatId || this.getChatId());
         const chatId = String(snapshot.chatId ?? '');
@@ -252,6 +341,7 @@ export class MemoryPersistenceCoordinator {
             baseDigest: previous?.baseDigest ?? baseline?.digest ?? memoryContentDigest(snapshot),
             baseSnapshot: previous?.baseSnapshot ?? baseline?.snapshot ?? clone(snapshot),
             reason,
+            restore: reason === 'memory import' || Boolean(previous?.restore),
             sequence: ++this.sequence,
             queuedAt: new Date().toISOString(),
         };
@@ -283,13 +373,14 @@ export class MemoryPersistenceCoordinator {
             const stillActive = () => String(this.getChatId() ?? '') === chatId && epoch === this.epoch;
             const useAuthority = Boolean(this.readAuthoritativeStore && this.commitAuthoritative && this.authoritativeAvailable());
             const restoredConflict = this.conflicts.get(chatId) ?? entry.conflict;
+            if (restoredConflict) return this.setState(chatId, MEMORY_SAVE_STATES.CONFLICT, '冲突副本已保留，等待明确恢复；未覆盖服务器');
             this.setState(chatId, MEMORY_SAVE_STATES.SAVING, '正在核对服务器版本并保存');
             let remote;
             let authoritativeRecord = null;
             try {
                 const authoritative = await withDeadline(() => useAuthority ? this.readAuthoritativeStore(chatId) : this.readRemoteStore(chatId), this.timeoutMs);
-                authoritativeRecord = useAuthority ? authoritative : null;
-                remote = normalizeStore(useAuthority ? authoritative?.store : authoritative, chatId);
+                authoritativeRecord = useAuthority ? validateAuthoritativeRecord(authoritative, chatId) : null;
+                remote = normalizeRemote(useAuthority ? authoritative?.store : authoritative, chatId);
                 if (useAuthority) remote.sync.revision = Number(authoritativeRecord?.revision || 0);
             } catch (error) {
                 if (!stillActive()) return this.getState(chatId);
@@ -304,6 +395,7 @@ export class MemoryPersistenceCoordinator {
             if (this.pending.get(chatId)?.sequence !== entry.sequence) continue;
             const remoteDigest = memoryContentDigest(remote);
             if (remoteDigest === entry.digest && !restoredConflict) {
+                this.getMetadata().cache_memory = clone(remote);
                 this.pending.delete(chatId);
                 this.persistPending();
                 this.baselines.set(chatId, { digest: remoteDigest, revision: authoritativeRecord?.revision ?? remote.sync.revision, snapshot: clone(remote), authoritative: useAuthority });
@@ -312,8 +404,10 @@ export class MemoryPersistenceCoordinator {
             }
             const firstAuthoritativeWrite = Boolean(useAuthority && !authoritativeRecord?.store
                 && Number(this.baselines.get(chatId)?.revision ?? 0) === 0);
-            if (!firstAuthoritativeWrite) {
-                const result = mergeForCurrentChat(restoredConflict ? null : entry.baseSnapshot, entry.snapshot, remote, chatId);
+            if (entry.restore && remoteDigest !== entry.baseDigest) return this.holdConflict(chatId, entry.snapshot, remote);
+            if (!firstAuthoritativeWrite && !entry.restore) {
+                const result = mergeMemoryStoresSafely(entry.baseSnapshot, entry.snapshot, remote, chatId);
+                if (result.conflicts.length) return this.holdConflict(chatId, entry.snapshot, remote, result.conflicts);
                 this.conflicts.delete(chatId); delete entry.conflict;
                 if (memoryContentDigest(result.merged) !== entry.digest || remoteDigest !== entry.baseDigest) {
                     if (++rebases > 3) return this.setState(chatId, MEMORY_SAVE_STATES.PENDING, '其他窗口仍在保存，本机改动已保留；稍后重试保存');
@@ -365,14 +459,16 @@ export class MemoryPersistenceCoordinator {
                     if (!stillActive()) return this.getState(chatId);
                     if (!result?.record?.store || !Number.isInteger(result.record.revision)) throw new Error('权威库未返回有效提交确认');
                     if (memoryContentDigest(result.record.store) !== memoryContentDigest(desired)) throw new Error('权威库返回内容与待保存快照不同；副本保留，请检查或更新服务端插件');
-                    const readback = await withDeadline(() => this.readAuthoritativeStore(chatId), this.timeoutMs);
+                    const readback = validateAuthoritativeRecord(await withDeadline(() => this.readAuthoritativeStore(chatId), this.timeoutMs), chatId);
                     if (!stillActive()) return this.getState(chatId);
                     if (!readback?.store || readback.revision < result.record.revision) throw new Error('服务器未读回已提交版本，本机副本保留');
                     if (readback.revision !== result.record.revision || memoryContentDigest(readback.store) !== memoryContentDigest(result.record.store)) {
                         const latestRemote = normalizeStore(clone(readback.store), chatId);
                         latestRemote.sync.revision = readback.revision;
                         const latest = this.pending.get(chatId);
-                        const comparison = mergeForCurrentChat(entry.baseSnapshot, latest?.snapshot ?? entry.snapshot, latestRemote, chatId);
+                        if (entry.restore) return this.holdConflict(chatId, latest?.snapshot ?? entry.snapshot, latestRemote);
+                        const comparison = mergeMemoryStoresSafely(entry.snapshot, latest?.snapshot ?? entry.snapshot, latestRemote, chatId);
+                        if (comparison.conflicts.length) return this.holdConflict(chatId, latest?.snapshot ?? entry.snapshot, latestRemote, comparison.conflicts);
                         if (++rebases > 3) return this.setState(chatId, MEMORY_SAVE_STATES.PENDING, '服务器仍在更新，本机副本保留；稍后重试保存');
                         latest.snapshot = comparison.merged; latest.digest = memoryContentDigest(comparison.merged);
                         latest.baseSnapshot = clone(latestRemote); latest.baseDigest = memoryContentDigest(latestRemote);
@@ -408,7 +504,7 @@ export class MemoryPersistenceCoordinator {
             }
             let verified;
             try {
-                verified = normalizeStore(await withDeadline(() => this.readRemoteStore(chatId), this.timeoutMs), chatId);
+                verified = normalizeRemote(await withDeadline(() => this.readRemoteStore(chatId), this.timeoutMs), chatId);
             } catch (error) {
                 if (!stillActive()) return this.getState(chatId);
                 this.setState(chatId, MEMORY_SAVE_STATES.FAILED, `SillyTavern 未报告结果，且服务器读回失败：${error.message}`);
@@ -422,7 +518,9 @@ export class MemoryPersistenceCoordinator {
                     return this.getState(chatId);
                 }
                 const latest = this.pending.get(chatId);
-                const result = mergeForCurrentChat(entry.baseSnapshot, latest?.snapshot ?? entry.snapshot, verified, chatId);
+                if (entry.restore) return this.holdConflict(chatId, latest?.snapshot ?? entry.snapshot, verified);
+                const result = mergeMemoryStoresSafely(entry.snapshot, latest?.snapshot ?? entry.snapshot, verified, chatId);
+                if (result.conflicts.length) return this.holdConflict(chatId, latest?.snapshot ?? entry.snapshot, verified, result.conflicts);
                 if (++rebases > 3) return this.setState(chatId, MEMORY_SAVE_STATES.PENDING, '读回时其他窗口仍在更新，本机改动已保留；稍后重试');
                 latest.snapshot = result.merged; latest.digest = memoryContentDigest(result.merged);
                 latest.baseSnapshot = clone(verified); latest.baseDigest = verifiedDigest;
@@ -448,7 +546,8 @@ export class MemoryPersistenceCoordinator {
 
     async reread(chatId = this.getChatId()) {
         const id = String(chatId ?? ''), epoch = this.epoch, sequence = ++this.readSequence;
-        if (String(this.getChatId()) !== id) return this.getState(id);
+        if (String(this.getChatId()) !== id || this.conflicts.has(id)) return this.getState(id);
+        if (this.pending.has(id)) return this.flush(id);
         const signal = this.beginRead();
         const initial = memoryContentDigest(this.getMetadata().cache_memory);
         try {
@@ -456,7 +555,8 @@ export class MemoryPersistenceCoordinator {
             const record = await withDeadline(() => authority ? this.readAuthoritativeStore(id, { signal }) : this.readRemoteStore(id, { signal }), this.timeoutMs);
             if (String(this.getChatId()) !== id || epoch !== this.epoch || sequence !== this.readSequence) return this.getState(id);
             if (memoryContentDigest(this.getMetadata().cache_memory) !== initial) return this.getState(id);
-            const remote = normalizeStore(clone(authority ? record?.store : record), id);
+            if (authority) validateAuthoritativeRecord(record, id);
+            const remote = normalizeRemote(clone(authority ? record?.store : record), id);
             if (authority) remote.sync.revision = Number(record?.revision || 0);
             const local = normalizeStore(clone(this.getMetadata().cache_memory), id);
             if (memoryContentDigest(remote) !== memoryContentDigest(local)) {
@@ -464,7 +564,7 @@ export class MemoryPersistenceCoordinator {
                 return this.pending.has(id) && !this.conflicts.has(id) ? this.flush(id) : this.getState(id);
             }
             this.conflicts.delete(id); this.pending.delete(id); this.persistPending();
-            this.baselines.set(id, { digest: initial, revision: remote.sync.revision, snapshot: clone(remote) });
+            this.baselines.set(id, { digest: initial, revision: remote.sync.revision, snapshot: clone(remote), authoritative: authority });
             return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已同步：服务器读回与本机一致');
         } catch (error) {
             if (String(this.getChatId()) !== id || epoch !== this.epoch || sequence !== this.readSequence) return this.getState(id);
@@ -480,12 +580,17 @@ export class MemoryPersistenceCoordinator {
         const authority = Boolean(this.readAuthoritativeStore && this.authoritativeAvailable());
         const record = await withDeadline(() => authority ? this.readAuthoritativeStore(id) : this.readRemoteStore(id), this.timeoutMs);
         if (String(this.getChatId()) !== id || epoch !== this.epoch) return null;
-        const fresh = normalizeStore(clone(authority ? record?.store : record), id);
+        if (authority) validateAuthoritativeRecord(record, id);
+        const fresh = normalizeRemote(clone(authority ? record?.store : record), id);
         if (authority) fresh.sync.revision = Number(record?.revision || 0);
         // Read the actual current chat after the asynchronous fetch. A normal
         // validation pass or a new disjoint server record must not restart a dialog.
         const local = normalizeStore(clone(this.getMetadata().cache_memory), id);
-        const result = preference === 'server' ? mergeForCurrentChat(null, fresh, local, id) : mergeForCurrentChat(null, local, fresh, id);
+        const reviewed = this.conflicts.get(id)?.remote ?? fresh;
+        const decision = preference === 'server' ? mergeForCurrentChat(null, reviewed, local, id) : mergeForCurrentChat(null, local, reviewed, id);
+        const result = mergeMemoryStoresSafely(reviewed, decision.merged, fresh, id);
+        if (result.conflicts.length) { this.holdConflict(id, local, fresh, result.conflicts); return null; }
+        result.added = decision.added ?? { total: 0 };
         const merged = result.merged;
         if (local.injectionSnapshot) merged.injectionSnapshot = { ...clone(local.injectionSnapshot), needsRebuild: true };
         this.getMetadata().cache_memory = merged;
