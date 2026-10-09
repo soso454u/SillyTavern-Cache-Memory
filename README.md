@@ -2,7 +2,11 @@
 
 面向长篇 RP 的追加式剧情记忆扩展。正常 assistant 回复完成后，通过独立 OpenAI-compatible 接口生成楼层摘要，并增量维护 Checkpoint 世界状态、长期事实档案和 KEEP 不可丢失事项。历史记录保留为冻结快照。
 
-当前版本 **v1.19.0**。扩展栏版本号显示在内容右下角；扩展栏默认收起。“记忆管理”现在是设置窗口顶部页签，不再打开第二层弹窗。
+当前版本 **v1.20.0**。扩展栏版本号显示在内容右下角；扩展栏默认收起。“记忆管理”位于设置窗口顶部页签。
+
+v1.20.0 优先修复保存队列丢新版本、迟到响应串聊天、无期限等待与重载冲突丢失；Store v6 在迁移/改写前保留恢复数据。新增未解决事项和角色状态页，复用原 Summary 请求提取带证据的状态变化，支持手动进度纠错、完成、取消、技能升级和临时效果失效。状态每层存储，原 CP5/Long50 冻结时机不变；新增约2800 tokens 的本地估算注入上限，超限只精简注入投影，不裁剪存储。详见 [保存与持续状态审计、测试及限制](PERSISTENCE_AUDIT.md)。
+
+升级后先查看“摘要保存总数”和“有效 / 应有”，两者含义不同；待核对、孤立或暂时未加载的摘要仍保留。异常时先导出 JSON 或“待保存与恢复副本”。任务/状态功能可在设置中关闭，不增加额外模型请求；旧自由文本 Open 可人工登记，不会自动猜测任务已完成。
 
 v1.8.0 将三份用户提供的每层 Summary、阶段 Checkpoint 和 Long Memory 提示词设为默认值。升级时会迁移旧版内置提示词，同时保留用户自定义提示词。
 
@@ -79,7 +83,7 @@ SSE 响应按 `text/event-stream` 读取，通过 `ReadableStream.getReader()` �
 - `eventSource` / `event_types.GENERATION_ENDED`：正常生成完成后排队生成楼层摘要。
 - `CHAT_CHANGED`、`CHAT_LOADED`、`MESSAGE_EDITED`、`MESSAGE_DELETED`、`MESSAGE_SWIPED`：同步当前聊天、消息身份和展示状态。
 - `chat`：只读 assistant 正文和消息属性；插件没有任何写入 `message.mes` 的代码。
-- `chat_metadata` + `saveMetadataDebounced()`：保存当前聊天独有的记忆数据。
+- `chat_metadata` + 官方 `saveMetadata()` + 直接服务器读回：原生模式保存当前聊天的记忆；已启用可选权威库时使用带修订检查的提交接口。
 - `extension_settings` + `saveSettingsDebounced()`：保存全局扩展设置。
 - `setExtensionPrompt()` + `extension_prompt_types.IN_PROMPT`：仅在用户开启注入时添加 system 记忆块；严格模式由持久化冻结快照控制内容变化，固定位置本身不代表缓存安全。
 

@@ -1,7 +1,7 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.19.0';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.19.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.20.0';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.20.0';
 
-export const PLUGIN_VERSION = '1.19.0';
+export const PLUGIN_VERSION = '1.20.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1367,6 +1367,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     showWandButton: true,
     autoSummarize: true,
+    activeStateEnabled: true,
+    injectionMaxTokens: 2800,
     independentApi: true,
     memoryStrategy: 'incremental',
     checkpointInterval: 5,
@@ -1476,6 +1478,7 @@ export function normalizeSettings(saved = {}) {
         summaryFilterMode,
         summaryFilterTags: String(source.summaryFilterTags ?? DEFAULT_SETTINGS.summaryFilterTags),
         summaryMaxTokens,
+        injectionMaxTokens: Math.round(number(source.injectionMaxTokens, 2800, 256, 2800)),
         checkpointMaxTokens,
         longMemoryMaxTokens,
         maxTokens: longMemoryMaxTokens,

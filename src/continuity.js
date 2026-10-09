@@ -1,8 +1,10 @@
-import { fnv1a } from './utils.js?v=1.19.0';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.19.0';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.19.0';
+import { fnv1a } from './utils.js?v=1.20.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.20.0';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.20.0';
+import { projectActiveState } from './active-state.js?v=1.20.0';
 
-export const isUsableMemory = item => item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen');
+export const isUsableMemory = item => item && item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen')
+    && !['unmatched', 'changed', 'unverified'].includes(item.sourceValidity);
 
 export function readSection(text, name) {
     const sections = String(text ?? '').split(/^\s*\[([^\]\n]+)\]\s*$/m);
@@ -89,7 +91,7 @@ export function previousState(store, startFloor) {
     };
 }
 
-export function projectLongFacts(store, throughFloor = Infinity) {
+export function projectLongFacts(store, throughFloor = Infinity, { includeTracked = false } = {}) {
     const facts = new Map();
     const legacy = [];
     const memories = store.longMemories.filter(item => isUsableMemory(item) && item.endFloor <= throughFloor)
@@ -110,6 +112,12 @@ export function projectLongFacts(store, throughFloor = Infinity) {
                 sourceId: memory.id, startFloor: memory.startFloor, endFloor: memory.endFloor,
                 storyStartTime: memory.storyStartTime ?? '', storyEndTime: memory.storyEndTime ?? '', createdAt: memory.createdAt ?? '',
             });
+        }
+    }
+    if (includeTracked) {
+        for (const item of projectActiveState(store, throughFloor).filter(row => row.kind === 'state' && row.lifetime !== 'temporary')) {
+            facts.set(item.id, { id: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: item.needsReview ? 'needs-review' : item.status === 'active' ? 'active' : 'retired',
+                floor: item.sourceFloor, sourceId: item.sourceId, tracked: true, evidence: item.evidence });
         }
     }
     return { legacy, facts: [...facts.values()] };

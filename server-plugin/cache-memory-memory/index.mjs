@@ -18,7 +18,8 @@ function userId(request) {
 }
 
 function safeId(value) {
-    return String(value || '').trim().slice(0, 300);
+    const id = String(value || '').trim();
+    return id.length <= 2000 ? id : '';
 }
 
 function key(user, chatId) {
@@ -39,20 +40,20 @@ function clone(value) { return structuredClone(value); }
 
 function entities(value, section) {
     const source = value?.[section];
-    if (section === 'summaries' || section === 'keepRegistry') return source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+    if (['summaries', 'keepRegistry', 'stateOverrides', 'recovery'].includes(section)) return source && typeof source === 'object' && !Array.isArray(source) ? source : {};
     if (section === 'checkpoints' || section === 'longMemories') return Array.isArray(source) ? Object.fromEntries(source.map(item => [String(item?.id || ''), item]).filter(([id]) => id)) : {};
     return {};
 }
 
 function materialize(value, section, map) {
-    if (section === 'summaries' || section === 'keepRegistry') value[section] = map;
+    if (['summaries', 'keepRegistry', 'stateOverrides', 'recovery'].includes(section)) value[section] = map;
     else if (section === 'checkpoints' || section === 'longMemories') value[section] = Object.values(map).sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
 function threeWayMerge(base, local, remote) {
     const merged = clone(remote || local || base || {});
     const conflicts = [];
-    for (const section of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry']) {
+    for (const section of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry', 'stateOverrides', 'recovery']) {
         const b = entities(base, section), l = entities(local, section), r = entities(remote, section);
         const output = { ...r };
         for (const id of new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)])) {
@@ -125,9 +126,12 @@ export async function init(router) {
             const current = await readFile(user, chatId);
             const currentRevision = Number(current?.revision || 0);
             const base = payload.baseSnapshot || null;
-            if (Number(payload.baseRevision || 0) !== currentRevision && !base) return response.status(409).json({ error: 'revision conflict', record: current });
+            if (Number(payload.baseRevision || 0) !== currentRevision) return response.status(409).json({ error: 'revision conflict', record: current });
+            if (payload.snapshot.chatId !== chatId) return response.status(400).json({ error: 'chat identity mismatch' });
+            if (Number(current?.store?.version || 0) > Number(payload.snapshot.version || 0)) return response.status(409).json({ error: 'schema downgrade refused', record: current });
             const merged = current?.store ? threeWayMerge(base || current.store, payload.snapshot, current.store) : { merged: clone(payload.snapshot), conflicts: [] };
             if (merged.conflicts.length) return response.status(409).json({ error: 'record conflicts', conflicts: merged.conflicts, record: current });
+            merged.merged.sync = { ...merged.merged.sync, revision: currentRevision + 1 };
             const next = {
                 version: VERSION, chatId, revision: currentRevision + 1,
                 digest: digest(merged.merged), updatedAt: new Date().toISOString(),

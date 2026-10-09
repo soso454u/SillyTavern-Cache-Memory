@@ -1,6 +1,13 @@
-import { INJECTION_MODES } from './defaults.js?v=1.19.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.19.0';
-import { stripStructuredSections } from './summary-format.js?v=1.19.0';
+import { INJECTION_MODES } from './defaults.js?v=1.20.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.20.0';
+import { stripStructuredSections } from './summary-format.js?v=1.20.0';
+import { budgetFrozenBlocks } from './injection-budget.js?v=1.20.0';
+
+function boundedInjection(texts, settings) {
+    const blocks = texts.map((text, index) => ({ id: String(index), type: /^\[KEEP\]/.test(text) ? 'keep' : /^\[LONG/.test(text) ? 'long' : 'checkpoint', startFloor: index, endFloor: index, text }));
+    const bounded = budgetFrozenBlocks(blocks, settings.injectionMaxTokens).blocks;
+    return bounded.length ? `<CACHE_MEMORY>\n\n${bounded.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
+}
 
 function byRange(a, b) {
     return Number(a.startFloor ?? a.floor) - Number(b.startFloor ?? b.floor);
@@ -29,7 +36,7 @@ export function buildInjection(store, settings) {
                 .sort((a, b) => a.floor - b.floor);
             for (const item of summaries) blocks.push(`[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}`);
         }
-        return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
+        return boundedInjection(blocks, settings);
     }
     const blocks = [];
     const longs = [...store.longMemories]
@@ -56,5 +63,5 @@ export function buildInjection(store, settings) {
         }
     }
 
-    return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
+    return boundedInjection(blocks, settings);
 }

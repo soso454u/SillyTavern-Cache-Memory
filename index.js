@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.19.0';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.19.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.19.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.19.0';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.19.0';
-import { getAssistantMessages } from './src/utils.js?v=1.19.0';
-import { MemoryStore } from './src/memory-store.js?v=1.19.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.19.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.19.0';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.19.0';
-import { MemoryServerClient } from './src/memory-server.js?v=1.19.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.20.0';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.20.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.20.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.20.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.20.0';
+import { getAssistantMessages } from './src/utils.js?v=1.20.0';
+import { MemoryStore } from './src/memory-store.js?v=1.20.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.20.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.20.0';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.20.0';
+import { MemoryServerClient } from './src/memory-server.js?v=1.20.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -37,6 +37,15 @@ const frames = new Set();
 const diagnostics = new CacheDiagnostics();
 let activeChatId = null;
 let onlineHandler = null;
+let refreshRevision = 0;
+
+// ST chat filenames are only unique inside a character/group, not globally.
+function memoryChatId() {
+    const context = getContext();
+    const id = getCurrentChatId();
+    if (!id) return '';
+    return JSON.stringify([context.groupId ? 'group' : 'character', String(context.groupId || context.characters?.[context.characterId]?.avatar || ''), String(id)]);
+}
 
 const apiCacheAdapter = new ApiCacheAdapterBridge({
     getSettings: () => settings,
@@ -48,6 +57,7 @@ const apiCacheAdapter = new ApiCacheAdapterBridge({
 const memoryServer = new MemoryServerClient({
     fetchImpl: (...args) => window.fetch(...args),
     getHeaders: () => getContext()?.getRequestHeaders?.(),
+    storage: window.localStorage,
     onStatus: (state, detail) => console.info(LOG_PREFIX, `authoritative memory ${state}: ${detail}`),
 });
 
@@ -108,27 +118,30 @@ function persistSettings() {
 }
 
 const persistence = new MemoryPersistenceCoordinator({
-    getChatId: () => getCurrentChatId() ?? '',
+    getChatId: memoryChatId,
     getMetadata: () => chat_metadata,
     storage: window.localStorage,
-    readRemoteStore: chatId => readSillyTavernRemoteStore(getContext, chatId, window.fetch.bind(window)),
+    readRemoteStore: chatId => {
+        if (memoryChatId() !== chatId) throw new Error('聊天身份已变化');
+        return readSillyTavernRemoteStore(getContext, getCurrentChatId(), window.fetch.bind(window));
+    },
     saveMetadata: async chatId => {
         const context = getContext();
-        if (String(context.chatId ?? '') !== String(chatId ?? '')) throw new Error('聊天已切换，取消旧聊天保存');
+        if (memoryChatId() !== chatId) throw new Error('聊天已切换，取消旧聊天保存');
         await context.saveMetadata();
     },
     readAuthoritativeStore: async chatId => memoryServer.read(chatId),
     commitAuthoritative: async (chatId, payload) => memoryServer.commit(chatId, payload),
     authoritativeAvailable: () => memoryServer.available,
     onStatus: (chatId) => {
-        if (String(getCurrentChatId() ?? '') !== chatId) return;
-        queueMicrotask(() => ui?.renderManager());
+        if (memoryChatId() !== chatId) return;
+        queueMicrotask(() => ui?.renderMemorySaveState());
     },
 });
 
 const store = new MemoryStore({
     getMetadata: () => chat_metadata,
-    getChatId: () => getCurrentChatId() ?? '',
+    getChatId: memoryChatId,
     saveMetadata: (snapshot, reason) => persistence.enqueue(snapshot, reason),
     onChange: (changedStore, reason) => {
         queueMicrotask(() => {
@@ -169,10 +182,14 @@ function updateInjection(reason = 'manual edit') {
 
 async function refreshChatState({ serverLoaded = false } = {}) {
     if (!settings) return;
+    const revision = ++refreshRevision;
     let current = store.current();
     const chatId = current.chatId;
+    if (!chatId) return;
+    if (chatId !== activeChatId || serverLoaded) summarizer.invalidateContext();
     if (chatId !== activeChatId || serverLoaded) current = persistence.activate(chatId, current) ?? current;
     if (memoryServer.available && (chatId !== activeChatId || serverLoaded)) current = await persistence.sync(chatId, current);
+    if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     store.persistMigration();
     store.syncMessages(chat);
     const switched = chatId !== activeChatId;
@@ -183,7 +200,7 @@ async function refreshChatState({ serverLoaded = false } = {}) {
         activeChatId = chatId;
         updateInjection('chat changed');
         persistence.verify(chatId);
-    } else if (serverLoaded) updateInjection('authoritative memory restored');
+    } else if (serverLoaded) updateInjection('chat changed');
     else if (!settings.strictCacheMode) updateInjection('history metadata changed');
     nextFrame(() => ui?.renderMessageMemories());
 }
@@ -222,16 +239,18 @@ function bindEvents() {
         schedule(() => {
             if (pendingSwipeIndex !== Number(messageIndex) || isGenerating()) return;
             store.rebindSummaryAtMessageIndex(messageIndex, chat);
+            store.syncMessages(chat);
+            updateInjection('manual edit');
             pendingSwipeIndex = null;
             refreshChatState();
         }, 50);
     });
-    bindEvent(event_types.MESSAGE_DELETED, messageIndex => {
-        store.markSummaryOrphanedAtMessageIndex(Number(messageIndex));
+    bindEvent(event_types.MESSAGE_DELETED, () => {
+        store.reconcileDeletion(chat);
         schedule(refreshChatState);
     });
     for (const name of [event_types.MESSAGE_EDITED, event_types.MESSAGE_UPDATED]) {
-        bindEvent(name, () => schedule(refreshChatState));
+        bindEvent(name, () => schedule(() => { store.syncMessages(chat); updateInjection('manual edit'); refreshChatState(); }));
     }
 }
 
@@ -240,7 +259,6 @@ function initialize() {
     if (runtimeController.signal.aborted) runtimeController = new AbortController();
     initialized = true;
     loadSettings();
-    memoryServer.probe().then(() => refreshChatState({ serverLoaded: true }));
     ui = new CacheMemoryUI({
         getSettings: () => settings,
         updateSettings,
@@ -268,13 +286,18 @@ function initialize() {
     bindEvents();
     onlineHandler = async () => {
         await memoryServer.probe();
-        if (memoryServer.available && activeChatId) {
-            await persistence.sync(activeChatId, chat_metadata.cache_memory);
+        if (activeChatId && memoryChatId() === activeChatId) {
+            await persistence.verify(activeChatId);
             await persistence.flush(activeChatId);
         }
     };
     window.addEventListener('online', onlineHandler, { signal: runtimeController.signal });
-    refreshChatState();
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') onlineHandler().catch(error => console.warn(LOG_PREFIX, error));
+        else persistence.persistPending();
+    }, { signal: runtimeController.signal });
+    window.addEventListener('pagehide', () => persistence.persistPending(), { signal: runtimeController.signal });
+    memoryServer.probe().then(() => refreshChatState({ serverLoaded: true })).catch(error => console.warn(LOG_PREFIX, error));
     console.info(LOG_PREFIX, 'Initialized with append-only memory storage.');
 }
 

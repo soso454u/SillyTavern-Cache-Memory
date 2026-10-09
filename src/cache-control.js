@@ -1,8 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.19.0';
-import { buildInjection } from './injection.js?v=1.19.0';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.19.0';
-import { fnv1a } from './utils.js?v=1.19.0';
-import { stripStructuredSections } from './summary-format.js?v=1.19.0';
+import { INJECTION_MODES } from './defaults.js?v=1.20.0';
+import { buildInjection } from './injection.js?v=1.20.0';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.20.0';
+import { fnv1a } from './utils.js?v=1.20.0';
+import { stripStructuredSections } from './summary-format.js?v=1.20.0';
+import { budgetFrozenBlocks, estimateMemoryTokens } from './injection-budget.js?v=1.20.0';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -26,7 +27,7 @@ function frozenBlocks(store, mode) {
             ? `- RETIRE ${update.previousId}: ${update.reason || update.evidence || '明确失效'}`
             : `- ${update.action.toUpperCase()} ${update.id}${update.previousId ? ` (supersedes ${update.previousId})` : ''}: ${update.text}`).join('\n');
         const content = record.memoryKind === 'facts' && Array.isArray(record.factUpdates)
-            ? `[FACT_DELTA]\n${delta || '本阶段无新增或有证据的长期事实变更。'}`
+            ? `[FACT_DELTA]\n${delta || '本阶段无新增或有证据的长期事实变更。'}${record.continuityState ? `\n${record.continuityState}` : ''}`
             : stripStructuredSections(record.content ?? '', ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']);
         blocks.push({ id: `${type}:${record.id}`, type, startFloor: record.startFloor, endFloor: record.endFloor,
             text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}` });
@@ -47,9 +48,15 @@ export function refreshSnapshot(store, settings, reason = 'manual edit') {
     const mode = effectiveInjectionMode(settings);
     const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode]);
     const previous = store.injectionSnapshot;
-    if (reason === 'chat changed' && previous?.signature === signature) return { value: previous.value, changed: false };
+    const invalidPublishedSource = previous?.blocks?.some(block => {
+        if (!['long', 'checkpoint'].includes(block.type)) return false;
+        const records = block.type === 'long' ? store.longMemories : store.checkpoints;
+        return !records.some(item => `${block.type}:${item.id}` === block.id && isUsableMemory(item));
+    });
+    if (reason === 'chat changed' && previous?.signature === signature && !invalidPublishedSource) return { value: previous.value, changed: false };
     let blocks = [];
     let value = '';
+    let budgetInfo = { omitted: 0, clipped: 0 };
     if (settings.enabled && mode !== INJECTION_MODES.NONE) {
         if (!settings.strictCacheMode) value = buildInjection(store, settings);
         else {
@@ -66,11 +73,14 @@ export function refreshSnapshot(store, settings, reason = 'manual edit') {
             // Explicitly permitted compaction at a Long boundary; never delete Checkpoint data.
             const longs = blocks.filter(block => block.type === 'long');
             blocks = blocks.filter(block => block.type !== 'checkpoint' || !longs.some(long => long.startFloor <= block.startFloor && long.endFloor >= block.endFloor));
+            const bounded = budgetFrozenBlocks(blocks, settings.injectionMaxTokens);
+            blocks = bounded.blocks;
+            budgetInfo = { omitted: bounded.omitted, clipped: bounded.clipped };
             value = blocks.length ? `<CACHE_MEMORY>\n冻结块按提交顺序排列。后续有证据的事实更新优先；旧记录保留历史意义，已解决事项不要恢复为未解决。\n\n${blocks.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
         }
     }
     const changed = value !== (previous?.value ?? '');
-    store.injectionSnapshot = { signature, mode, blocks, value, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
+    store.injectionSnapshot = { signature, mode, blocks, value, budget: { ...budgetInfo, estimatedTokens: estimateMemoryTokens(value), limit: settings.injectionMaxTokens ?? 2800 }, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
     return { value, changed };
 }
 

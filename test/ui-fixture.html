@@ -1,0 +1,21 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cache Memory synthetic UI fixture</title><link rel="stylesheet" href="../style.css">
+<style>body{background:#25252b;color:#ddd;font:16px system-ui;padding:12px;margin:auto;max-width:850px}button,input,textarea,select{font:inherit;color:inherit;background:#35353d;border:1px solid #666;border-radius:5px;padding:7px}button{cursor:pointer}summary{overflow-wrap:anywhere}p{line-height:1.5}#panel{max-width:100%;overflow-wrap:anywhere}details{padding:10px;border:1px solid #555;margin:8px 0}</style>
+<h1>合成数据 · 任务/状态管理</h1><p>仅本地 UI 检查，无模型请求、无真实聊天。</p>
+<nav><button id="threads">未解决事项</button> <button id="states">角色状态</button></nav><main id="panel"></main>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { stateId } from '../src/active-state.js';
+const metadata = {};
+const store = new MemoryStore({getMetadata:()=>metadata,getChatId:()=> 'synthetic-ui',saveMetadata:()=>{}});
+const changes = [
+ {kind:'thread',entity:'测试主角',key:'松开的那只手',value:'已发布，维持中',condition:'维持到入睡前，系统确认后结算',status:'active',lifetime:'temporary',actors:['测试主角','测试同伴'],evidence:'系统正式发布测试任务'},
+ {kind:'state',entity:'测试主角',key:'洞察',value:'Lv.3',condition:'',status:'active',lifetime:'permanent',actors:['测试主角'],evidence:'系统确认洞察升至Lv.3'}
+].map(item=>({...item,id:stateId(item)}));
+store.addSummary({messageId:'m1',floor:1,sourceFingerprint:'synthetic',status:'frozen',stateChanges:changes});
+const ui=Object.create(CacheMemoryUI.prototype);
+Object.assign(ui,{doc:document,controller:new AbortController(),store,getChat:()=>[],getSettings:()=>({activeStateEnabled:true}),renderManager:()=>render(kind)});
+let kind='thread';function render(next){kind=next;document.querySelector('#panel').replaceChildren(ui.renderTrackedPage(kind));}
+document.querySelector('#threads').onclick=()=>render('thread');document.querySelector('#states').onclick=()=>render('state');render(kind);
+</script></html>

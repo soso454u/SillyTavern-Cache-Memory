@@ -1,7 +1,7 @@
 export const SUMMARY_SECTION_NAMES = Object.freeze(['Title', 'Characters', 'StoryTime', 'Location', 'Event', 'State', 'Open', 'Quote', 'KEEP']);
 
 const SUMMARY_MARKER = /^\s*\[SUMMARY\]\s*$/gim;
-const SECTION_MARKER = /^\s*\[(Title|Characters|StoryTime|Location|Event|State|Open|Quote|KEEP)\]\s*$/gim;
+const SECTION_MARKER = /^\s*\[(Title|Characters|StoryTime|Location|Event|State|Open|Quote|KEEP|Changes)\]\s*$/gim;
 const sectionKey = name => name.toLowerCase() === 'storytime' ? 'storyTime' : name.toLowerCase();
 
 export function selectFinalSummaryBlock(value) {

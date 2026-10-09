@@ -6,7 +6,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "SillyTavern Community",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "homePage": "https://github.com/soso454u/SillyTavern-Cache-Memory",
   "auto_update": true,
   "extension_hot_reload": {

@@ -289,3 +289,9 @@ body.cache-memory-config-open { overflow: hidden; }
 }
 
 .cache-memory-overlay.is-dragging .cache-memory-config-panel { box-shadow: 0 12px 32px rgba(15, 23, 42, 0.24); }
+/* Compact forms remain usable in narrow mobile settings panels. */
+.cache-memory-tracked-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px; padding: 8px; }
+.cache-memory-tracked-form label { display: flex; flex-direction: column; min-width: 0; gap: 4px; }
+.cache-memory-tracked-form input, .cache-memory-tracked-form textarea, .cache-memory-tracked-form select { width: 100%; min-width: 0; box-sizing: border-box; background: #fff; color: #27364a; padding: 8px; border: 1px solid #bdcada; border-radius: 6px; }
+.cache-memory-tracked-form label { color: #27364a; }
+.cache-memory-state-history { display: block; overflow-wrap: anywhere; }

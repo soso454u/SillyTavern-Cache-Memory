@@ -1,7 +1,8 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.19.0';
-import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.19.0';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.20.0';
+import { extractSummaryKeepEntries, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.20.0';
+import { projectActiveState, stateId } from './active-state.js?v=1.20.0';
 
-export const STORE_VERSION = 5;
+export const STORE_VERSION = 6;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
 
 export function createEmptyStore(chatId = '') {
@@ -12,12 +13,15 @@ export function createEmptyStore(chatId = '') {
         checkpoints: [],
         longMemories: [],
         keepRegistry: {},
+        stateOverrides: {},
+        recovery: {},
         sync: { revision: 0, writerId: '', writeId: '', savedAt: '' },
         updatedAt: new Date().toISOString(),
     };
 }
 
 export function normalizeStore(value, chatId = '') {
+    if (value != null && (typeof value !== 'object' || Array.isArray(value))) throw new Error('记忆数据格式异常，已停止初始化；原数据未清空');
     const store = value && typeof value === 'object' ? value : {};
     const summaries = store.summaries && typeof store.summaries === 'object' && !Array.isArray(store.summaries) ? store.summaries : {};
     const checkpoints = Array.isArray(store.checkpoints) ? store.checkpoints : [];
@@ -25,12 +29,18 @@ export function normalizeStore(value, chatId = '') {
     const keepRegistry = normalizeKeepRegistry(Number(store.version) >= 3 ? store.keepRegistry : null,
         { summaries, checkpoints, longMemories, updatedAt: store.updatedAt });
     return {
-        version: STORE_VERSION,
+        ...store,
+        version: Math.max(STORE_VERSION, Number(store.version) || 0),
         chatId: String(chatId ?? store.chatId ?? ''),
         summaries,
         checkpoints,
         longMemories,
         keepRegistry,
+        stateOverrides: store.stateOverrides && typeof store.stateOverrides === 'object' ? store.stateOverrides : {},
+        recovery: {
+            ...(store.version && Number(store.version) < STORE_VERSION ? { [`migration-v${store.version}`]: { kind: 'migration', snapshot: structuredClone(store) } } : {}),
+            ...(store.recovery ?? {}),
+        },
         sync: {
             revision: Math.max(0, Math.floor(Number(store.sync?.revision) || 0)),
             writerId: String(store.sync?.writerId ?? ''),
@@ -175,12 +185,14 @@ export class MemoryStore {
         const store = this.current();
         const assistants = getAssistantMessages(chat);
         let changed = false;
+        const matched = new Set();
 
         for (const entry of assistants) {
             let record = store.summaries[entry.messageId];
             let recordKey = entry.messageId;
             if (!record && entry.fingerprint) {
-                const match = Object.entries(store.summaries).find(([, candidate]) => candidate?.status !== 'orphaned' && candidate?.sourceFingerprint === entry.fingerprint);
+                const matches = Object.entries(store.summaries).filter(([key, candidate]) => !matched.has(key) && candidate?.sourceFingerprint === entry.fingerprint);
+                const match = matches.length === 1 ? matches[0] : null;
                 if (match) {
                     recordKey = match[0];
                     record = match[1];
@@ -191,6 +203,9 @@ export class MemoryStore {
                 }
             }
             if (!record) continue;
+            matched.add(entry.messageId);
+            const validity = record.sourceFingerprint ? (record.sourceFingerprint === entry.fingerprint ? 'valid' : 'changed') : 'unverified';
+            if (record.sourceValidity !== validity) { record.sourceValidity = validity; changed = true; }
             if (record.floor !== entry.floor || record.messageIndex !== entry.messageIndex || record.messageId !== entry.messageId) {
                 for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === record.messageId) keep.sourceFloor = entry.floor;
                 record.floor = entry.floor;
@@ -203,7 +218,7 @@ export class MemoryStore {
                 record.staleAt = new Date().toISOString();
                 changed = true;
             }
-            if (record.status === 'orphaned') {
+            if (['orphaned', 'stale'].includes(record.status) && record.sourceFingerprint === entry.fingerprint) {
                 record.status = record.previousStatus && record.previousStatus !== 'orphaned' ? record.previousStatus : 'frozen';
                 delete record.previousStatus;
                 delete record.orphanedAt;
@@ -211,12 +226,59 @@ export class MemoryStore {
             }
         }
 
+        for (const [id, record] of Object.entries(store.summaries)) {
+            if (!matched.has(id) && record.sourceValidity !== 'unmatched') { record.sourceValidity = 'unmatched'; changed = true; }
+        }
+        if (assistants.length) changed = this.validateDependencies(store) || changed;
+
         // A chat array may be temporarily incomplete while SillyTavern is loading.
         // Unmatched records are kept unchanged; only an explicit deletion event may
         // mark a Summary as orphaned.
 
         if (changed) this.persist();
         return assistants;
+    }
+
+    archive(store, kind, record) {
+        if (!record) return;
+        const copy = structuredClone(record);
+        const id = `${kind}:${fnv1a(JSON.stringify(copy))}`;
+        store.recovery[id] = { kind, record: copy };
+    }
+
+    validateDependencies(store = this.current()) {
+        let changed = false;
+        for (const aggregate of [...store.checkpoints, ...store.longMemories]) {
+            if (aggregate.status === 'failed' || aggregate.status === 'stale') continue;
+            const sources = aggregate.sourceVersions;
+            const sourceRecords = sources ? Object.keys(sources).map(id => store.summaries[id]) : Object.values(store.summaries).filter(item => item.floor >= aggregate.startFloor && item.floor <= aggregate.endFloor);
+            const dependencies = store.checkpoints.filter(item => item.id === aggregate.previousCheckpointId || aggregate.checkpointIds?.includes(item.id));
+            const unavailable = [...sourceRecords, ...dependencies].some(item => ['unmatched', 'unverified'].includes(item?.sourceValidity));
+            if (unavailable && aggregate.sourceValidity !== 'unmatched') { aggregate.sourceValidity = 'unmatched'; changed = true; }
+            else if (!unavailable && aggregate.sourceValidity === 'unmatched') { delete aggregate.sourceValidity; changed = true; }
+            const invalid = sources ? Object.entries(sources).some(([id, digest]) => !store.summaries[id]
+                || ['stale', 'orphaned', 'failed'].includes(store.summaries[id].status) || summaryVersion(store.summaries[id]) !== digest)
+                : sourceRecords.some(item => ['stale', 'orphaned', 'failed'].includes(item.status));
+            const parentInvalid = aggregate.previousCheckpointId && store.checkpoints.some(item => item.id === aggregate.previousCheckpointId && item.status === 'stale');
+            const checkpointInvalid = aggregate.checkpointIds?.some(id => !store.checkpoints.some(item => item.id === id && !['stale', 'failed'].includes(item.status)));
+            if (invalid || parentInvalid || checkpointInvalid) {
+                aggregate.status = 'stale'; aggregate.staleReason = '来源摘要或前序阶段记忆已变化，原记录保留待人工核对'; changed = true;
+            }
+        }
+        return changed;
+    }
+
+    reconcileDeletion(chat) {
+        const ids = new Set(getAssistantMessages(chat).map(item => item.messageId));
+        const store = this.current();
+        for (const record of Object.values(store.summaries)) {
+            if (!ids.has(record.messageId) && record.status !== 'orphaned') {
+                record.previousStatus = record.status;
+                record.status = 'orphaned'; record.sourceValidity = 'unmatched';
+            }
+        }
+        this.validateDependencies(store);
+        this.persist('manual edit');
     }
 
     markSummaryOrphanedAtMessageIndex(messageIndex) {
@@ -240,6 +302,7 @@ export class MemoryStore {
         const previousKey = Object.keys(store.summaries).find(key => store.summaries[key]?.messageIndex === Number(messageIndex));
         if (!previousKey) return null;
         const record = store.summaries[previousKey];
+        this.archive(store, 'summary', record);
         delete store.summaries[previousKey];
         Object.assign(record, {
             messageId: entry.messageId,
@@ -262,8 +325,10 @@ export class MemoryStore {
         const store = this.current();
         if (store.summaries[record.messageId] && !overwrite) return store.summaries[record.messageId];
         const replacesFrozen = store.summaries[record.messageId]?.frozen !== false && ['frozen', 'manual-edited'].includes(store.summaries[record.messageId]?.status);
+        if (overwrite) this.archive(store, 'summary', store.summaries[record.messageId]);
         store.summaries[record.messageId] = structuredClone(record);
         this.registerSummaryKeeps(store.summaries[record.messageId]);
+        this.validateDependencies(store);
         this.persist(replacesFrozen && !background ? 'manual edit' : 'new summary');
         return store.summaries[record.messageId];
     }
@@ -271,8 +336,10 @@ export class MemoryStore {
     updateSummary(messageId, updates) {
         const record = this.getSummary(messageId);
         if (!record) return null;
+        this.archive(this.current(), 'summary', record);
         Object.assign(record, structuredClone(updates), { messageId });
         this.registerSummaryKeeps(record);
+        this.validateDependencies();
         this.persist('manual edit');
         return record;
     }
@@ -280,7 +347,9 @@ export class MemoryStore {
     deleteSummary(messageId) {
         const store = this.current();
         if (!store.summaries[messageId]) return false;
+        this.archive(store, 'summary', store.summaries[messageId]);
         delete store.summaries[messageId];
+        this.validateDependencies(store);
         this.persist('manual edit');
         return true;
     }
@@ -314,6 +383,27 @@ export class MemoryStore {
             }, id, now);
             existing.add(normalized);
         }
+    }
+
+    editTrackedState(updates) {
+        const store = this.current();
+        const existing = projectActiveState(store).find(item => item.id === updates.id);
+        const source = Object.values(store.summaries).find(item => item.floor === Number(updates.sourceFloor) && summaryIsCurrent(item));
+        if (!source) throw new Error('请选择具有有效摘要的来源楼层；来源被编辑时先核对摘要');
+        const item = { ...existing, ...structuredClone(updates), entity: String(updates.entity ?? existing?.entity ?? '').trim(), key: String(updates.key ?? existing?.key ?? '').trim() };
+        if (!item.entity || !item.key || !String(item.value ?? '').trim()) throw new Error('人物身份、事项/技能名称和当前进度/数值不能为空');
+        if (!['thread', 'state'].includes(item.kind)) throw new Error('未知状态类型');
+        const allowed = item.kind === 'thread' ? ['active', 'completed', 'cancelled'] : ['active', 'expired'];
+        if (!allowed.includes(item.status)) throw new Error('未知事项状态');
+        item.id = existing?.id ?? stateId(item);
+        item.sourceId = source.messageId; item.sourceFingerprint = source.sourceFingerprint;
+        item.originSourceId = source.messageId; // Explicit correction re-anchors reviewed evidence.
+        item.manual = true; item.evidence = '用户手动确认';
+        item.sequence = Math.max(0, ...Object.values(store.stateOverrides).map(row => Number(row.sequence) || 0)) + 1;
+        delete item.history;
+        store.stateOverrides[`${item.id}:${item.sequence}`] = item;
+        this.persist('state management');
+        return item;
     }
 
     updateKeep(id, updates, { persist = true } = {}) {
@@ -412,7 +502,7 @@ export class MemoryStore {
         const index = store.checkpoints.findIndex(item => item.id === record.id);
         const replacesFrozen = index >= 0 && store.checkpoints[index].frozen !== false && store.checkpoints[index].status !== 'failed';
         if (index >= 0 && !overwrite) return store.checkpoints[index];
-        if (index >= 0) store.checkpoints[index] = structuredClone(record);
+        if (index >= 0) { this.archive(store, 'checkpoint', store.checkpoints[index]); store.checkpoints[index] = structuredClone(record); }
         else store.checkpoints.push(structuredClone(record));
         store.checkpoints.sort((a, b) => a.startFloor - b.startFloor);
         this.persist(record.frozen !== false && record.status !== 'failed' ? (replacesFrozen ? 'manual edit' : 'new checkpoint') : 'aggregate failed');
@@ -424,7 +514,7 @@ export class MemoryStore {
         const index = store.longMemories.findIndex(item => item.id === record.id);
         const replacesFrozen = index >= 0 && store.longMemories[index].frozen !== false && store.longMemories[index].status !== 'failed';
         if (index >= 0 && !overwrite) return store.longMemories[index];
-        if (index >= 0) store.longMemories[index] = structuredClone(record);
+        if (index >= 0) { this.archive(store, 'long', store.longMemories[index]); store.longMemories[index] = structuredClone(record); }
         else store.longMemories.push(structuredClone(record));
         store.longMemories.sort((a, b) => a.startFloor - b.startFloor);
         this.persist(record.frozen !== false && record.status !== 'failed' ? (replacesFrozen ? 'manual edit' : 'new long memory') : 'aggregate failed');
@@ -461,6 +551,7 @@ export class MemoryStore {
         const list = type === 'long' ? store.longMemories : store.checkpoints;
         const item = list.find(entry => entry.id === id);
         if (!item) return null;
+        this.archive(store, type, item);
         Object.assign(item, structuredClone(updates), { id });
         if (item.memoryKind === 'facts' && Object.hasOwn(updates, 'content')) {
             const evidence = Object.values(store.summaries).filter(summary => summary.floor >= item.startFloor && summary.floor <= item.endFloor)
@@ -476,6 +567,7 @@ export class MemoryStore {
         const key = type === 'long' ? 'longMemories' : 'checkpoints';
         const next = store[key].filter(item => item.id !== id);
         if (next.length === store[key].length) return false;
+        this.archive(store, type, store[key].find(item => item.id === id));
         store[key] = next;
         this.persist('manual edit');
         return true;
@@ -501,11 +593,16 @@ export class MemoryStore {
     merge(imported) {
         const current = this.current();
         const result = mergeMemoryStores(current, imported, current.chatId);
+        for (const conflict of result.conflicts) this.archive(result.merged, `import-${conflict.type}`, conflict.incoming);
         this.getMetadata().cache_memory = result.merged;
-        if (result.added.total) this.persist('manual edit');
+        if (result.added.total || result.conflicts.length) this.persist('manual edit');
         return result;
     }
 }
+
+export const summaryIsCurrent = item => item && !['stale', 'orphaned', 'failed'].includes(item.status)
+    && !['changed', 'unmatched', 'unverified'].includes(item.sourceValidity);
+export const summaryVersion = item => fnv1a(JSON.stringify([item?.sourceFingerprint, item?.raw, item?.event, item?.state, item?.open, item?.stateChanges, item?.keep]));
 
 const VOLATILE_RECORD_FIELDS = new Set(['createdAt', 'updatedAt', 'editedAt', 'staleAt', 'orphanedAt']);
 
@@ -523,6 +620,8 @@ export function memoryContentDigest(value) {
         checkpoints: store.checkpoints ?? [],
         longMemories: store.longMemories ?? [],
         keepRegistry: store.keepRegistry ?? {},
+        stateOverrides: store.stateOverrides ?? {},
+        recovery: store.recovery ?? {},
         injectionSnapshot: store.injectionSnapshot ?? null,
     }));
     return `${serialized.length}:${fnv1a(serialized)}`;
@@ -537,7 +636,7 @@ export function mergeMemoryStores(currentValue, importedValue, chatId = '') {
     const imported = normalizeStore(structuredClone(importedValue), chatId);
     const merged = structuredClone(current);
     const conflicts = [];
-    const added = { summaries: 0, checkpoints: 0, longMemories: 0, keeps: 0, total: 0 };
+    const added = { summaries: 0, checkpoints: 0, longMemories: 0, keeps: 0, stateOverrides: 0, recovery: 0, total: 0 };
 
     const summaryIds = new Map(Object.entries(merged.summaries).map(([key, item]) => [String(item?.messageId || key), key]));
     for (const [sourceKey, item] of Object.entries(imported.summaries)) {
@@ -579,7 +678,13 @@ export function mergeMemoryStores(currentValue, importedValue, chatId = '') {
             added.keeps++;
         } else if (!sameRecord(existing, item)) conflicts.push({ type: 'KEEP', id, current: structuredClone(existing), incoming: structuredClone(item) });
     }
-    added.total = added.summaries + added.checkpoints + added.longMemories + added.keeps;
+    for (const section of ['stateOverrides', 'recovery']) {
+        for (const [id, item] of Object.entries(imported[section])) {
+            if (!merged[section][id]) { merged[section][id] = structuredClone(item); added[section]++; }
+            else if (!sameRecord(merged[section][id], item)) conflicts.push({ type: section, id, current: structuredClone(merged[section][id]), incoming: structuredClone(item) });
+        }
+    }
+    added.total = added.summaries + added.checkpoints + added.longMemories + added.keeps + added.stateOverrides + added.recovery;
     merged.updatedAt = new Date().toISOString();
     return { merged, conflicts, added };
 }
