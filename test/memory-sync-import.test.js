@@ -48,7 +48,7 @@ for (const authority of [false, true]) {
 
     test(`confirmed JSON restore replaces content, omissions and deletions and reads back every memory section (authority=${authority})`, async () => {
         const f = fixture(authority, 2); await f.p.verify();
-        f.remote.recovery.previous = { kind: 'old-data', content: 'keep me' };
+        f.remote.recovery = { previous: { kind: 'old-data', content: 'remove me' } };
         f.remote.tombstones['Summary:m3'] = { reason: 'previous deletion' };
         await f.p.reread();
         f.metadata.cache_memory.injectionSnapshot = { value: 'frozen original bytes', blocks: [] };
@@ -58,7 +58,7 @@ for (const authority of [false, true]) {
         incoming.longMemories = [{ id: 'long', startFloor: 1, endFloor: 3, content: 'Long', status: 'frozen' }];
         incoming.keepRegistry['KEEP-0001'] = { text: 'KEEP', status: 'active' };
         incoming.stateOverrides.state = { id: 'state', kind: 'state', sourceId: 'm1', entity: '甲', key: '状态', value: 'active' };
-        incoming.recovery.previous = { kind: 'file-data', content: 'also keep me' };
+        incoming.recovery = { previous: { kind: 'file-data', content: 'also remove me' } };
         const prepared = prepareMemoryImport(f.store.current(), inspectMemoryImport(incoming, 'a'));
         f.store.replace(prepared.merged);
         assert.equal((await f.p.flush()).state, 'confirmed');
@@ -68,10 +68,7 @@ for (const authority of [false, true]) {
         assert.equal(f.remote.checkpoints[0].content, 'CP'); assert.equal(f.remote.longMemories[0].content, 'Long');
         assert.equal(f.remote.keepRegistry['KEEP-0001'].text, 'KEEP'); assert.ok(f.remote.stateOverrides.state);
         assert.equal(f.remote.injectionSnapshot.value, 'frozen original bytes');
-        assert.ok(Object.values(f.remote.recovery).some(item => item.content === 'keep me'));
-        assert.ok(Object.values(f.remote.recovery).some(item => item.content === 'also keep me'));
-        const backup = Object.values(f.remote.recovery).find(item => item.kind === 'import-backup');
-        assert.ok(backup.snapshot.summaries.m2); assert.ok(backup.incoming.summaries.m3);
+        assert.equal(f.remote.recovery, undefined);
         assert.equal(memoryContentDigest(f.remote), memoryContentDigest(f.metadata.cache_memory));
     });
 
@@ -82,19 +79,20 @@ for (const authority of [false, true]) {
         f.store.replace(prepared.merged);
         assert.equal((await f.p.flush()).state, 'conflict'); assert.equal(f.writes, 0);
         assert.ok(f.remote.summaries.m4); assert.ok(f.remote.summaries.m2);
-        assert.ok(f.p.conflictBundle().local.recovery);
+        assert.equal(f.p.conflictBundle().local.summaries.m1.event, 'summary 1');
     });
 }
 
-test('205 generated summaries with 6 stale sources and 2 Unauthorized failures report separate generated/usable counts', () => {
+test('205 generated summaries remain usable despite 6 old source flags; only 2 Unauthorized failures need handling', () => {
     const store = makeStore(207);
     for (let n = 1; n <= 6; n++) Object.assign(store.summaries[`m${n}`], { status: 'stale', sourceValidity: 'changed' });
     for (let n = 206; n <= 207; n++) Object.assign(store.summaries[`m${n}`], { status: 'failed', frozen: false, error: 'Unauthorized' });
     const entries = Array.from({ length: 207 }, (_, i) => ({ floor: i + 1, messageId: `m${i + 1}` }));
     const overview = memoryOverviewStats(store, entries, {});
-    assert.deepEqual(overview.summaries, { actual: 199, generated: 205, expected: 207 });
-    assert.equal(overview.summaryDetails.filter(row => row.reason === 'stale').length, 6);
+    assert.deepEqual(overview.summaries, { actual: 205, generated: 205, expected: 207 });
+    assert.equal(overview.summaryDetails.filter(row => row.reason === 'stale').length, 0);
     assert.equal(overview.summaryDetails.filter(row => row.reason === 'failed').length, 2);
+    assert.doesNotMatch(overview.issues.join('\n'), /需要更新|来源消息或版本|待核对/);
 });
 
 test('downloaded JSON can be selected for one-confirmation import without creating any download', async () => {
@@ -113,13 +111,14 @@ test('downloaded JSON can be selected for one-confirmation import without creati
     assert.equal(f.p.getState().state, 'confirmed'); assert.ok(f.remote.summaries.m2);
 });
 
-test('the ordinary toolbar exposes download and import while recovery actions remain folded', () => {
+test('the ordinary toolbar exposes download and import without any recovery-copy controls', () => {
     const html = configTemplate();
     const start = html.indexOf('data-manager-view="overview"');
     const recovery = html.indexOf('<details class="cache-memory-backup"', start);
     const ordinary = html.slice(start, recovery);
     assert.match(ordinary, /下载记忆 JSON/); assert.match(ordinary, /导入记忆 JSON/);
     assert.doesNotMatch(ordinary, /data-export-recovery|data-memory-conflict/);
+    assert.doesNotMatch(html, /恢复副本|data-export-recovery/);
     assert.equal((html.match(/data-import-merge-file/g) ?? []).length, 1);
 });
 
@@ -149,8 +148,6 @@ test('legacy swipe-only validation cannot invalidate unchanged frozen summaries 
     assert.equal(f.store.current().checkpoints[0].status, 'frozen');
     assert.equal(f.store.current().longMemories[0].status, 'frozen');
     assert.equal(f.store.current().injectionSnapshot.value, 'do not rebuild frozen injection');
-    assert.ok(Object.values(f.store.current().recovery).some(item => item.kind === 'legacy-source-validation'));
-    assert.ok(Object.values(f.store.current().recovery).some(item => item.kind === 'legacy-dependency-validation'));
     await f.p.flush();
 });
 
@@ -190,14 +187,16 @@ test('an empty old-window journal cannot erase another window pending changes; r
     await Promise.all([first.p.flush('a'), oldWindow.p.flush('a')]);
 });
 
-test('repeated internal import backups preserve recovery without nesting all previous backups in every snapshot', () => {
+test('repeated imports save only current memory without accumulating backups', () => {
     let current = makeStore(1);
-    current.recovery.existing = { kind: 'old-recovery', content: 'must survive' };
-    for (let n = 2; n < 12; n++) current = prepareMemoryImport(current, inspectMemoryImport(makeStore(n), 'a')).merged;
-    assert.equal(current.recovery.existing.content, 'must survive');
-    const backups = Object.values(current.recovery).filter(item => item.kind === 'import-backup');
-    assert.equal(backups.length, 10);
-    for (const backup of backups) { assert.equal(backup.snapshot.recovery, undefined); assert.equal(backup.incoming.recovery, undefined); }
+    current.recovery = { existing: { kind: 'old-recovery', content: 'remove me' } };
+    for (let n = 2; n < 12; n++) {
+        const incoming = makeStore(n);
+        current = prepareMemoryImport(current, inspectMemoryImport(incoming, 'a')).merged;
+        assert.equal(current.recovery, undefined);
+        assert.equal(Object.keys(current.summaries).length, n);
+        assert.ok(JSON.stringify(current).length < JSON.stringify(incoming).length + 100);
+    }
 });
 
 test('three conflicting window journals retain every earlier conflict branch on reload', () => {
@@ -222,8 +221,9 @@ test('a swallowed import save failure retains the original memory and attempted 
     f.store.replace(prepareMemoryImport(f.store.current(), inspectMemoryImport(makeStore(1), 'a')).merged);
     assert.equal((await f.p.flush()).state, 'failed');
     assert.ok(f.remote.summaries.m2);
-    const backup = Object.values(f.p.pending.get('a').snapshot.recovery).find(item => item.kind === 'import-backup');
-    assert.ok(backup.snapshot.summaries.m2); assert.equal(backup.incoming.summaries.m2, undefined);
+    assert.ok(f.p.pending.get('a').baseSnapshot.summaries.m2);
+    assert.equal(f.p.pending.get('a').snapshot.summaries.m2, undefined);
+    assert.equal(f.p.pending.get('a').snapshot.recovery, undefined);
 });
 
 test('a confirmed file can resolve existing sync conflicts without asking the user to choose versions', async () => {
@@ -241,7 +241,7 @@ test('a confirmed file can resolve existing sync conflicts without asking the us
     await ui.importMergeFile({ target: { files: [{ text: async () => JSON.stringify(incoming) }], value: '' } });
     assert.equal(confirms, 1); assert.equal(f.p.getState().state, 'confirmed');
     assert.equal(f.remote.summaries.m1.event, 'explicitly selected file');
-    const backup = Object.values(f.remote.recovery).find(item => item.kind === 'pre-import-pending');
-    assert.equal(backup.conflict.local.summaries.m1.event, 'local conflicted version');
-    assert.equal(backup.conflict.remote.summaries.m1.event, 'server conflicted version');
+    assert.equal(f.remote.recovery, undefined);
+    assert.equal(f.p.pending.size, 0);
+    assert.equal(f.p.conflicts.size, 0);
 });

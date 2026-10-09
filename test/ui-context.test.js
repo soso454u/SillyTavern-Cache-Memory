@@ -38,7 +38,7 @@ test('memory manager is a settings tab instead of a second dialog', () => {
     assert.match(html, /data-memory-save-status[^>]*>状态未知/);
 });
 
-test('summary health separates missing, failed, stale, orphaned and temporarily unloaded sources', () => {
+test('summary health ignores old source flags and separates missing, failed, deleted and unloaded sources', () => {
     const assistants = [
         { floor: 1, messageId: 'missing' },
         { floor: 2, messageId: 'failed' },
@@ -52,7 +52,7 @@ test('summary health separates missing, failed, stale, orphaned and temporarily 
         unloaded: { messageId: 'unloaded', floor: 5, status: 'frozen' },
         'orphaned-hidden': { messageId: 'orphaned-hidden', floor: 6, status: 'orphaned' },
     } }, assistants);
-    assert.deepEqual(details.map(item => item.reason), ['missing', 'failed', 'stale', 'orphaned', 'source-unloaded', 'orphaned']);
+    assert.deepEqual(details.map(item => item.reason), ['missing', 'failed', 'orphaned', 'source-unloaded', 'orphaned']);
     assert.match(details.find(item => item.messageId === 'unloaded').label, /当前未加载/);
 });
 

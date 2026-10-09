@@ -95,7 +95,7 @@ for (const authority of [false, true]) for (const preference of ['local', 'serve
     assert.equal(f.remote.summaries.same.event, preference === 'local' ? '本机版本' : '服务器版本');
     assert.ok(f.remote.summaries.r); assert.ok(f.remote.summaries.l);
     assert.equal(f.remote.injectionSnapshot.value, '冻结原文');
-    assert.ok(Object.values(f.remote.recovery).some(item => item.kind === 'conflict-backup' && item.local && item.remote));
+    assert.equal(f.remote.recovery, undefined);
 });
 
 test('legacy local choice includes newly arrived server records without restarting confirmation', async () => {
@@ -132,7 +132,7 @@ test('v6 imports preview counts, reject malformed/foreign/future data and preser
     assert.equal(data.version, 6);
 });
 
-test('merge and replace imports keep frozen snapshot and backup both versions, honoring deletion markers', () => {
+test('merge and replace imports keep frozen injection and deletion markers without backups', () => {
     const current = createEmptyStore('a'), incoming = createEmptyStore('a');
     current.summaries.m1 = row('m1', 1, 'local'); current.summaries.extra = row('extra', 2);
     current.injectionSnapshot = { value: '冻结本机', blocks: [] }; current.tombstones['Summary:gone'] = { deletedAt: 'now' };
@@ -142,7 +142,7 @@ test('merge and replace imports keep frozen snapshot and backup both versions, h
     for (const mode of ['merge', 'replace']) {
         const result = prepareMemoryImport(current, inspected, { mode, preference: 'incoming' });
         assert.equal(result.merged.summaries.m1.event, 'incoming'); assert.equal(result.merged.injectionSnapshot.value, '冻结本机');
-        assert.ok(Object.values(result.merged.recovery).some(item => item.kind === 'import-backup'));
+        assert.equal(result.merged.recovery, undefined);
         assert.equal(Boolean(result.merged.summaries.gone), mode === 'replace');
         assert.equal(Boolean(result.merged.summaries.extra), mode === 'merge');
     }
@@ -154,7 +154,7 @@ test('deleting a Summary or CP cannot be undone by merging an older device', () 
     const id = Object.keys(f.store.current().summaries)[0]; f.store.deleteSummary(id); f.store.deleteAggregate('checkpoint', 'checkpoint-001');
     const merged = mergeMemoryStores(f.store.current(), old, 'a');
     assert.equal(merged.merged.summaries[id], undefined); assert.equal(merged.merged.checkpoints.some(cp => cp.id === 'checkpoint-001'), false);
-    assert.ok(Object.values(merged.merged.recovery).some(item => item.kind === 'deleted-merge'));
+    assert.equal(merged.merged.recovery, undefined);
 });
 
 test('legacy CP with complete content stays usable without dependency metadata', () => {
@@ -165,10 +165,10 @@ test('legacy CP with complete content stays usable without dependency metadata',
     f.store.revalidate(f.chat); assert.equal(isUsableMemory(second), true); assert.equal(second.staleReason, undefined);
 });
 
-test('source edit and return revalidates CP in order without calling model', () => {
+test('source edit and return keeps generated CPs frozen without calling model', () => {
     const f = aggregateFixture(), original = f.chat[0].mes;
     f.chat[0].mes = '已编辑的正文'; f.store.revalidate(f.chat);
-    assert.equal(f.store.current().checkpoints[0].status, 'stale');
+    assert.equal(f.store.current().checkpoints[0].status, 'frozen');
     assert.equal(f.store.current().checkpoints[1].status, 'frozen');
     f.chat[0].mes = original; f.store.revalidate(f.chat);
     assert.ok(f.store.current().checkpoints.every(isUsableMemory)); assert.equal(f.calls.length, 0);
@@ -180,7 +180,7 @@ test('ordinary CP content edits keep later frozen CP and Long records', () => {
     assert.equal(f.store.current().checkpoints[1].status, 'frozen'); assert.equal(f.store.current().longMemories[0].status, 'frozen');
 });
 
-test('maintenance updates stale CPs old to new using existing summaries, never publishes frozen snapshot', async () => {
+test('explicit fact-correction maintenance updates CPs using existing summaries without publishing snapshot', async () => {
     const f = aggregateFixture(), settings = normalizeSettings();
     refreshSnapshot(f.store.current(), settings, 'manual reinject'); const frozen = f.store.current().injectionSnapshot.value;
     correctFact(f, [1, 6]);
@@ -190,7 +190,7 @@ test('maintenance updates stale CPs old to new using existing summaries, never p
     assert.match(f.calls[1].userContent, /新阶段状态/);
     assert.equal(f.store.current().injectionSnapshot.value, frozen);
     assert.ok(f.reasons.every(reason => !['manual edit', 'new checkpoint', 'new long memory'].includes(reason)));
-    assert.ok(Object.values(f.store.current().recovery).some(item => item.kind === 'checkpoint' && item.record.content === '旧 checkpoint-001'));
+    assert.equal(f.store.current().recovery, undefined);
 });
 
 test('update failure keeps old CP content and stops downstream; conflict performs no model requests', async () => {
@@ -204,12 +204,12 @@ test('update failure keeps old CP content and stops downstream; conflict perform
 
 test('missing Summary blocks CP update without model; cancellation stops before first call', async () => {
     const f = aggregateFixture(); f.store.deleteSummary(Object.keys(f.store.current().summaries)[0]);
-    const result = await f.summarizer.updateCheckpoints(); assert.equal(result.failed, 1); assert.equal(f.calls.length, 0);
+    const result = await f.summarizer.updateCheckpoints({ ids: ['checkpoint-001'] }); assert.equal(result.failed, 1); assert.equal(f.calls.length, 0);
     const controller = new AbortController(); controller.abort();
-    await assert.rejects(f.summarizer.updateCheckpoints({ signal: controller.signal }), { code: 'REQUEST_ABORTED' });
+    await assert.rejects(f.summarizer.updateCheckpoints({ ids: ['checkpoint-001'], signal: controller.signal }), { code: 'REQUEST_ABORTED' });
 });
 
-test('health separates stored stale CP, failed/unverified Summary and missing records from injection omissions', () => {
+test('health ignores obsolete source flags but reports failed Summary and missing records', () => {
     const f = aggregateFixture(), entries = getAssistantMessages(f.chat);
     Object.values(f.store.current().summaries)[0].sourceValidity = 'unverified';
     Object.values(f.store.current().summaries)[1].status = 'failed';
@@ -217,7 +217,7 @@ test('health separates stored stale CP, failed/unverified Summary and missing re
     f.store.current().injectionSnapshot = { value: '', blocks: [], budget: { omitted: 2 } };
     const overview = memoryOverviewStats(f.store.current(), entries, normalizeSettings());
     assert.doesNotMatch(overview.issues.join('\n'), /校验信息缺失/); assert.match(overview.issues.join('\n'), /生成失败/);
-    assert.match(overview.issues.join('\n'), /已生成但需要更新：来源版本不一致/);
+    assert.doesNotMatch(overview.issues.join('\n'), /需要更新|来源版本/);
     assert.ok(!overview.aggregateDetails.some(row => row.id === 'checkpoint-002'));
     assert.equal(memoryHealth(f.store.current().checkpoints[1]).code, 'valid');
 });
@@ -234,20 +234,20 @@ test('maintenance snapshot is retained on reload and rebuilt at the next permitt
     assert.equal(f.store.current().injectionSnapshot.needsRebuild, undefined);
 });
 
-test('manual tracked corrections invalidate CP without prematurely changing frozen bytes', () => {
+test('manual tracked corrections retain frozen CP and allow requested maintenance without publishing snapshot', () => {
     const f = aggregateFixture(), source = Object.values(f.store.current().summaries)[0];
     refreshSnapshot(f.store.current(), normalizeSettings(), 'manual reinject'); const frozen = f.store.current().injectionSnapshot.value;
     f.store.editTrackedState({ kind: 'state', entity: '合成人物', key: '技能', value: 'Lv.3', sourceFloor: source.floor, status: 'active', lifetime: 'permanent' });
-    assert.equal(f.store.current().checkpoints[0].status, 'stale'); assert.equal(f.store.current().injectionSnapshot.value, frozen);
+    assert.equal(f.store.current().checkpoints[0].status, 'frozen'); assert.equal(f.store.current().injectionSnapshot.value, frozen);
     assert.equal(f.store.current().injectionSnapshot.needsRebuild, true);
 });
 
-test('unconfirmed CP persistence stops the batch and retains the old CP recovery copy', async () => {
+test('unconfirmed CP persistence stops the batch without creating permanent recovery copies', async () => {
     const f = aggregateFixture(); correctFact(f);
     f.summarizer.flushMemory = async () => ({ state: 'failed', detail: 'synthetic disconnect' });
     const result = await f.summarizer.updateCheckpoints();
     assert.equal(f.calls.length, 1); assert.equal(result.failed, 1);
-    assert.ok(Object.values(f.store.current().recovery).some(item => item.kind === 'checkpoint' && item.record.content === '旧 checkpoint-001'));
+    assert.equal(f.store.current().recovery, undefined);
 });
 
 test('device-local validation metadata does not cause a same-ID content conflict', () => {

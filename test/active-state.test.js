@@ -46,10 +46,12 @@ test('skill upgrade and numeric attribute replacement keep one current value per
     assert.equal(projectLongFacts(store, Infinity, { includeTracked: true }).facts.length, 3);
 });
 
-test('edited/deleted announcement or upgrade is retained for review and excluded from active model context', () => {
+test('old source flags keep frozen state usable; explicit deletion remains excluded', () => {
     const store = createEmptyStore('a'); put(store, 1, [task, skill]); put(store, 2, [{ ...skill, value: 'Lv.3' }]);
-    store.summaries.m2.status = 'stale'; assert.equal(projectActiveState(store).find(item => item.kind === 'state').needsReview, true);
-    assert.doesNotMatch(stateContext(store), /Lv.3/);
+    store.summaries.m2.status = 'stale'; store.summaries.m2.sourceValidity = 'changed';
+    assert.equal(projectActiveState(store).find(item => item.kind === 'state').needsReview, false);
+    assert.match(stateContext(store), /Lv.3/);
+    store.summaries.m2.status = 'orphaned';
     store.summaries.m1.status = 'orphaned'; assert.ok(projectActiveState(store).every(item => item.needsReview));
     assert.equal(stateContext(store), '无');
 });
@@ -91,7 +93,7 @@ test('same Summary request extracts state, no additional calls; disabled mode pr
     }
 });
 
-test('source edits invalidate dependent CP/Long without deleting earlier summaries or changing source text', () => {
+test('source edits preserve frozen Summary/CP/Long; explicit deletion retains original records', () => {
     const chat = [1, 2].map(floor => ({ name: 'A', mes: `正文${floor}`, gen_started: `g${floor}` })), metadata = {};
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata: () => {} });
     for (const entry of getAssistantMessages(chat)) store.addSummary({ messageId: entry.messageId, sourceFingerprint: entry.fingerprint, sourceContentFingerprint: entry.contentFingerprint, floor: entry.floor, messageIndex: entry.messageIndex, event: 'test', status: 'frozen' });
@@ -100,7 +102,7 @@ test('source edits invalidate dependent CP/Long without deleting earlier summari
     store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 2, checkpointIds: ['checkpoint-001'], status: 'frozen', content: 'Long' });
     chat[1].mes = '修改后的正文'; const before = structuredClone(chat); store.syncMessages(chat);
     assert.deepEqual(chat, before); assert.equal(Object.values(store.current().summaries)[0].status, 'frozen');
-    assert.equal(store.current().checkpoints[0].status, 'stale'); assert.equal(store.current().longMemories[0].status, 'stale');
+    assert.equal(store.current().checkpoints[0].status, 'frozen'); assert.equal(store.current().longMemories[0].status, 'frozen');
     chat.pop(); store.reconcileDeletion(chat); assert.equal(Object.keys(store.current().summaries).length, 2);
 });
 

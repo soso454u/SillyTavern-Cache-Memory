@@ -69,7 +69,7 @@ test('missing fingerprints and unloaded sources preserve generated CP/Long and d
     assert.equal(requests, 1); assert.equal(store.current().longMemories.length, 1);
 });
 
-test('a harmless swipe and whitespace edit preserves evidence; a real source edit targets only its own CP', () => {
+test('swipes, whitespace and genuine source edits leave generated CPs frozen', () => {
     const chat = [1, 2].map(i => ({ name: '甲', mes: `正文 ${i}`, gen_started: `g${i}` })), metadata = {};
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata: () => {} });
     for (const entry of getAssistantMessages(chat)) store.addSummary({ ...row(entry.messageId), floor: entry.floor, sourceFingerprint: entry.fingerprint });
@@ -77,8 +77,8 @@ test('a harmless swipe and whitespace edit preserves evidence; a real source edi
     store.syncMessages(chat); chat[0].swipe_id = 1; chat[0].mes = '正文   1\n'; store.syncMessages(chat);
     assert.ok(store.current().checkpoints.every(isUsableMemory));
     chat[0].mes = '事实发生变化'; store.syncMessages(chat);
-    assert.equal(store.current().checkpoints[0].status, 'stale'); assert.ok(isUsableMemory(store.current().checkpoints[1]));
-    store.syncMessages([]); assert.equal(store.current().checkpoints[0].status, 'stale');
+    assert.equal(store.current().checkpoints[0].status, 'frozen'); assert.ok(isUsableMemory(store.current().checkpoints[1]));
+    store.syncMessages([]); assert.equal(store.current().checkpoints[0].status, 'frozen');
 });
 
 for (const authority of [false, true]) test(`different-device additions automatically save without dropping either side (authority=${authority})`, async () => {
@@ -169,14 +169,14 @@ test('empty CP records are pending while complete CP without fingerprints is fro
     assert.equal(isUsableMemory(complete), true); assert.equal(memoryHealth(complete).code, 'valid');
 });
 
-test('the next publish boundary removes a positively invalidated source block without disturbing unrelated history', () => {
+test('legacy validation flags do not remove generated blocks at the next publish boundary', () => {
     const store = createEmptyStore('a'), settings = normalizeSettings();
     store.checkpoints = [cp('checkpoint-001', 1, 5, '已被改写的旧事实'), cp('checkpoint-002', 6, 10, '仍有效的历史')];
     const frozen = refreshSnapshot(store, settings, 'new checkpoint').value;
     store.checkpoints[0].status = 'stale'; store.checkpoints[0].sourceValidity = 'changed';
     assert.equal(refreshSnapshot(store, settings, 'new summary').value, frozen);
     const value = refreshSnapshot(store, settings, 'new checkpoint').value;
-    assert.doesNotMatch(value, /已被改写的旧事实/); assert.match(value, /仍有效的历史/);
+    assert.match(value, /已被改写的旧事实/); assert.match(value, /仍有效的历史/);
 });
 
 test('an authoritative CAS revision race automatically retries only non-conflicting records', async () => {
@@ -194,7 +194,7 @@ test('an authoritative CAS revision race automatically retries only non-conflict
     assert.ok(f.remote.summaries.local); assert.ok(f.remote.summaries.other);
 });
 
-test('regenerating a changed source Summary does not falsely validate the old frozen CP or Long', () => {
+test('explicit Summary and CP regeneration leave other generated records frozen until the user replaces them', () => {
     const chat = [{ name: '甲', mes: '原计划前往北门', gen_started: 'g' }], metadata = {};
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata: () => {} });
     const before = getAssistantMessages(chat)[0];
@@ -204,9 +204,9 @@ test('regenerating a changed source Summary does not falsely validate the old fr
     store.syncMessages(chat); chat[0].mes = '改为前往南门'; store.syncMessages(chat);
     const changed = getAssistantMessages(chat)[0];
     store.addSummary({ ...row(changed.messageId, changed.message.mes), sourceFingerprint: changed.fingerprint, sourceContentFingerprint: changed.contentFingerprint }, { overwrite: true, background: true });
-    assert.equal(store.current().checkpoints[0].status, 'stale'); assert.equal(store.current().longMemories[0].status, 'stale');
+    assert.equal(store.current().checkpoints[0].status, 'frozen'); assert.equal(store.current().longMemories[0].status, 'frozen');
     store.addCheckpoint(cp('checkpoint-001', 1, 1, '改为前往南门'), { overwrite: true });
-    assert.ok(isUsableMemory(store.current().checkpoints[0])); assert.equal(store.current().longMemories[0].status, 'stale');
+    assert.ok(isUsableMemory(store.current().checkpoints[0])); assert.equal(store.current().longMemories[0].status, 'frozen');
 });
 
 test('a revision-only CAS race refreshes the baseline revision before retrying', async () => {
@@ -223,10 +223,10 @@ test('a revision-only CAS race refreshes the baseline revision before retrying',
     assert.equal(f.p.getState().state, 'confirmed'); assert.equal(attempts, 2); assert.ok(f.remote.summaries.local);
 });
 
-test('an incomplete current generation retains the complete server record and its failed local copy', async () => {
+test('an incomplete generation keeps the complete server record without archiving the failed attempt', async () => {
     const f = persistenceFixture(); f.remote.summaries.same = row('same', 'complete'); f.metadata.cache_memory = structuredClone(f.remote); f.p.activate('a', f.metadata.cache_memory);
     f.metadata.cache_memory.summaries.same = { ...row('same', 'failed response'), status: 'failed', frozen: false };
     f.p.enqueue(f.metadata.cache_memory); await f.p.flush();
     assert.equal(f.p.getState().state, 'confirmed'); assert.equal(f.remote.summaries.same.event, 'complete');
-    assert.ok(Object.values(f.remote.recovery).some(item => item.kind === 'failed-local'));
+    assert.equal(f.remote.recovery, undefined);
 });

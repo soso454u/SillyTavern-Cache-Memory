@@ -1,6 +1,6 @@
-import { normalizeStore, STORE_VERSION, mergeMemoryStores, memoryContentDigest, applyMemoryTombstones } from './memory-store.js?v=1.22.1';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.1';
-import { projectLongFacts } from './continuity.js?v=1.22.1';
+import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.22.2';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.2';
+import { projectLongFacts } from './continuity.js?v=1.22.2';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
@@ -42,15 +42,15 @@ export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
             if (row.sourceVersions != null && (!object(row.sourceVersions) || Object.values(row.sourceVersions).some(value => typeof value !== 'string'))) throw new Error(`${row.id} 来源版本格式错误`);
             if (row.checkpointIds != null && (!Array.isArray(row.checkpointIds) || row.checkpointIds.some(id => typeof id !== 'string'))) throw new Error(`${row.id} 关联关系格式错误`);
             const missing = Object.keys(row.sourceVersions ?? {}).filter(id => !data.summaries[id]);
-            if (missing.length) warnings.push(`${row.id} 有 ${missing.length} 个来源摘要不存在，导入后保留待核对`);
+            if (missing.length) warnings.push(`${row.id} 有 ${missing.length} 个来源摘要不存在，保留已生成内容`);
             if (row.previousCheckpointId && !data.checkpoints.some(cp => cp.id === row.previousCheckpointId)
-                || row.checkpointIds?.some(id => !data.checkpoints.some(cp => cp.id === id))) warnings.push(`${row.id} 的关联 Checkpoint 不完整，导入后保留待核对`);
+                || row.checkpointIds?.some(id => !data.checkpoints.some(cp => cp.id === id))) warnings.push(`${row.id} 的关联 Checkpoint 不完整，保留已生成内容`);
         }
     }
     for (const [id, row] of Object.entries(data.keepRegistry ?? {})) if (!object(row) || typeof row.text !== 'string') throw new Error(`KEEP ${id} 格式错误`);
     for (const [id, row] of Object.entries(data.stateOverrides ?? {})) {
         if (!object(row) || !['thread', 'state'].includes(row.kind) || !row.id || !row.sourceId) throw new Error(`状态 ${id} 格式错误`);
-        if (!data.summaries[row.sourceId]) warnings.push(`状态 ${id} 来源不存在，导入后待核对`);
+        if (!data.summaries[row.sourceId]) warnings.push(`状态 ${id} 来源不存在，保留现有状态记录`);
     }
     const store = normalizeStore(structuredClone(data), chatId), states = projectActiveState(store);
     const counts = { Summary: Object.keys(store.summaries).length, Checkpoint: store.checkpoints.length,
@@ -75,14 +75,8 @@ export function prepareMemoryImport(current, inspected, { mode = 'replace', pref
             for (const id of ids(current[section])) if (!restored.has(id)) merged.tombstones[`${type}:${id}`] = { reason: 'confirmed-json-restore', deletedAt: new Date().toISOString() };
         }
     } else merged.tombstones = { ...current.tombstones, ...merged.tombstones };
-    const incomingRecovery = merged.recovery;
-    merged.recovery = { ...current.recovery, ...incomingRecovery };
-    for (const [id, row] of Object.entries(current.recovery)) {
-        if (incomingRecovery[id] && JSON.stringify(row) !== JSON.stringify(incomingRecovery[id])) merged.recovery[`preserved:${id}:${memoryContentDigest({ recovery: { [id]: row } })}`] = structuredClone(row);
-    }
+    delete merged.recovery;
     applyMemoryTombstones(merged);
-    const backup = value => { const copy = structuredClone(value); delete copy.recovery; return copy; };
-    merged.recovery[`import-backup:${memoryContentDigest(current)}`] = { kind: 'import-backup', snapshot: backup(current), incoming: backup(inspected.store) };
     if (current.injectionSnapshot) merged.injectionSnapshot = structuredClone(current.injectionSnapshot);
     else delete merged.injectionSnapshot;
     return result;

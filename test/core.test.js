@@ -154,7 +154,7 @@ test('clearCurrentChat atomically replaces only the current chat memory store', 
     assert.deepEqual(metadata.unrelated, { preserved: true });
 });
 
-test('message sync keeps identity through array index shifts and marks edited source stale', () => {
+test('message sync keeps identity and frozen status through array shifts and source edits', () => {
     const fixture = createStore();
     const assistant = message('original body', '2026-01-01');
     const firstChat = [{ is_user: true, mes: 'u' }, assistant];
@@ -173,7 +173,7 @@ test('message sync keeps identity through array index shifts and marks edited so
     fixture.store.syncMessages([assistant]);
     const stored = fixture.store.getSummary(entry.messageId);
     assert.equal(stored.messageIndex, 0);
-    assert.equal(stored.status, 'stale');
+    assert.equal(stored.status, 'frozen');
 });
 
 test('message sync rebinds a restored summary by stable assistant fingerprint', () => {

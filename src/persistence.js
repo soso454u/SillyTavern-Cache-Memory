@@ -1,4 +1,4 @@
-import { memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.22.1';
+import { memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.22.2';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -79,6 +79,12 @@ export class MemoryPersistenceCoordinator {
                 const key = this.storage.key(i);
                 if (key?.startsWith(`${STORAGE_KEY}:`)) keys.add(key);
             }
+            const obsolete = [];
+            for (let i = 0; i < (this.storage.length ?? 0); i++) {
+                const key = this.storage.key(i);
+                if (key?.startsWith(MIGRATION_BACKUP_PREFIX)) obsolete.push(key);
+            }
+            for (const key of obsolete) this.storage.removeItem(key);
             for (const key of keys) {
                 const raw = this.storage.getItem(key);
                 if (!raw) continue;
@@ -88,6 +94,15 @@ export class MemoryPersistenceCoordinator {
                 let complete = true;
                 for (const saved of entries) {
                     if (!saved?.chatId || !saved?.snapshot) { complete = false; continue; }
+                    const stripArchives = value => {
+                        if (!value || typeof value !== 'object') return;
+                        delete value.recovery;
+                        for (const child of Object.values(value)) stripArchives(child);
+                    };
+                    stripArchives(saved);
+                    saved.snapshot = normalizeStore(saved.snapshot, saved.chatId);
+                    saved.digest = memoryContentDigest(saved.snapshot);
+                    if (saved.baseSnapshot) saved.baseDigest = memoryContentDigest(saved.baseSnapshot);
                     const id = String(saved.chatId), previous = this.pending.get(id);
                     let entry = clone(previous?.digest === saved.digest && (previous.conflict || previous.restore) ? previous : saved);
                     if (previous && previous.digest !== saved.digest) {
@@ -95,11 +110,9 @@ export class MemoryPersistenceCoordinator {
                         entry = { ...previous, snapshot: merge.merged, digest: memoryContentDigest(merge.merged) };
                         if (merge.conflicts.length || previous.restore || saved.restore || previous.conflict || saved.conflict) {
                             entry = { ...previous, snapshot: clone(previous.snapshot), conflict: { local: clone(previous.snapshot), remote: clone(saved.snapshot), recordConflicts: merge.conflicts } };
-                            for (const conflict of [previous.conflict, saved.conflict].filter(Boolean)) {
-                                entry.snapshot.recovery ??= {};
-                                const key = `pending-conflict:${memoryContentDigest({ recovery: conflict })}`;
-                                entry.snapshot.recovery[key] = { kind: 'pending-conflict', conflict: clone(conflict) };
-                            }
+                            // Unresolved branches live only in the temporary save
+                            // journal, never in the saved/exported memory JSON.
+                            entry.conflict.pendingConflicts = [previous.conflict, saved.conflict].filter(Boolean).map(clone);
                             entry.digest = memoryContentDigest(entry.snapshot);
                             entry.conflict.local = clone(entry.snapshot);
                         }
@@ -204,11 +217,6 @@ export class MemoryPersistenceCoordinator {
             if (String(this.getChatId()) !== id || epoch !== this.epoch || readSequence !== this.readSequence) return loadedValue;
             if (this.pending.has(id) || memoryContentDigest(this.getMetadata().cache_memory) !== initialDigest) return this.getMetadata().cache_memory;
             if (!record?.store) {
-                if (this.storage) {
-                    try {
-                        this.storage.setItem(`${MIGRATION_BACKUP_PREFIX}${id}`, JSON.stringify({ savedAt: new Date().toISOString(), snapshot: loadedValue }));
-                    } catch (error) { throw new Error(`迁移备份失败，未迁移：${error.message}`); }
-                }
                 this.baselines.set(id, { digest: memoryContentDigest(normalizeStore(loadedValue, id)), revision: 0, snapshot: clone(normalizeStore(loadedValue, id)) });
                 if (loadedValue) { this.enqueue(loadedValue, 'initial authoritative migration'); await this.flush(id); }
                 return String(this.getChatId()) === id ? this.getMetadata().cache_memory : loadedValue;
@@ -316,8 +324,7 @@ export class MemoryPersistenceCoordinator {
         if (String(this.getChatId()) !== id || this.epoch !== prepared.epoch || this.running.has(id)
             || memoryContentDigest(this.getMetadata().cache_memory) !== prepared.localDigest
             || this.pending.get(id)?.sequence !== prepared.sequence) throw new Error('确认期间当前记忆发生变化，请重新选择文件');
-        // Called only after explicit file confirmation; the caller first retains
-        // any pending/conflict branches inside the new import's recovery data.
+        // Called only after explicit file confirmation selects the replacement.
         this.baselines.set(id, { digest: memoryContentDigest(prepared.remote), revision: prepared.remote.sync.revision,
             snapshot: clone(prepared.remote), authoritative: prepared.authority });
         this.conflicts.delete(id); this.pending.delete(id);
@@ -377,9 +384,11 @@ export class MemoryPersistenceCoordinator {
             this.setState(chatId, MEMORY_SAVE_STATES.SAVING, '正在核对服务器版本并保存');
             let remote;
             let authoritativeRecord = null;
+            let remoteRecovery;
             try {
                 const authoritative = await withDeadline(() => useAuthority ? this.readAuthoritativeStore(chatId) : this.readRemoteStore(chatId), this.timeoutMs);
                 authoritativeRecord = useAuthority ? validateAuthoritativeRecord(authoritative, chatId) : null;
+                remoteRecovery = (useAuthority ? authoritative?.store : authoritative)?.recovery;
                 remote = normalizeRemote(useAuthority ? authoritative?.store : authoritative, chatId);
                 if (useAuthority) remote.sync.revision = Number(authoritativeRecord?.revision || 0);
             } catch (error) {
@@ -394,7 +403,7 @@ export class MemoryPersistenceCoordinator {
             }
             if (this.pending.get(chatId)?.sequence !== entry.sequence) continue;
             const remoteDigest = memoryContentDigest(remote);
-            if (remoteDigest === entry.digest && !restoredConflict) {
+            if (remoteDigest === entry.digest && !restoredConflict && !Object.keys(remoteRecovery ?? {}).length) {
                 this.getMetadata().cache_memory = clone(remote);
                 this.pending.delete(chatId);
                 this.persistPending();
@@ -442,7 +451,9 @@ export class MemoryPersistenceCoordinator {
                     try {
                         result = await withDeadline(() => this.commitAuthoritative(chatId, {
                             snapshot: desired,
-                            baseSnapshot: entry.baseSnapshot,
+                            // Legacy server plugins need the old archive map in
+                            // the comparison base to delete it, never in desired.
+                            baseSnapshot: remoteRecovery ? { ...entry.baseSnapshot, recovery: remoteRecovery } : entry.baseSnapshot,
                             baseRevision: this.baselines.get(chatId)?.revision ?? remote.sync.revision,
                             writerId: this.writerId,
                         }), this.timeoutMs);
@@ -476,6 +487,7 @@ export class MemoryPersistenceCoordinator {
                         this.baselines.set(chatId, { digest: latest.baseDigest, revision: readback.revision, snapshot: clone(latestRemote), authoritative: true });
                         this.persistPending(); continue;
                     }
+                    if (Object.keys(readback.store.recovery ?? {}).length) throw new Error('服务器仍保留旧恢复数据，清理尚未确认；请重试保存');
                     const committed = normalizeStore(clone(readback.store), chatId);
                     if (stillActive() && this.pending.get(chatId)?.sequence === entry.sequence) this.getMetadata().cache_memory = committed;
                     this.baselines.set(chatId, { digest: memoryContentDigest(committed), revision: Number(result.record?.revision || remote.sync.revision + 1), snapshot: clone(committed), authoritative: true });
@@ -504,7 +516,9 @@ export class MemoryPersistenceCoordinator {
             }
             let verified;
             try {
-                verified = normalizeRemote(await withDeadline(() => this.readRemoteStore(chatId), this.timeoutMs), chatId);
+                const readback = await withDeadline(() => this.readRemoteStore(chatId), this.timeoutMs);
+                if (Object.keys(readback?.recovery ?? {}).length) throw new Error('服务器仍保留旧恢复数据，清理尚未确认；请重试保存');
+                verified = normalizeRemote(readback, chatId);
             } catch (error) {
                 if (!stillActive()) return this.getState(chatId);
                 this.setState(chatId, MEMORY_SAVE_STATES.FAILED, `SillyTavern 未报告结果，且服务器读回失败：${error.message}`);

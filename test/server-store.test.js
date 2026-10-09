@@ -23,6 +23,7 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         };
         assert.equal((await request('GET', null, '')).status, 401);
         const snapshot = createEmptyStore('synthetic-chat'); snapshot.summaries.a = { messageId: 'a', event: 'synthetic' };
+        snapshot.recovery = { old: { content: 'obsolete backup' } };
         const initial = await request('POST', { snapshot, baseRevision: 0 }); assert.equal(initial.status, 200); assert.equal(initial.data.record.revision, 1);
         const branch = structuredClone(snapshot); branch.summaries.b = { event: 'second' };
         branch.tombstones['Summary:gone'] = { deletedAt: 'synthetic-time' };
@@ -36,6 +37,9 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         const persisted = JSON.parse(await fs.readFile(path.join(directory, 'cache-memory', files[0]), 'utf8'));
         assert.equal(persisted.store.sync.revision, 2); assert.ok(persisted.store.summaries.b);
         assert.ok(persisted.store.tombstones['Summary:gone']);
+        assert.equal(persisted.store.recovery, undefined);
+        persisted.store.recovery = { historical: { content: 'old archived content' } };
+        await fs.writeFile(path.join(directory, 'cache-memory', files[0]), JSON.stringify(persisted));
         const metadata = { cache_memory: structuredClone(persisted.store) };
         const coordinator = new MemoryPersistenceCoordinator({ getChatId: () => 'synthetic-chat', getMetadata: () => metadata,
             readAuthoritativeStore: async () => (await request('GET')).data,
@@ -46,6 +50,9 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
             },
         });
         coordinator.activate('synthetic-chat', metadata.cache_memory);
+        coordinator.enqueue(metadata.cache_memory, 'store migration');
+        assert.equal((await coordinator.flush()).state, 'confirmed');
+        assert.equal((await request('GET')).data.store.recovery, undefined);
         assert.equal((await coordinator.verify()).state, 'confirmed');
         const imported = createEmptyStore('synthetic-chat');
         imported.summaries.restored = { messageId: 'restored', floor: 1, event: 'restored file', status: 'frozen' };
@@ -53,7 +60,7 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         coordinator.enqueue(metadata.cache_memory, 'memory import');
         assert.equal((await coordinator.flush()).state, 'confirmed');
         const diskReadback = (await request('GET')).data;
-        assert.equal(diskReadback.revision, 3); assert.ok(diskReadback.store.summaries.restored);
+        assert.equal(diskReadback.revision, 4); assert.ok(diskReadback.store.summaries.restored);
         assert.equal(diskReadback.store.summaries.a, undefined); assert.equal(diskReadback.store.summaries.b, undefined);
         assert.ok(diskReadback.store.tombstones['Summary:a']);
         assert.equal(memoryContentDigest(diskReadback.store), memoryContentDigest(metadata.cache_memory));
