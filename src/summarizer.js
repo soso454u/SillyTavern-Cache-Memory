@@ -1,10 +1,10 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.2';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.2';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.2';
-import { extractSummarySource } from './summary-source.js?v=1.22.2';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.2';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.22.2';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.2';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.3';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.3';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.3';
+import { extractSummarySource } from './summary-source.js?v=1.22.3';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.3';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.22.3';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.3';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -268,6 +268,87 @@ export class MemorySummarizer {
             startFloor = next.endFloor + 1;
         }
         return { startFloor, endFloor: startFloor + settings.checkpointInterval - 1 };
+    }
+
+    getMissingMemoryPlan() {
+        const settings = this.getSettings(), store = this.store.current();
+        const assistants = getAssistantMessages(this.getChat());
+        const latestFloor = assistants.at(-1)?.floor ?? 0;
+        const checkpointInterval = Math.max(1, Number(settings.checkpointInterval) || 5);
+        const longSpan = Math.ceil(Math.max(checkpointInterval, Number(settings.longMemoryInterval) || 50) / checkpointInterval) * checkpointInterval;
+        const missingRanges = (items, interval) => {
+            const ranges = [];
+            for (let startFloor = 1; startFloor + interval - 1 <= latestFloor; startFloor += interval) {
+                const endFloor = startFloor + interval - 1;
+                if (!items.some(item => item.startFloor === startFloor && item.endFloor === endFloor && isUsableMemory(item))) ranges.push({ startFloor, endFloor });
+            }
+            return ranges;
+        };
+        return { latestFloor, summaries: assistants.filter(entry => !isUsableMemory(store.summaries[entry.messageId])),
+            checkpoints: missingRanges(store.checkpoints, checkpointInterval), longMemories: missingRanges(store.longMemories, longSpan) };
+    }
+
+    async fillMissingMemories({ signal, onProgress = () => {} } = {}) {
+        const chatId = this.store.current().chatId, revision = this.contextRevision;
+        this.store.syncMessages(this.getChat());
+        const plan = this.getMissingMemoryPlan();
+        const result = { total: plan.summaries.length + plan.checkpoints.length + plan.longMemories.length,
+            processed: 0, created: 0, skipped: 0, failed: 0, errors: [], currentRange: null, phase: 'Summary' };
+        const assertActive = () => {
+            if (signal?.aborted) throw Object.assign(new Error('记忆补全已停止'), { code: 'REQUEST_ABORTED' });
+            if (chatId !== this.store.current().chatId || revision !== this.contextRevision) throw chatChangedError('记忆补全');
+            if (this.getPersistenceState().state === 'conflict') throw new Error('检测到跨设备冲突，补全已停止');
+        };
+        const save = async () => {
+            assertActive();
+            const state = await this.flushMemory(chatId);
+            assertActive();
+            if (state?.state !== 'confirmed') throw new Error(`记忆尚未确认保存，补全已停止：${state?.detail || '状态未知'}`);
+        };
+        this.aggregateDeferrals++;
+        try {
+            await this.store.withAggregateBatch(async () => {
+                onProgress({ ...result });
+                for (const [phase, entries] of [['Summary', plan.summaries], ['Checkpoint', plan.checkpoints], ['Long Memory', plan.longMemories]]) {
+                    for (const entry of entries) {
+                        assertActive();
+                        result.phase = phase;
+                        result.currentRange = { startFloor: entry.floor ?? entry.startFloor, endFloor: entry.floor ?? entry.endFloor };
+                        onProgress({ ...result });
+                        let record;
+                        if (phase === 'Summary') {
+                            const existing = this.store.getSummary(entry.messageId);
+                            if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
+                            record = await this.summarizeMessage(entry.messageId, { overwrite: Boolean(existing), deferAggregates: true, signal, expectedFingerprint: entry.fingerprint });
+                        } else {
+                            const items = phase === 'Checkpoint' ? this.store.current().checkpoints : this.store.current().longMemories;
+                            const existing = items.find(item => item.startFloor === entry.startFloor && item.endFloor === entry.endFloor);
+                            if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
+                            record = await this.enqueueForCurrentChat(() => {
+                                assertActive();
+                                if (phase === 'Checkpoint') return this.generateCheckpoint(entry.startFloor, entry.endFloor, { overwrite: Boolean(existing), signal });
+                                const sources = this.store.current().checkpoints.filter(item => item.startFloor >= entry.startFloor && item.endFloor <= entry.endFloor && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor);
+                                if (sources[0]?.startFloor !== entry.startFloor || sources.at(-1)?.endFloor !== entry.endFloor) throw new Error('Long Memory 的阶段记忆尚未补齐');
+                                return this.generateLongMemory(sources, { overwrite: Boolean(existing), signal });
+                            });
+                        }
+                        if (!isUsableMemory(record)) throw new Error(`${phase} 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层未能生成`);
+                        await save();
+                        result.created++; result.processed++;
+                        onProgress({ ...result });
+                    }
+                }
+                result.currentRange = null;
+                onProgress({ ...result });
+            });
+            await save();
+            return result;
+        } catch (error) {
+            if (['REQUEST_ABORTED', 'CHAT_CHANGED'].includes(error.code)) throw error;
+            result.failed++; result.errors.push(`${result.phase}${result.currentRange ? ` 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层` : ''}：${error.message}`);
+            onProgress({ ...result });
+            return result;
+        } finally { this.aggregateDeferrals--; }
     }
 
     getMissingCheckpointPlan() {

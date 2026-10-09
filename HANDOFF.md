@@ -1,4 +1,12 @@
-# 接续说明（2026-10-09，v1.22.2）
+# 接续说明（2026-10-09，v1.22.3）
+
+最新用户要求：顶部有明确“上传记忆到服务器”和“从服务器恢复记忆”，只做必要检查，避免整套测试、浏览器预览和扩展范围。基于 f19e492。上传沿用安全保存与读回，恢复直接读服务器，不先 flush 本机 pending；有差异/未保存修改时一次确认，以服务器内容替换本机，不写服务器。restoreServerSnapshot 校验准备时的聊天、epoch、digest、队列 sequence，废弃迟到读取并清理待保存队列。服务器无记忆则明确报错。JSON 下载导入保留，不改变冻结、注入和缓存规则。按钮相关检查和保存恢复定向测试即可。
+
+最新追加：用户明确要求“一键补全所有记忆”及实际变动才自动保存。fillMissingMemories 串行 Summary → CP → Long，计划覆盖启动时完整楼层分组，保留所有可用冻结记录，补先前区间缺口，原模型/注入规则不变。每条成功后 flush 确认；错误/未确认/聊天变化/取消停止。UI 复用 missingCheckpointController/runId 以保留停止、切聊天和卸载保护。先 reread，避免为服务器已有记录重复生成。
+
+重复自动保存：enqueue 相同待保存或已确认基线内容不重新排队；主动上传/import/migration 仍可强制核验。sourceValidity 诊断变化不单独 persist。用户最终明确取消跨设备日常核对，以刷新/重新进入时服务器最后成功保存的版本为准：focus 完全移除，visibility 只保留本地 pending journal，无网络读取；online 仅重试 pending。refreshChatState 改为 loadLatest（暂停队列、读服务器、直接替换并清理 pending/conflict，不自动合并）；读取失败保留本机/队列，不立即重试。新装权威库无记录时先读原生服务器旧记忆再迁移，不能空初始化。保存自身的三方比较/并发保护/CAS及读回仍保留。恢复确认使用 pauseSaves，取消后恢复队列，确认则清理；已开始写入等完成再读取。
+
+当前定向检查为 44 项（fill-all-memory、memory-sync-import、persistence）和改动模块语法检查；不跑全套/浏览器/私人模型。
 
 仓库：https://github.com/soso454u/SillyTavern-Cache-Memory 。先核对 README、git status/log 与远端。不用子代理、私人聊天或付费 API 测试；提交推送以实际结果为准。
 
@@ -10,7 +18,7 @@ normalizeStore 解除旧 stale/sourceValidity changed/invalidSource 标记，保
 
 保留此前保存修复：安全三方比较，独立变更合并，同 ID 双边修改/删除与编辑冲突停止；显式选择/JSON 恢复经确认再替换。导入 restore 意图必须等于最新服务器基线才可写入，CAS 有限重试与实际读回，旧 v1–v4 作用域兼容且核对来源身份。各窗口临时 pending journal 保留未保存内容和未解决冲突，确认完成后清理，不保存到记忆 JSON。旧 journal 的 recovery 在恢复时清理。
 
-保留完整注入与现有发布边界、Strict Cache、Claude 缓存、整理/生成流程、Summary/Checkpoint/Long/KEEP/角色状态、自定义提示词；模块 URL 与版本统一 1.22.2。
+保留完整注入与现有发布边界、Strict Cache、Claude 缓存、整理/生成流程、Summary/Checkpoint/Long/KEEP/角色状态、自定义提示词；模块 URL 与版本统一 1.22.3。
 
 验证：227 项本地测试及语法检查。新增 frozen-memory.test.js 复现截图的205条可用+2失败、第14层不阻挡11–15阶段生成、旧CP支持Long、手动重生成、请求中变化阻断、原生/权威清理服务器备份；原服务端插件测试覆盖真实路由与磁盘。合成浏览器界面确认205条全部可用、来源更新提示与恢复入口均不存在；临时仅公开资源预览服务已停止。未连接用户真实服务器。
 

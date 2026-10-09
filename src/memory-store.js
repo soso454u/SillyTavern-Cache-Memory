@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.2';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.2';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.2';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.3';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.3';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.3';
 
 export const STORE_VERSION = 6;
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
@@ -243,7 +243,8 @@ export class MemoryStore {
                 for (const override of Object.values(store.stateOverrides)) if (override.sourceId === record.messageId && override.sourceFingerprint === record.sourceFingerprint) override.sourceFingerprint = entry.fingerprint;
                 record.sourceFingerprint = entry.fingerprint; changed = true;
             }
-            if (record.sourceValidity !== validity) { record.sourceValidity = validity; changed = true; }
+            // Diagnostic source availability is not a memory edit.
+            if (record.sourceValidity !== validity) record.sourceValidity = validity;
             if (record.floor !== entry.floor || record.messageIndex !== entry.messageIndex || record.messageId !== entry.messageId) {
                 for (const keep of Object.values(store.keepRegistry)) if (keep.sourceId === record.messageId) keep.sourceFloor = entry.floor;
                 record.floor = entry.floor;
@@ -260,7 +261,7 @@ export class MemoryStore {
         }
 
         for (const [id, record] of Object.entries(store.summaries)) {
-            if (!matched.has(id) && record.sourceValidity !== 'unmatched') { record.sourceValidity = 'unmatched'; changed = true; }
+            if (!matched.has(id) && record.sourceValidity !== 'unmatched') record.sourceValidity = 'unmatched';
         }
         if (assistants.length) changed = this.validateDependencies(store) || changed;
 

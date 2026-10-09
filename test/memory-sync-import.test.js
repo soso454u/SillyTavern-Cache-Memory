@@ -117,9 +117,115 @@ test('the ordinary toolbar exposes download and import without any recovery-copy
     const recovery = html.indexOf('<details class="cache-memory-backup"', start);
     const ordinary = html.slice(start, recovery);
     assert.match(ordinary, /下载记忆 JSON/); assert.match(ordinary, /导入记忆 JSON/);
+    assert.match(ordinary, /data-save-memory>上传记忆到服务器/);
+    assert.match(ordinary, /data-read-server>从服务器恢复记忆/);
     assert.doesNotMatch(ordinary, /data-export-recovery|data-memory-conflict/);
     assert.doesNotMatch(html, /恢复副本|data-export-recovery/);
     assert.equal((html.match(/data-import-merge-file/g) ?? []).length, 1);
+});
+
+for (const authority of [false, true]) test(`server restore replaces local pending content without uploading it (authority=${authority})`, async () => {
+    const f = fixture(authority, 1); await f.p.verify();
+    f.metadata.cache_memory.summaries.m1.event = 'unsaved local version';
+    f.p.enqueue(f.metadata.cache_memory);
+    const resume = f.p.pauseSaves('a');
+    const prepared = await f.p.prepareRestore('a', { requireSaved: true });
+    assert.equal(f.writes, 0); assert.equal(prepared.remote.summaries.m1.event, 'summary 1');
+    f.p.restoreServerSnapshot(prepared);
+    resume();
+    await Promise.resolve();
+    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'summary 1');
+    assert.equal(f.p.pending.size, 0); assert.equal(f.p.getState().state, 'confirmed'); assert.equal(f.writes, 0);
+});
+
+test('cancelled server restore resumes the pending save without losing local edits', async () => {
+    const f = fixture(false, 1); await f.p.verify();
+    f.metadata.cache_memory.summaries.m1.event = 'local edit';
+    f.p.enqueue(f.metadata.cache_memory);
+    const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { store: f.store, persistence: f.p,
+        summarizer: {}, isMissingCheckpointBackfillActive: () => false,
+        showPluginDialog: async () => { assert.equal(f.writes, 0); return null; },
+    });
+    await ui.handleManagerClick({ target: { closest: selector => selector === '[data-read-server]' ? {} : null } });
+    await f.p.flush();
+    assert.equal(f.remote.summaries.m1.event, 'local edit');
+    assert.equal(f.p.getState().state, 'confirmed'); assert.equal(f.p.pausedSaves.size, 0);
+    assert.equal(ui.restoringServerMemory, false);
+});
+
+test('unchanged memory never restarts a failed upload, but a real edit and explicit upload do', async () => {
+    const f = fixture(false, 1); await f.p.verify();
+    let reads = 0;
+    f.p.readRemoteStore = async () => { reads++; throw new Error('offline'); };
+    f.p.enqueue(f.metadata.cache_memory, 'injection snapshot');
+    await Promise.resolve(); assert.equal(reads, 0);
+    f.metadata.cache_memory.summaries.m1.event = 'actual edit';
+    f.p.enqueue(f.metadata.cache_memory);
+    await f.p.flush(); assert.equal(reads, 1);
+    const sequence = f.p.pending.get('a').sequence;
+    for (let n = 0; n < 10; n++) f.p.enqueue(f.metadata.cache_memory, 'injection snapshot');
+    await Promise.resolve(); assert.equal(reads, 1); assert.equal(f.p.pending.get('a').sequence, sequence);
+    f.metadata.cache_memory.summaries.m1.event = 'next edit';
+    f.p.enqueue(f.metadata.cache_memory);
+    await f.p.flush(); assert.equal(reads, 2);
+    f.p.enqueue(f.metadata.cache_memory, 'manual save');
+    await f.p.flush(); assert.equal(reads, 3);
+});
+
+test('temporarily unloaded sources change diagnostics without causing automatic uploads', () => {
+    const f = fixture(false, 1); let saves = 0;
+    f.store.saveMetadata = () => { saves++; };
+    f.store.syncMessages([]); f.store.syncMessages([]);
+    assert.equal(saves, 0); assert.equal(f.store.current().summaries.m1.event, 'summary 1');
+});
+
+for (const authority of [false, true]) test(`reload adopts last saved server memory over old local edits without merging or uploading (authority=${authority})`, async () => {
+    const f = fixture(authority, 1);
+    f.metadata.cache_memory.summaries.m1.event = 'local unsaved version';
+    f.p.enqueue(f.metadata.cache_memory);
+    f.remote = makeStore(2); f.remote.summaries.m1.event = 'latest saved server version';
+    assert.equal((await f.p.loadLatest('a')).state, 'confirmed');
+    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'latest saved server version');
+    assert.ok(f.metadata.cache_memory.summaries.m2);
+    assert.equal(f.p.pending.size, 0); assert.equal(f.p.conflicts.size, 0); assert.equal(f.writes, 0);
+});
+
+test('a new authority migrates existing native server memory instead of replacing it with an empty record', async () => {
+    const f = fixture(true, 2), read = f.p.readAuthoritativeStore;
+    f.p.readAuthoritativeStore = async () => f.writes ? read() : { revision: 0, store: null };
+    assert.equal((await f.p.loadLatest('a')).state, 'confirmed');
+    assert.ok(f.metadata.cache_memory.summaries.m2); assert.ok(f.remote.summaries.m2); assert.equal(f.writes, 1);
+});
+
+test('a failed reload retains pending edits without immediately retrying another server read', async () => {
+    const f = fixture(false, 1); let reads = 0;
+    f.metadata.cache_memory.summaries.m1.event = 'not yet saved'; f.p.enqueue(f.metadata.cache_memory);
+    f.p.readRemoteStore = async () => { reads++; throw new Error('server offline'); };
+    assert.equal((await f.p.loadLatest('a')).state, 'failed');
+    await Promise.resolve(); assert.equal(reads, 1); assert.equal(f.writes, 0);
+    assert.equal(f.p.pending.get('a').snapshot.summaries.m1.event, 'not yet saved');
+});
+
+test('server restore rejects edits during confirmation and cannot invent absent server memory', async () => {
+    const f = fixture(false, 1); const prepared = await f.p.prepareRestore('a', { requireSaved: true });
+    f.metadata.cache_memory.summaries.m1.event = 'changed while confirming';
+    assert.throws(() => f.p.restoreServerSnapshot(prepared), /确认期间/);
+    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'changed while confirming'); assert.equal(f.writes, 0);
+    f.p.readRemoteStore = async () => null;
+    await assert.rejects(f.p.prepareRestore('a', { requireSaved: true }), /尚未保存/);
+});
+
+test('visible server-restore button requires one confirmation and refreshes memory lists', async () => {
+    const f = fixture(false, 1); let confirms = 0, renders = 0;
+    f.metadata.cache_memory.summaries.m1.event = 'local version';
+    const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { store: f.store, persistence: f.p,
+        summarizer: { invalidateContext() {} }, isMissingCheckpointBackfillActive: () => false,
+        showPluginDialog: async () => { confirms++; return {}; }, updateInjection() {},
+        renderManager() { renders++; }, renderMessageMemories() { renders++; },
+    });
+    await ui.handleManagerClick({ target: { closest: selector => selector === '[data-read-server]' ? {} : null } });
+    assert.equal(confirms, 1); assert.equal(renders, 2); assert.equal(f.writes, 0);
+    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'summary 1');
 });
 
 test('invalid authority envelopes and foreign-chat snapshots cannot report successful synchronization', async () => {

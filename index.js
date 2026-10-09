@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.22.2';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.2';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.2';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.2';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.2';
-import { getAssistantMessages } from './src/utils.js?v=1.22.2';
-import { MemoryStore } from './src/memory-store.js?v=1.22.2';
-import { MemorySummarizer } from './src/summarizer.js?v=1.22.2';
-import { CacheMemoryUI } from './src/ui.js?v=1.22.2';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.2';
-import { MemoryServerClient } from './src/memory-server.js?v=1.22.2';
+import { SummaryApiClient } from './src/api-client.js?v=1.22.3';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.3';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.3';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.3';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.3';
+import { getAssistantMessages } from './src/utils.js?v=1.22.3';
+import { MemoryStore } from './src/memory-store.js?v=1.22.3';
+import { MemorySummarizer } from './src/summarizer.js?v=1.22.3';
+import { CacheMemoryUI } from './src/ui.js?v=1.22.3';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.3';
+import { MemoryServerClient } from './src/memory-server.js?v=1.22.3';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -197,7 +197,7 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     if (!chatId) return;
     if (chatId !== activeChatId || serverLoaded) summarizer.invalidateContext();
     if (chatId !== activeChatId || serverLoaded) current = persistence.activate(chatId, current) ?? current;
-    if (chatId !== activeChatId || serverLoaded) await persistence.verify(chatId);
+    if (chatId !== activeChatId || serverLoaded) await persistence.loadLatest(chatId);
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     store.persistMigration();
     store.syncMessages(chat);
@@ -292,18 +292,19 @@ function initialize() {
     apiCacheAdapter.install(window);
     apiCacheAdapter.probe();
     bindEvents();
+    let reconnecting = false;
     onlineHandler = async () => {
-        await memoryServer.probe();
-        if (activeChatId && memoryChatId() === activeChatId) {
-            await persistence.verify(activeChatId);
-            await persistence.flush(activeChatId);
-        }
+        if (reconnecting) return;
+        reconnecting = true;
+        try {
+            await memoryServer.probe();
+            if (activeChatId && memoryChatId() === activeChatId && persistence.pending.has(activeChatId)) await persistence.flush(activeChatId);
+        } catch (error) { console.warn(LOG_PREFIX, error); }
+        finally { reconnecting = false; }
     };
     window.addEventListener('online', onlineHandler, { signal: runtimeController.signal });
-    window.addEventListener('focus', onlineHandler, { signal: runtimeController.signal });
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') onlineHandler().catch(error => console.warn(LOG_PREFIX, error));
-        else persistence.persistPending();
+        if (document.visibilityState !== 'visible') persistence.persistPending();
     }, { signal: runtimeController.signal });
     window.addEventListener('pagehide', () => persistence.persistPending(), { signal: runtimeController.signal });
     memoryServer.probe().then(() => refreshChatState({ serverLoaded: true })).catch(error => console.warn(LOG_PREFIX, error));
