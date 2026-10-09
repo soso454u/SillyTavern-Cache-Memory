@@ -1,17 +1,17 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.4';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.4';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.4';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.4';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.4';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.4';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.4';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.4';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.4';
-import { parseFloorSummary } from './summarizer.js?v=1.22.4';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.4';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.5';
+import { effectiveInjectionMode } from './cache-control.js?v=1.22.5';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.5';
+import { HistoryBackfill } from './history-backfill.js?v=1.22.5';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.5';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.5';
+import { buildStructuredSummary } from './summary-format.js?v=1.22.5';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.5';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.5';
+import { parseFloorSummary } from './summarizer.js?v=1.22.5';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.5';
 
-import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.4';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.4';
+import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.5';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.5';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -91,7 +91,7 @@ export function memoryOverviewStats(store, assistants, settings) {
     };
     const entries = Array.isArray(assistants) ? assistants : [];
     const checkpointInterval = Math.max(1, Number(settings?.checkpointInterval) || 5);
-    const longMemoryInterval = Math.max(checkpointInterval, Number(settings?.longMemoryInterval) || 50);
+    const longMemoryInterval = Math.ceil(Math.max(checkpointInterval, Number(settings?.longMemoryInterval) || 50) / checkpointInterval) * checkpointInterval;
     const latestFloor = entries.at(-1)?.floor ?? 0;
     const checkpoints = safeStore.checkpoints.filter(isUsableMemory);
     const longMemories = safeStore.longMemories.filter(isUsableMemory);
@@ -242,7 +242,7 @@ function managerPanelTemplate() {
     return `
         <section id="${MANAGER_ID}" class="cache-memory-tab-panel cache-memory-manager-panel" role="tabpanel" data-settings-panel="manager" hidden>
             <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
-                <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button>
+                <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="long">长期记忆 Long Memory</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button>
             </nav>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-save-memory>上传记忆到服务器</button>
@@ -278,6 +278,7 @@ function managerPanelTemplate() {
 export function configTemplate() {
     return `
         <div id="${CONFIG_ID}" class="cache-memory-overlay" hidden>
+            <div class="cache-memory-config-frame">
             <div class="cache-memory-config-panel" role="dialog" aria-modal="true" aria-labelledby="cache-memory-config-title">
                 <div class="cache-memory-pinned">
                 <header class="cache-memory-dialog-header">
@@ -398,6 +399,8 @@ export function configTemplate() {
                     <button type="button" class="menu_button cache-memory-primary" data-save-settings><i class="fa-solid fa-floppy-disk"></i> 保存设置</button>
                 </footer>
             </div>
+            ${['n', 'e', 's', 'w'].map(edge => `<span class="cache-memory-resize-handle" data-resize-edge="${edge}" aria-hidden="true"></span>`).join('')}
+            </div>
         </div>`;
 }
 
@@ -436,7 +439,7 @@ export class CacheMemoryUI {
         this.missingCheckpointRunId = 0;
         this.missingCheckpointState = { status: 'idle', total: 0, processed: 0, created: 0, skipped: 0, failed: 0, currentRange: null, blocked: [], errors: [] };
         if (summarizer && store && getChat) this.backfill = new HistoryBackfill({
-            summarizer, store, getChat, onProgress: state => { this.showTaskProgress(state); this.renderBackfillProgress(); },
+            summarizer, store, getChat, onProgress: state => { this.showTaskProgress({ ...state, phase: '楼层摘要补齐' }); this.renderBackfillProgress(); },
         });
     }
 
@@ -448,7 +451,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.4', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.22.5', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -486,23 +489,27 @@ export class CacheMemoryUI {
     }
 
     bindDialogDrag(overlay) {
-        const panel = overlay.querySelector('.cache-memory-config-panel, .cache-memory-manager-panel');
+        const panel = overlay.querySelector('.cache-memory-config-frame') ?? overlay.querySelector('.cache-memory-config-panel, .cache-memory-manager-panel');
         const handle = panel.querySelector('.cache-memory-dialog-header');
         const root = this.root;
         let drag = null;
         let frame = null;
         let x = 0, y = 0;
+        let width = null, height = null;
         const paint = () => {
             frame = null;
             panel.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+            if (width !== null) panel.style.width = `${width}px`;
+            if (height !== null) panel.style.height = `${height}px`;
         };
         const queuePaint = () => { if (frame === null) frame = root.requestAnimationFrame(paint); };
         const stop = () => {
             if (frame !== null) { root.cancelAnimationFrame(frame); paint(); }
             if (drag) {
                 const id = drag.id;
+                const target = drag.target ?? handle;
                 drag = null;
-                if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+                if (target.hasPointerCapture(id)) target.releasePointerCapture(id);
             }
             handle.classList.remove('is-dragging');
             overlay.classList.remove('is-dragging');
@@ -530,7 +537,43 @@ export class CacheMemoryUI {
             queuePaint();
         }, { signal: this.controller.signal });
         for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(name, stop, { signal: this.controller.signal });
-        const resize = () => reset();
+        const limits = () => {
+            const view = viewportSize(root), padding = root.getComputedStyle?.(overlay);
+            return { left: view.left + (parseFloat(padding?.paddingLeft) || 8), right: view.left + view.width - (parseFloat(padding?.paddingRight) || 8),
+                top: view.top + (parseFloat(padding?.paddingTop) || 8), bottom: view.top + view.height - (parseFloat(padding?.paddingBottom) || 8) };
+        };
+        for (const edge of panel.querySelectorAll?.('[data-resize-edge]') ?? []) {
+            edge.addEventListener('pointerdown', event => {
+                if (event.button !== 0) return;
+                stop();
+                drag = { id: event.pointerId, target: edge, edge: edge.dataset.resizeEdge, rect: panel.getBoundingClientRect(),
+                    pointerX: event.clientX, pointerY: event.clientY, x, y, bounds: limits() };
+                edge.setPointerCapture(event.pointerId);
+                panel.style.willChange = 'width, height, transform';
+                event.preventDefault();
+            }, { signal: this.controller.signal });
+            edge.addEventListener('pointermove', event => {
+                if (drag?.id !== event.pointerId || drag.target !== edge) return;
+                const r = drag.rect, b = drag.bounds, dx = event.clientX - drag.pointerX, dy = event.clientY - drag.pointerY;
+                const minWidth = Math.min(320, b.right - b.left), minHeight = Math.min(240, b.bottom - b.top);
+                let left = r.left, right = r.right, top = r.top, bottom = r.bottom;
+                if (drag.edge === 'w') left = Math.max(b.left, Math.min(right - minWidth, left + dx));
+                if (drag.edge === 'e') right = Math.min(b.right, Math.max(left + minWidth, right + dx));
+                if (drag.edge === 'n') top = Math.max(b.top, Math.min(bottom - minHeight, top + dy));
+                if (drag.edge === 's') bottom = Math.min(b.bottom, Math.max(top + minHeight, bottom + dy));
+                width = right - left; height = bottom - top;
+                x = drag.x + (left + right - r.left - r.right) / 2;
+                y = drag.y + (top + bottom - r.top - r.bottom) / 2;
+                queuePaint();
+            }, { signal: this.controller.signal });
+            for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) edge.addEventListener(name, stop, { signal: this.controller.signal });
+        }
+        const resize = () => {
+            reset();
+            const b = limits();
+            if (width !== null) { width = Math.min(width, b.right - b.left); panel.style.width = `${width}px`; }
+            if (height !== null) { height = Math.min(height, b.bottom - b.top); panel.style.height = `${height}px`; }
+        };
         root.addEventListener('resize', resize, { signal: this.controller.signal });
         root.visualViewport?.addEventListener('resize', resize, { signal: this.controller.signal });
         root.visualViewport?.addEventListener('scroll', resize, { signal: this.controller.signal });
@@ -1066,6 +1109,7 @@ export class CacheMemoryUI {
         if (this.managerView === 'overview') content.append(this.renderOverview());
         else if (this.managerView === 'summaries') content.append(this.renderSummaryPage());
         else if (this.managerView === 'checkpoints') content.append(this.renderCheckpointPage());
+        else if (this.managerView === 'long') content.append(this.renderLongMemoryPage());
         else if (this.managerView === 'facts') content.append(this.renderFactPage());
         else if (['threads', 'states'].includes(this.managerView)) content.append(this.renderTrackedPage(this.managerView === 'threads' ? 'thread' : 'state'));
         else content.append(this.renderKeepPage());
@@ -1128,8 +1172,8 @@ export class CacheMemoryUI {
         const overview = memoryOverviewStats(store, assistants, this.getSettings());
         const stats = [
             ['摘要：已生成 / 应有', `${overview.summaries.generated} / ${overview.summaries.expected}`],
-            ['阶段记忆：已生成 / 到期', `${store.checkpoints.filter(item => item.content?.trim() && item.status !== 'failed' && item.frozen !== false).length} / ${overview.checkpoints.expected}`],
-            ['长期记忆：已生成 / 到期', `${store.longMemories.filter(item => item.content?.trim() && item.status !== 'failed' && item.frozen !== false).length} / ${overview.longMemories.expected}`],
+            ['阶段记忆：已生成 / 应有', `${overview.checkpoints.actual} / ${overview.checkpoints.expected}`],
+            ['长期记忆：已生成 / 应有', `${overview.longMemories.actual} / ${overview.longMemories.expected}`],
             ['有效 KEEP', overview.activeKeeps],
         ];
         const grid = this.element('div', 'cache-memory-stats');
@@ -1150,7 +1194,7 @@ export class CacheMemoryUI {
             for (const issue of overview.issues) list.append(this.element('li', '', issue));
             details.append(list); health.append(details);
         } else {
-            health.append(this.element('p', '', '已到期的 Summary、Checkpoint 与 Long Memory 链路完整。'));
+            health.append(this.element('p', '', '当前应有的 Summary、Checkpoint 与 Long Memory 均已生成。'));
         }
         const diagnostics = this.manager.querySelector('[data-memory-diagnostics]');
         if (diagnostics) diagnostics.textContent = `已保存摘要 ${Object.keys(store.summaries).length} 条 · 当前注入 CP ${overview.injectedCheckpoints} 条 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
@@ -1317,7 +1361,7 @@ export class CacheMemoryUI {
         }
     }
 
-    async startMissingMemoryBackfill() {
+    async startMissingMemoryBackfill({ onlyLong = false } = {}) {
         if (this.isMissingCheckpointBackfillActive() || this.backfill?.active || this.importingMemory || this.restoringServerMemory
             || this.summarizer.inFlight?.size || this.summarizer.pendingSummaries?.size) return;
         const controller = new AbortController(), runId = ++this.missingCheckpointRunId;
@@ -1329,7 +1373,7 @@ export class CacheMemoryUI {
             const saved = await this.persistence.reread(chatId);
             if (runId !== this.missingCheckpointRunId || chatId !== this.store.current().chatId || epoch !== this.persistence.epoch || controller.signal.aborted) return;
             if (saved.state !== 'confirmed') throw new Error(`服务器记忆尚未确认：${saved.detail}`);
-            const result = await this.summarizer.fillMissingMemories({ signal: controller.signal,
+            const result = await this.summarizer.fillMissingMemories({ signal: controller.signal, onlyLong,
                 onProgress: progress => {
                     if (runId !== this.missingCheckpointRunId) return;
                     this.missingCheckpointState = { ...progress, kind: 'all', status: controller.signal.aborted ? 'cancelling' : 'running' };
@@ -1337,7 +1381,13 @@ export class CacheMemoryUI {
                 } });
             if (runId === this.missingCheckpointRunId) {
                 this.missingCheckpointState = { ...result, kind: 'all', status: result.failed ? 'failed' : 'completed' };
-                notify(result.failed ? 'error' : 'success', result.failed ? result.errors.at(-1) : `补全完成：新增 ${result.created} 条记忆，并已从服务器读回确认`);
+                const remaining = this.summarizer.getMissingMemoryPlan({ onlyLong });
+                const incomplete = remaining.summaries.length + remaining.checkpoints.length + remaining.longMemories.length;
+                if (!result.failed && incomplete) {
+                    this.missingCheckpointState.status = 'failed';
+                    this.missingCheckpointState.errors = [`仍有 ${incomplete} 条记忆未补齐，请查看对应分类`];
+                }
+                notify(result.failed || incomplete ? 'error' : 'success', result.failed ? result.errors.at(-1) : incomplete ? this.missingCheckpointState.errors[0] : `${onlyLong ? '长期记忆补全' : '补全'}完成：新增 ${result.created} 条记忆，并已从服务器读回确认`);
             }
         } catch (error) {
             if (runId === this.missingCheckpointRunId) this.missingCheckpointState = { ...this.missingCheckpointState,
@@ -1372,7 +1422,7 @@ export class CacheMemoryUI {
             }));
             if (runId !== this.missingCheckpointRunId) return;
             this.missingCheckpointState = { ...result, status: result.failed ? 'failed' : 'completed' };
-            notify(result.failed ? 'error' : 'success', `${result.failed ? '部分生成失败' : result.created ? '生成成功' : '扫描完成，无需生成'}：新增 ${result.created} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条。`);
+            notify(result.failed ? 'error' : 'success', `阶段记忆${result.failed ? '部分生成失败' : result.created ? '生成成功' : '扫描完成，无需生成'}：新增 ${result.created} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条。`);
         } catch (error) {
             if (runId !== this.missingCheckpointRunId) return;
             if (['REQUEST_ABORTED', 'CHAT_CHANGED'].includes(error.code)) this.missingCheckpointState.status = 'cancelled';
@@ -1445,14 +1495,34 @@ export class CacheMemoryUI {
         for (const item of page.items) list.append(this.factCard(item));
         if (!page.items.length) list.append(this.element('p', 'cache-memory-empty', '暂无记忆'));
         root.append(list, this.pagination('factPage', page));
-        root.append(this.element('h4', '', '已保存的 Long Memory 原始记录'));
+        return root;
+    }
+
+    renderLongMemoryPage() {
+        const root = this.element('div', 'cache-memory-manager-page');
+        const overview = memoryOverviewStats(this.store.current(), getAssistantMessages(this.getChat()), this.getSettings());
+        const plan = this.summarizer.getMissingMemoryPlan({ onlyLong: true });
+        root.append(this.element('h4', '', '长期记忆 Long Memory'),
+            this.element('p', '', `已生成 / 应有：${overview.longMemories.actual} / ${overview.longMemories.expected}`),
+            this.element('p', 'cache-memory-help', `按当前分组规则，每满 ${Math.ceil(Math.max(this.getSettings().checkpointInterval, this.getSettings().longMemoryInterval) / this.getSettings().checkpointInterval) * this.getSettings().checkpointInterval} 层应有一段长期记忆。点击生成会先补齐所需的缺失摘要和阶段记忆，已有记忆保持冻结。`));
+        const actions = this.element('div', 'cache-memory-actions');
+        const generate = this.element('button', 'menu_button cache-memory-primary', '生成缺失的 Long Memory');
+        generate.dataset.fillLongMemories = '';
+        generate.disabled = !plan.longMemories.length || this.isMissingCheckpointBackfillActive() || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
+        const stop = this.element('button', 'menu_button', '安全停止');
+        stop.dataset.cancelMissingCheckpoints = ''; stop.disabled = !this.isMissingCheckpointBackfillActive();
+        actions.append(generate, stop); root.append(actions);
+        const state = this.missingCheckpointState;
+        if (state.kind === 'all') root.append(this.element('p', 'cache-memory-help', `${({ running: '正在生成', cancelling: '正在停止', completed: '本次补全完成', failed: '补全未完成', cancelled: '已停止' })[state.status] ?? ''} · ${state.phase ?? ''} · ${state.processed}/${state.total}${state.errors?.length ? `\n${state.errors.at(-1)}` : ''}`));
+        if (plan.longMemories.length) root.append(this.element('p', '', `尚未生成：${compactRanges(plan.longMemories.map(range => [range.startFloor, range.endFloor]))}`));
+        if (!this.store.current().longMemories.length) root.append(this.element('p', 'cache-memory-empty', overview.longMemories.expected ? '还没有生成 Long Memory，点击上方按钮即可补全。' : '当前楼层还未满一个长期记忆分组。'));
+        root.append(this.element('h4', '', '已保存的 Long Memory（点击展开查看全文）'));
         for (const memory of [...this.store.current().longMemories].sort((a, b) => b.startFloor - a.startFloor)) {
             root.append(this.foldCard({ key: `long:${memory.id}`, group: 'facts', type: 'long', id: memory.id,
                 title: `${memory.id}｜${memory.startFloor}–${memory.endFloor}层`, status: memoryHealth(memory).label,
                 renderBody: body => {
                     body.append(this.line('有效性', memoryHealth(memory).label), this.element('pre', '', memory.content));
                     const actions = this.element('div', 'cache-memory-actions');
-                    const validate = this.element('button', 'menu_button', '校验来源'); validate.dataset.validateMemory = ''; actions.append(validate);
                     if (memory.checkpointIds?.length) {
                         const button = this.element('button', 'menu_button', '查看来源阶段记忆');
                         button.dataset.locateType = 'Checkpoint'; button.dataset.locateId = memory.checkpointIds[0]; actions.append(button);
@@ -1782,6 +1852,7 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
+        if (event.target.closest('[data-fill-long-memories]')) return this.startMissingMemoryBackfill({ onlyLong: true });
         if (event.target.closest('[data-fill-all-memories]')) return this.startMissingMemoryBackfill();
         if (event.target.closest('[data-read-server]')) {
             if (this.restoringServerMemory) return;
@@ -1820,7 +1891,7 @@ export class CacheMemoryUI {
         const locate = event.target.closest('[data-locate-type]');
         if (locate) {
             const type = locate.dataset.locateType, id = locate.dataset.locateId, floor = Number(locate.dataset.locateFloor);
-            this.managerView = type === 'Summary' ? 'summaries' : type === 'Checkpoint' ? 'checkpoints' : 'facts';
+            this.managerView = type === 'Summary' ? 'summaries' : type === 'Checkpoint' ? 'checkpoints' : 'long';
             if (type === 'Summary') {
                 this.managerState.summaryQuery = String(floor); this.managerState.summaryStatus = 'all'; this.managerState.summaryPage = 1;
                 if (id) this.managerExpanded.summaries.add(id);

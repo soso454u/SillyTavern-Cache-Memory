@@ -55,6 +55,26 @@ test('missing and failed summaries precede aggregates; earlier holes are filled 
     assert.ok(f.store.current().longMemories.some(item => item.startFloor === 1 && item.endFloor === 50));
 });
 
+test('209 floors with complete checkpoints can explicitly generate all four missing long memories', async () => {
+    const f = fixture(209);
+    for (let start = 1; start <= 205; start += 5) f.checkpoint(start);
+    const result = await f.summarizer.fillMissingMemories({ onlyLong: true });
+    assert.equal(result.failed, 0); assert.equal(result.created, 4);
+    assert.deepEqual(f.calls, Array(4).fill('Long Memory'));
+    assert.deepEqual(f.store.current().longMemories.map(row => [row.startFloor, row.endFloor]), [[1, 50], [51, 100], [101, 150], [151, 200]]);
+    assert.equal(f.summarizer.getMissingMemoryPlan({ onlyLong: true }).longMemories.length, 0);
+});
+
+test('long-only completion leaves unrelated recent missing summaries and checkpoints untouched', async () => {
+    const f = fixture(110), entry = getAssistantMessages(f.chat).at(-1);
+    delete f.store.current().summaries[entry.messageId];
+    for (let start = 1; start <= 100; start += 5) f.checkpoint(start);
+    const result = await f.summarizer.fillMissingMemories({ onlyLong: true });
+    assert.equal(result.created, 2); assert.equal(result.failed, 0);
+    assert.deepEqual(f.calls, ['Long Memory', 'Long Memory']);
+    assert.equal(f.store.getSummary(entry.messageId), null); assert.equal(f.store.current().checkpoints.length, 20);
+});
+
 test('authorization and unconfirmed saves stop the chain without calling downstream models', async () => {
     const f = fixture(50), entries = getAssistantMessages(f.chat);
     delete f.store.current().summaries[entries[0].messageId];

@@ -1,4 +1,4 @@
-import { fnv1a } from './utils.js?v=1.22.4';
+import { fnv1a } from './utils.js?v=1.22.5';
 
 export const API_CACHE_TTLS = Object.freeze(['5m', '1h']);
 export const API_CACHE_COMPATIBILITY = Object.freeze({
