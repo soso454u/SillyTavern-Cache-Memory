@@ -1,7 +1,7 @@
-import { fnv1a } from './utils.js?v=1.20.0';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.20.0';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.20.0';
-import { projectActiveState } from './active-state.js?v=1.20.0';
+import { fnv1a } from './utils.js?v=1.21.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.21.0';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.21.0';
+import { projectActiveState } from './active-state.js?v=1.21.0';
 
 export const isUsableMemory = item => item && item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen')
     && !['unmatched', 'changed', 'unverified'].includes(item.sourceValidity);
@@ -108,15 +108,17 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
                     resolvedBy: memory.id, resolvedFloor: memory.endFloor });
             }
             if (update.action !== 'retire') facts.set(update.id, {
-                id: update.id, text: update.text, status: 'active', floor: memory.endFloor,
+                id: update.id, stateId: update.stateId, text: update.text, status: 'active', floor: memory.endFloor,
                 sourceId: memory.id, startFloor: memory.startFloor, endFloor: memory.endFloor,
                 storyStartTime: memory.storyStartTime ?? '', storyEndTime: memory.storyEndTime ?? '', createdAt: memory.createdAt ?? '',
             });
         }
     }
     if (includeTracked) {
-        for (const item of projectActiveState(store, throughFloor).filter(row => row.kind === 'state' && row.lifetime !== 'temporary')) {
-            facts.set(item.id, { id: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: item.needsReview ? 'needs-review' : item.status === 'active' ? 'active' : 'retired',
+        for (const item of projectActiveState(store, throughFloor).filter(row => row.kind === 'state' && row.lifetime !== 'temporary' && row.acquisition !== 'pending')) {
+            const matches = [...facts.values()].filter(fact => fact.stateId === item.id || fact.status === 'active' && fact.text.includes(item.entity) && fact.text.includes(item.key));
+            const id = matches.length === 1 ? matches[0].id : item.id;
+            facts.set(id, { id, stateId: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: item.needsReview ? 'needs-review' : item.status === 'active' ? 'active' : 'retired',
                 floor: item.sourceFloor, sourceId: item.sourceId, tracked: true, evidence: item.evidence });
         }
     }

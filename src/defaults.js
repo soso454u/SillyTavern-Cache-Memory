@@ -1,7 +1,7 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.20.0';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.20.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.21.0';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.21.0';
 
-export const PLUGIN_VERSION = '1.20.0';
+export const PLUGIN_VERSION = '1.21.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1339,10 +1339,24 @@ const IMPORTANT_NPC_LONG_RULES = `【重要 NPC 长期保护】
 - 普通路人、一次性服务人员不自动进入 Long Fact；只有正文明确赋予其持续剧情作用时才视为重要 NPC。
 - 继续使用第三方客观记录：只保存明确证据与已成立事实，不自行推断 NPC 的心理、感情或关系变化。`;
 
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V1200_DEFAULT_PROMPTS = Object.freeze({
     summary: insertPromptSection(V1160_DEFAULT_PROMPTS.summary, '【时间与地点】', IMPORTANT_NPC_SUMMARY_RULES),
     checkpoint: insertPromptSection(V1160_DEFAULT_PROMPTS.checkpoint, '【历史因果】', IMPORTANT_NPC_CHECKPOINT_RULES),
     longMemory: insertPromptSection(V1160_DEFAULT_PROMPTS.longMemory, '【剧情日期/时间】', IMPORTANT_NPC_LONG_RULES),
+});
+
+export const DEFAULT_PROMPTS = Object.freeze({
+    summary: insertPromptSection(V1200_DEFAULT_PROMPTS.summary, '【时间与地点】', `【任务、技能与属性记录规则】
+系统任务明确发布、推进、完成、失败或结算时记录变化；未完成任务在 Open 保留名称、条件、进度及待领取奖励；完成结果写 Event，仍有效后果写 State。世界书候选任务不等于已发布。
+技能解锁、升级、属性数值、奖励及道具变化时记录角色、项目、最新明确值与结果；候选奖励、待领取奖励不等于已获得。未明确完成不得判为完成；没有明确变化不得自行升级或推算。`),
+    checkpoint: insertPromptSection(V1200_DEFAULT_PROMPTS.checkpoint, '【历史因果】', `【任务与角色状态继承规则】
+持续继承未完成任务的条件、进度和待领取奖励，已获得技能及当前等级、仍有效的重要属性、奖励与临时效果；未再次提及不代表失效。
+任务明确结算后更新结果并移出 Open Threads；条件满足待结算仍保留。技能升级与属性变化以最新明确状态替代旧值。保留重要 NPC 已确认身份、技能、认知差及持续后果，不能混淆不同人物。
+KEEP 解决与替代仍须 NEW_SUMMARIES 的明确证据，不重复输出全部 Active KEEP。`),
+    longMemory: insertPromptSection(V1200_DEFAULT_PROMPTS.longMemory, '【剧情日期/时间】', `【能力与任务的长期保存范围】
+长期有效技能、能力、当前等级、重要属性及已获得系统奖励属于长期事实，按角色与项目维护当前有效版本。
+技能升级、属性明确变化或事实被替代时优先使用 UPDATED_FACTS 更新原 fact-id；只有明确永久失效且没有持续影响时使用 RETIRED_FACTS，仍遵守原有证据要求。
+未完成的短期任务由 Open Threads / KEEP 管理，不因未完成自动进入 Long Fact；已完成且无长期影响的任务不长期保留。`),
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1409,7 +1423,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];

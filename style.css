@@ -295,3 +295,35 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-tracked-form input, .cache-memory-tracked-form textarea, .cache-memory-tracked-form select { width: 100%; min-width: 0; box-sizing: border-box; background: #fff; color: #27364a; padding: 8px; border: 1px solid #bdcada; border-radius: 6px; }
 .cache-memory-tracked-form label { color: #27364a; }
 .cache-memory-state-history { display: block; overflow-wrap: anywhere; }
+
+/* One vertical scroll surface; only the freeze notice and primary tabs stay visible. */
+.cache-memory-config-panel { display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 135px; }
+.cache-memory-pinned { position: sticky; top: 0; z-index: 5; background: #f8fafc; padding-top: 1px; }
+.cache-memory-config-panel .cache-memory-config-content,
+.cache-memory-config-panel .cache-memory-config-content.is-manager-view,
+.cache-memory-config-panel .cache-memory-manager-content { height: auto; overflow: visible; }
+.cache-memory-config-panel .cache-memory-manager-panel { display: block; height: auto; }
+.cache-memory-config-panel .cache-memory-manager-page { min-height: 0; }
+.cache-memory-config-panel .cache-memory-manager-toolbar { flex-wrap: wrap; }
+.cache-memory-config-panel .cache-memory-backup { margin: 12px 18px; padding: 10px; border: 1px solid var(--cm-line); border-radius: 9px; background: #fff; }
+.cache-memory-backup > summary { cursor: pointer; font-weight: 700; }
+.cache-memory-backup > p { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.cache-memory-config-panel .cache-memory-settings-save,
+.cache-memory-config-panel .cache-memory-inline-actions { position: static; }
+.cache-memory-config-panel .cache-memory-status,
+.cache-memory-config-panel .cache-memory-card pre,
+.cache-memory-config-panel .cache-memory-card-body pre { max-height: none; overflow: visible; }
+.cache-memory-config-panel .cache-memory-subtabs { overflow-x: auto; }
+.cache-memory-config-panel .cache-memory-subtabs button { flex: 0 0 auto; }
+.cache-memory-card-status { max-width: min(40vw, 300px); white-space: normal; overflow-wrap: anywhere; }
+.cache-memory-modal-field select { width: 100%; padding: 10px; background: #fff; color: #27364a; border: 1px solid #bdcada; border-radius: 8px; }
+.cache-memory-danger { border-color: #dc6975 !important; color: #a51f32 !important; background: #fff5f6 !important; }
+.cache-memory-modal-actions .cache-memory-danger { background: #b42336 !important; color: #fff !important; }
+@media (max-width: 650px) {
+    .cache-memory-overlay { padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
+    .cache-memory-config-panel { height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom))); max-width: 100%; }
+    .cache-memory-config-panel .cache-memory-backup { margin-inline: 12px; }
+    .cache-memory-card-summary { align-items: start; }
+}
+.cache-memory-status[hidden] { display: none !important; }
+.cache-memory-config-panel [data-memory-id] { scroll-margin-top: 140px; }

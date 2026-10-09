@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.20.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.20.0';
-import { stripStructuredSections } from './summary-format.js?v=1.20.0';
-import { budgetFrozenBlocks } from './injection-budget.js?v=1.20.0';
+import { INJECTION_MODES } from './defaults.js?v=1.21.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.21.0';
+import { stripStructuredSections } from './summary-format.js?v=1.21.0';
+import { budgetFrozenBlocks } from './injection-budget.js?v=1.21.0';
 
 function boundedInjection(texts, settings) {
     const blocks = texts.map((text, index) => ({ id: String(index), type: /^\[KEEP\]/.test(text) ? 'keep' : /^\[LONG/.test(text) ? 'long' : 'checkpoint', startFloor: index, endFloor: index, text }));

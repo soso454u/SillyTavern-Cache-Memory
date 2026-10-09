@@ -40,20 +40,20 @@ function clone(value) { return structuredClone(value); }
 
 function entities(value, section) {
     const source = value?.[section];
-    if (['summaries', 'keepRegistry', 'stateOverrides', 'recovery'].includes(section)) return source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+    if (['summaries', 'keepRegistry', 'stateOverrides', 'recovery', 'tombstones'].includes(section)) return source && typeof source === 'object' && !Array.isArray(source) ? source : {};
     if (section === 'checkpoints' || section === 'longMemories') return Array.isArray(source) ? Object.fromEntries(source.map(item => [String(item?.id || ''), item]).filter(([id]) => id)) : {};
     return {};
 }
 
 function materialize(value, section, map) {
-    if (['summaries', 'keepRegistry', 'stateOverrides', 'recovery'].includes(section)) value[section] = map;
+    if (['summaries', 'keepRegistry', 'stateOverrides', 'recovery', 'tombstones'].includes(section)) value[section] = map;
     else if (section === 'checkpoints' || section === 'longMemories') value[section] = Object.values(map).sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
 function threeWayMerge(base, local, remote) {
     const merged = clone(remote || local || base || {});
     const conflicts = [];
-    for (const section of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry', 'stateOverrides', 'recovery']) {
+    for (const section of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry', 'stateOverrides', 'recovery', 'tombstones']) {
         const b = entities(base, section), l = entities(local, section), r = entities(remote, section);
         const output = { ...r };
         for (const id of new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)])) {

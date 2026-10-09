@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.20.0';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.20.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.20.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.20.0';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.20.0';
-import { getAssistantMessages } from './src/utils.js?v=1.20.0';
-import { MemoryStore } from './src/memory-store.js?v=1.20.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.20.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.20.0';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.20.0';
-import { MemoryServerClient } from './src/memory-server.js?v=1.20.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.21.0';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.21.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.21.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.21.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.21.0';
+import { getAssistantMessages } from './src/utils.js?v=1.21.0';
+import { MemoryStore } from './src/memory-store.js?v=1.21.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.21.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.21.0';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.21.0';
+import { MemoryServerClient } from './src/memory-server.js?v=1.21.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -121,16 +121,16 @@ const persistence = new MemoryPersistenceCoordinator({
     getChatId: memoryChatId,
     getMetadata: () => chat_metadata,
     storage: window.localStorage,
-    readRemoteStore: chatId => {
+    readRemoteStore: (chatId, options) => {
         if (memoryChatId() !== chatId) throw new Error('聊天身份已变化');
-        return readSillyTavernRemoteStore(getContext, getCurrentChatId(), window.fetch.bind(window));
+        return readSillyTavernRemoteStore(getContext, getCurrentChatId(), window.fetch.bind(window), options);
     },
     saveMetadata: async chatId => {
         const context = getContext();
         if (memoryChatId() !== chatId) throw new Error('聊天已切换，取消旧聊天保存');
         await context.saveMetadata();
     },
-    readAuthoritativeStore: async chatId => memoryServer.read(chatId),
+    readAuthoritativeStore: async (chatId, options) => memoryServer.read(chatId, options),
     commitAuthoritative: async (chatId, payload) => memoryServer.commit(chatId, payload),
     authoritativeAvailable: () => memoryServer.available,
     onStatus: (chatId) => {
@@ -164,6 +164,8 @@ const summarizer = new MemorySummarizer({
     apiClient,
     getSettings: () => settings,
     getChat: () => chat,
+    getPersistenceState: () => persistence.getState(),
+    flushMemory: chatId => persistence.flush(chatId),
     onStatus: (state, message, error) => {
         if (state !== 'settled') ui?.setStatus(state, message, error);
         ui?.renderMessageMemories();

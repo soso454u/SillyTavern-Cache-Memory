@@ -14,13 +14,16 @@ export class MemoryServerClient {
         if (!authHeaders || typeof authHeaders !== 'object') throw new Error('SillyTavern 请求头不可用，未发送权威记忆请求');
         const headers = { ...authHeaders, 'Content-Type': 'application/json' };
         const controller = new AbortController();
+        const abort = () => controller.abort();
+        init.signal?.addEventListener('abort', abort, { once: true });
+        if (init.signal?.aborted) controller.abort();
         const timer = setTimeout(() => controller.abort(), 40000);
         try {
             const response = await this.fetchImpl(`${BASE}${path}`, { ...init, signal: controller.signal, headers, credentials: 'same-origin', cache: 'no-store' });
             const data = await response.json();
             if (!response.ok) { const error = new Error(data.error || `HTTP ${response.status}`); error.status = response.status; error.data = data; throw error; }
             return data;
-        } finally { clearTimeout(timer); }
+        } finally { clearTimeout(timer); init.signal?.removeEventListener('abort', abort); }
     }
 
     async probe() {
@@ -36,7 +39,7 @@ export class MemoryServerClient {
         }
     }
 
-    async read(chatId) { return this.request(`/memory/${encodeURIComponent(chatId)}`, { method: 'GET' }); }
+    async read(chatId, options = {}) { return this.request(`/memory/${encodeURIComponent(chatId)}`, { method: 'GET', ...options }); }
 
     async commit(chatId, payload) {
         const result = await this.request(`/memory/${encodeURIComponent(chatId)}`, { method: 'POST', body: JSON.stringify(payload) });

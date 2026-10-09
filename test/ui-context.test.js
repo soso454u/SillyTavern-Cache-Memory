@@ -21,8 +21,8 @@ test('overview reports expected memory counts, injection size and broken chains 
     assert.equal(stats.activeKeeps, 1);
     assert.equal(stats.injectedCheckpoints, 1);
     assert.ok(stats.estimatedTokens > 0);
-    assert.match(stats.issues.join('\n'), /Summary 缺失[\s\S]*Checkpoint 无法自动生成/);
-    assert.match(stats.issues.join('\n'), /Checkpoint 缺失[\s\S]*Long Memory 无法自动生成/);
+    assert.match(stats.issues.join('\n'), /Summary 待处理[\s\S]*第8层[\s\S]*Checkpoint 需先修复来源/);
+    assert.match(stats.issues.join('\n'), /Checkpoint 待处理[\s\S]*第6–10层[\s\S]*尚未生成/);
     assert.equal(estimateTokenCount(''), 0);
 });
 

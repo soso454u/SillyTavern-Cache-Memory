@@ -23,6 +23,7 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         const snapshot = createEmptyStore('synthetic-chat'); snapshot.summaries.a = { messageId: 'a', event: 'synthetic' };
         const initial = await request('POST', { snapshot, baseRevision: 0 }); assert.equal(initial.status, 200); assert.equal(initial.data.record.revision, 1);
         const branch = structuredClone(snapshot); branch.summaries.b = { event: 'second' };
+        branch.tombstones['Summary:gone'] = { deletedAt: 'synthetic-time' };
         const attempts = await Promise.all([1, 2].map(() => request('POST', { snapshot: branch, baseSnapshot: snapshot, baseRevision: 1 })));
         assert.deepEqual(attempts.map(item => item.status).sort(), [200, 409]);
         assert.equal((await request('GET')).data.revision, 2);
@@ -32,6 +33,7 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         const files = await fs.readdir(path.join(directory, 'cache-memory')); assert.equal(files.length, 1); assert.match(files[0], /^[a-f0-9]+\.json$/);
         const persisted = JSON.parse(await fs.readFile(path.join(directory, 'cache-memory', files[0]), 'utf8'));
         assert.equal(persisted.store.sync.revision, 2); assert.ok(persisted.store.summaries.b);
+        assert.ok(persisted.store.tombstones['Summary:gone']);
     } finally {
         if (previous === undefined) delete process.env.SILLYTAVERN_DATA_DIR; else process.env.SILLYTAVERN_DATA_DIR = previous;
         await fs.rm(directory, { recursive: true, force: true });

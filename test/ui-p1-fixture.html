@@ -1,0 +1,24 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>P1 synthetic maintenance UI</title><div id="extensions_settings2"></div><div id="extensionsMenu"></div>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore, createEmptyStore, summaryVersion } from '../src/memory-store.js';
+import { MemoryPersistenceCoordinator } from '../src/persistence.js';
+import { MemorySummarizer } from '../src/summarizer.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { getAssistantMessages } from '../src/utils.js';
+const chat = Array.from({length:20},(_,i)=>({name:'合成主角',mes:`系统明确记录合成剧情 ${i+1}`,gen_started:`g${i}`}));
+let settings = normalizeSettings(), remote = createEmptyStore('synthetic-ui-p1');
+const metadata = {cache_memory:createEmptyStore('synthetic-ui-p1')};
+const store = new MemoryStore({getMetadata:()=>metadata,getChatId:()=> 'synthetic-ui-p1',saveMetadata:()=>{}});
+for(const entry of getAssistantMessages(chat)) store.addSummary({messageId:entry.messageId,floor:entry.floor,messageIndex:entry.messageIndex,sourceFingerprint:entry.fingerprint,event:entry.message.mes,status:'frozen',frozen:true});
+for(let start=1;start<=20;start+=5){const rows=Object.values(store.current().summaries).filter(s=>s.floor>=start&&s.floor<start+5);store.addCheckpoint({id:`checkpoint-00${(start+4)/5}`,startFloor:start,endFloor:start+4,content:'[CHECKPOINT]\n[Current State]\n'+('合成当前状态\n'.repeat(20)),sourceVersions:Object.fromEntries(rows.map(s=>[s.messageId,summaryVersion(s)])),status:'frozen',frozen:true});}
+store.addLongMemory({id:'long-001',startFloor:1,endFloor:20,content:'合成需要更新的长期内容',checkpointIds:store.current().checkpoints.map(cp=>cp.id),status:'stale',frozen:true});
+remote=structuredClone(store.current());remote.summaries[getAssistantMessages(chat)[0].messageId].event='服务器有不同的合成版本';
+const persistence=new MemoryPersistenceCoordinator({getChatId:()=>store.current().chatId,getMetadata:()=>metadata,readRemoteStore:async()=>structuredClone(remote),saveMetadata:async()=>{remote=structuredClone(store.current());}});persistence.activate('synthetic-ui-p1',store.current());store.saveMetadata=(snapshot,reason)=>persistence.enqueue(snapshot,reason);
+const apiClient={hasApiKey:()=>false,complete:async()=>{throw Error('Synthetic fixture forbids model requests');}};
+const summarizer=new MemorySummarizer({store,apiClient,getSettings:()=>settings,getChat:()=>chat,getPersistenceState:()=>persistence.getState(),flushMemory:()=>persistence.flush()});
+const ui=new CacheMemoryUI({store,persistence,summarizer,apiClient,getChat:()=>chat,getSettings:()=>settings,updateSettings:patch=>(settings=normalizeSettings({...settings,...patch})),persistSettings:()=>{},updateInjection:()=>{}});
+ui.mountSettings();ui.openSettings();ui.activateSettingsTab('manager');ui.setStatus('success','第 20 层摘要已冻结');
+window.fixture={ui,store,persistence,summarizer,metadata,get remote(){return remote},get settings(){return settings}};
+</script></html>
