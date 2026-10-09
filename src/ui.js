@@ -1,17 +1,17 @@
-import { resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.3';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.3';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.3';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.3';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.3';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.3';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.3';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.3';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.3';
-import { parseFloorSummary } from './summarizer.js?v=1.22.3';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.3';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.4';
+import { effectiveInjectionMode } from './cache-control.js?v=1.22.4';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.4';
+import { HistoryBackfill } from './history-backfill.js?v=1.22.4';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.4';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.4';
+import { buildStructuredSummary } from './summary-format.js?v=1.22.4';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.4';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.4';
+import { parseFloorSummary } from './summarizer.js?v=1.22.4';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.4';
 
-import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.3';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.3';
+import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.4';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.4';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -279,14 +279,14 @@ export function configTemplate() {
     return `
         <div id="${CONFIG_ID}" class="cache-memory-overlay" hidden>
             <div class="cache-memory-config-panel" role="dialog" aria-modal="true" aria-labelledby="cache-memory-config-title">
+                <div class="cache-memory-pinned">
                 <header class="cache-memory-dialog-header">
                     <div class="cache-memory-dialog-title" title="拖动标题栏移动弹窗">
                         <i class="fa-solid fa-brain" aria-hidden="true"></i>
-                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节 · 可拖动标题栏</small></div>
+                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节</small></div>
                     </div>
                     <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button>
                 </header>
-                <div class="cache-memory-pinned">
                 <div class="cache-memory-task-feedback cache-memory-status" data-cache-status data-state="idle" role="status" aria-live="polite" hidden></div>
                 <div class="cache-memory-config-status cache-memory-status" data-freeze-status data-state="success" hidden></div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
@@ -448,7 +448,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.3', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.22.4', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -473,6 +473,7 @@ export class CacheMemoryUI {
         this.doc.body.insertAdjacentHTML('beforeend', configTemplate());
         this.config = this.doc.getElementById(CONFIG_ID);
         this.manager = this.config.querySelector(`#${MANAGER_ID}`);
+        bindDialogViewport(this.config, this.root, this.controller.signal);
         this.resetConfigDrag = this.bindDialogDrag(this.config);
         this.manager.addEventListener('click', event => this.handleManagerClick(event).catch(error => notify('error', error.message)), { signal: this.controller.signal });
         this.manager.addEventListener('input', event => this.handleManagerInput(event), { signal: this.controller.signal });
@@ -510,8 +511,9 @@ export class CacheMemoryUI {
         const reset = () => { stop(); x = y = 0; panel.style.removeProperty('transform'); };
         handle.addEventListener('pointerdown', event => {
             if (event.button !== 0 || event.target.closest('button, input, select, textarea, a')) return;
-            const rect = panel.getBoundingClientRect();
             const view = viewportSize(root);
+            if (event.pointerType === 'touch' || view.width <= 650) return;
+            const rect = panel.getBoundingClientRect();
             drag = { id: event.pointerId, pointerX: event.clientX, pointerY: event.clientY, x, y,
                 minX: view.left - rect.left + x, maxX: view.left + view.width - rect.right + x,
                 minY: view.top - rect.top + y, maxY: view.top + view.height - rect.bottom + y };
@@ -969,6 +971,7 @@ export class CacheMemoryUI {
 
     showPluginDialog({ title, message = '', fields = [], confirmLabel = '确认', danger = false }) {
         return new Promise(resolve => {
+            this.cancelActiveDialog?.();
             this.activeDialog?.remove();
             const overlay = this.element('div', 'cache-memory-modal-overlay');
             const form = this.element('form', 'cache-memory-modal-panel');
@@ -976,6 +979,10 @@ export class CacheMemoryUI {
             form.setAttribute('aria-modal', 'true');
             const header = this.element('header', 'cache-memory-modal-header');
             header.append(this.element('h3', '', title));
+            const close = this.element('button', 'menu_button cache-memory-icon-button', '×');
+            close.type = 'button'; close.dataset.dialogClose = '';
+            close.title = '关闭'; close.setAttribute('aria-label', '关闭');
+            header.append(close);
             const content = this.element('div', 'cache-memory-modal-content');
             if (message) content.append(this.element('p', 'cache-memory-modal-message', message));
             for (const field of fields) {
@@ -999,20 +1006,31 @@ export class CacheMemoryUI {
             form.append(header, content, actions);
             overlay.append(form);
             this.doc.body.append(overlay);
+            const releaseViewport = bindDialogViewport(overlay, this.root, this.controller.signal);
             this.activeDialog = overlay;
+            let settled = false;
             const finish = value => {
+                if (settled) return;
+                settled = true;
                 if (this.activeDialog === overlay) this.activeDialog = null;
+                if (this.cancelActiveDialog === cancelDialog) this.cancelActiveDialog = null;
+                this.controller.signal.removeEventListener('abort', cancelDialog);
+                releaseViewport();
                 overlay.remove();
                 resolve(value);
             };
+            const cancelDialog = () => finish(null);
+            this.cancelActiveDialog = cancelDialog;
+            this.controller.signal.addEventListener('abort', cancelDialog, { once: true });
             cancel.addEventListener('click', () => finish(null), { once: true });
+            close.addEventListener('click', () => finish(null), { once: true });
             overlay.addEventListener('click', event => { if (event.target === overlay) finish(null); });
             form.addEventListener('submit', event => {
                 event.preventDefault();
                 finish(Object.fromEntries(new this.root.FormData(form).entries()));
             });
-            overlay.addEventListener('keydown', event => { if (event.key === 'Escape') finish(null); });
-            (form.querySelector('input, textarea, select') ?? confirm).focus();
+            overlay.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); finish(null); } });
+            (form.querySelector('input, textarea, select') ?? close).focus({ preventScroll: true });
         });
     }
 

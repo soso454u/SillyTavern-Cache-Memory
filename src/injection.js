@@ -1,6 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.22.3';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.22.3';
-import { stripStructuredSections } from './summary-format.js?v=1.22.3';
+import { INJECTION_MODES } from './defaults.js?v=1.22.4';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.22.4';
+import { stripStructuredSections } from './summary-format.js?v=1.22.4';
 function fullInjection(blocks) {
     return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
 }

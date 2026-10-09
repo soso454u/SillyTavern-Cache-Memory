@@ -14,6 +14,7 @@
     z-index: 2147482998;
     display: grid;
     place-items: center;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     padding: clamp(18px, 3vw, 42px);
     background: transparent;
     backdrop-filter: none;
@@ -41,7 +42,7 @@
     box-shadow: 0 20px 48px rgba(15, 23, 42, 0.24), 0 3px 12px rgba(15, 23, 42, 0.12);
     font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.cache-memory-config-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; width: min(1040px, 100%); max-width: calc(100dvw - 36px); box-sizing: border-box; }
+.cache-memory-config-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; width: min(1040px, 100%); max-width: calc(100dvw - 36px); max-height: 100%; min-width: 0; min-height: 0; box-sizing: border-box; }
 .cache-memory-dialog-header { cursor: grab; touch-action: none; user-select: none; }
 .cache-memory-dialog-header.is-dragging { cursor: grabbing; }
 .cache-memory-dialog-header button { cursor: pointer; touch-action: auto; }
@@ -226,6 +227,7 @@ body.cache-memory-config-open { overflow: hidden; }
     z-index: 2147483005;
     display: grid;
     place-items: center;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     padding: 18px;
     background: rgba(15, 23, 42, 0.24);
     box-sizing: border-box;
@@ -237,8 +239,14 @@ body.cache-memory-config-open { overflow: hidden; }
     --cm-teal: #087f72;
     --cm-teal-dark: #06665d;
     width: min(680px, 100%);
-    max-height: min(88vh, 88dvh);
-    overflow: auto;
+    max-height: min(88vh, 88dvh, 100%);
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    box-sizing: border-box;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
     border: 1px solid rgba(151, 166, 184, 0.72);
     border-radius: 14px;
     background: #fff;
@@ -247,15 +255,16 @@ body.cache-memory-config-open { overflow: hidden; }
     box-shadow: 0 24px 60px rgba(15, 23, 42, 0.3);
     font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.cache-memory-modal-header { padding: 16px 18px; border-bottom: 1px solid var(--cm-line); background: linear-gradient(115deg, #effbf8, #f5f8fc); }
-.cache-memory-modal-header h3 { margin: 0; font-size: 18px; }
-.cache-memory-modal-content { display: grid; gap: 13px; padding: 18px; }
+.cache-memory-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--cm-line); background: linear-gradient(115deg, #effbf8, #f5f8fc); }
+.cache-memory-modal-header h3 { min-width: 0; margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+.cache-memory-modal-content { display: grid; gap: 13px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; padding: 18px; }
 .cache-memory-modal-message { margin: 0; color: #344258; line-height: 1.65; white-space: pre-wrap; }
 .cache-memory-modal-field { display: grid; gap: 6px; color: #344258; font-size: 12px; font-weight: 700; }
 .cache-memory-modal-field input, .cache-memory-modal-field textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid #bdcada; border-radius: 8px; outline: none; background: #fff; color: var(--cm-ink); box-sizing: border-box; font: inherit; font-weight: 500; line-height: 1.5; }
 .cache-memory-modal-field textarea { resize: vertical; }
 .cache-memory-modal-field input:focus, .cache-memory-modal-field textarea:focus { border-color: var(--cm-teal); box-shadow: 0 0 0 3px rgba(8, 127, 114, 0.13); }
-.cache-memory-modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px 16px; border-top: 1px solid var(--cm-line); }
+.cache-memory-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 12px 18px 16px; border-top: 1px solid var(--cm-line); }
+.cache-memory-modal-actions button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .cache-memory-modal-actions .menu_button { width: auto; min-height: 36px; padding: 7px 14px; border: 1px solid #aebdce; border-radius: 8px; background: #fff; color: #27364a; font-size: 12px; font-weight: 700; }
 .cache-memory-modal-actions .cache-memory-primary { border-color: var(--cm-teal); background: var(--cm-teal); color: #fff; }
 .cache-memory-modal-actions .cache-memory-danger { border-color: #b42336; background: #b42336; color: #fff; }
@@ -284,8 +293,9 @@ body.cache-memory-config-open { overflow: hidden; }
     .cache-memory-pagination { justify-content: flex-start; }
     .cache-memory-page-status { flex-basis: 100%; order: -1; margin: 0; text-align: center; }
     .cache-memory-page-jump { flex: 1 1 100%; justify-content: center; }
-    .cache-memory-modal-overlay { padding: 8px; }
-    .cache-memory-modal-panel { max-height: min(92vh, 92dvh); }
+    .cache-memory-modal-overlay { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+    .cache-memory-modal-panel { max-height: min(92vh, 92dvh, 100%); }
+    .cache-memory-dialog-header { cursor: default; touch-action: pan-y; }
 }
 
 .cache-memory-overlay.is-dragging .cache-memory-config-panel { box-shadow: 0 12px 32px rgba(15, 23, 42, 0.24); }
@@ -296,7 +306,7 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-tracked-form label { color: #27364a; }
 .cache-memory-state-history { display: block; overflow-wrap: anywhere; }
 
-/* One vertical scroll surface; only the freeze notice and primary tabs stay visible. */
+/* One vertical scroll surface; the close button, notice and tabs stay visible. */
 .cache-memory-config-panel { display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 135px; }
 .cache-memory-pinned { position: sticky; top: 0; z-index: 5; background: #f8fafc; padding-top: 1px; }
 .cache-memory-config-panel .cache-memory-config-content,
@@ -331,11 +341,13 @@ body.cache-memory-config-open { overflow: hidden; }
 /* The existing task status stays inside the plugin: desktop upper right,
    mobile across the top. It shares the pinned area with the existing tabs. */
 .cache-memory-pinned { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); align-items: start; }
-.cache-memory-pinned > [data-freeze-status] { grid-column: 1; grid-row: 1; }
+.cache-memory-pinned > .cache-memory-dialog-header { grid-column: 1 / -1; grid-row: 1; }
+.cache-memory-pinned > [data-freeze-status] { grid-column: 1; grid-row: 2; }
 .cache-memory-pinned > .cache-memory-tabs { grid-column: 1 / -1; }
-.cache-memory-config-panel .cache-memory-task-feedback { grid-column: 2; grid-row: 1; margin: 8px 12px 4px; border-radius: 9px; box-shadow: 0 3px 12px #0f172a18; max-height: 110px; overflow-y: auto; }
+.cache-memory-config-panel .cache-memory-task-feedback { grid-column: 2; grid-row: 2; margin: 8px 12px 4px; border-radius: 9px; box-shadow: 0 3px 12px #0f172a18; max-height: 110px; overflow-y: auto; }
 #toast-container { z-index: 2147483010 !important; }
 @media (max-width: 640px) {
     .cache-memory-pinned { grid-template-columns: minmax(0, 1fr); }
-    .cache-memory-config-panel .cache-memory-task-feedback { grid-column: 1; grid-row: 1; margin: 6px 10px; max-height: 85px; }
+    .cache-memory-config-panel .cache-memory-task-feedback { grid-column: 1; grid-row: 2; margin: 6px 10px; max-height: 85px; }
+    .cache-memory-pinned > [data-freeze-status] { grid-row: 3; }
 }
