@@ -1,10 +1,10 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.21.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.21.0';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.21.0';
-import { extractSummarySource } from './summary-source.js?v=1.21.0';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.21.0';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.21.0';
-import { parseStateChanges, projectActiveState, stateContext, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.21.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.0';
+import { extractSummarySource } from './summary-source.js?v=1.22.0';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.0';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.22.0';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -194,6 +194,7 @@ export class MemorySummarizer {
                 messageIndex: entry.messageIndex,
                 messageId: entry.messageId,
                 sourceFingerprint: entry.fingerprint,
+                sourceContentFingerprint: entry.contentFingerprint,
                 title: parsed.title,
                 characters: parsed.characters,
                 storyTime: parsed.storyTime,
@@ -235,6 +236,7 @@ export class MemorySummarizer {
                 messageIndex: entry.messageIndex,
                 messageId: entry.messageId,
                 sourceFingerprint: entry.fingerprint,
+                sourceContentFingerprint: entry.contentFingerprint,
                 title: '生成失败',
                 characters: '',
                 event: '',
@@ -281,7 +283,7 @@ export class MemorySummarizer {
             const endFloor = startFloor + interval - 1;
             const range = { startFloor, endFloor };
             const checkpoint = store.checkpoints.find(item => item.startFloor === startFloor && item.endFloor === endFloor);
-            if (checkpoint) {
+            if (checkpoint && hasAggregateContent(checkpoint)) {
                 existing.push({ ...range, checkpointId: checkpoint.id });
                 continue;
             }
@@ -322,11 +324,11 @@ export class MemorySummarizer {
                 result.currentRange = { ...range };
                 onProgress({ ...result });
                 const existing = this.store.current().checkpoints.find(item => item.startFloor === range.startFloor && item.endFloor === range.endFloor);
-                if (existing) {
+                if (existing && hasAggregateContent(existing)) {
                     result.skipped++;
                 } else {
                     try {
-                        const created = await this.generateCheckpoint(range.startFloor, range.endFloor, { overwrite: false, signal });
+                        const created = await this.generateCheckpoint(range.startFloor, range.endFloor, { overwrite: Boolean(existing), signal });
                         if (created) result.created++;
                         else result.skipped++;
                     } catch (error) {
@@ -347,9 +349,6 @@ export class MemorySummarizer {
     getCheckpointUpdatePlan(ids = null) {
         const store = this.store.current();
         const selected = new Set(ids ?? store.checkpoints.filter(item => !isUsableMemory(item)).map(item => item.id));
-        if (!ids) for (const cp of [...store.checkpoints].sort((a, b) => a.startFloor - b.startFloor)) {
-            if (selected.has(cp.previousCheckpointId)) selected.add(cp.id);
-        }
         return store.checkpoints.filter(item => selected.has(item.id)).sort((a, b) => a.startFloor - b.startFloor).map(item => ({
             id: item.id, startFloor: item.startFloor, endFloor: item.endFloor,
             missingFloors: Array.from({ length: item.endFloor - item.startFloor + 1 }, (_, i) => item.startFloor + i)
@@ -417,7 +416,7 @@ export class MemorySummarizer {
             let range = this.getNextCheckpointRange();
             while (range.endFloor <= latestFloor) {
                 // Edited sources need explicit user review; never silently regenerate history.
-                if (this.store.current().checkpoints.some(item => item.startFloor === range.startFloor && (item.status === 'stale' || ['unmatched', 'unverified', 'changed'].includes(item.sourceValidity)))) break;
+                if (this.store.current().checkpoints.some(item => item.startFloor === range.startFloor && (item.status === 'stale' || item.sourceValidity === 'changed'))) break;
                 const created = await this.generateCheckpoint(range.startFloor, range.endFloor, { signal });
                 if (!created) break;
                 if (this.getSettings().memoryStrategy !== 'legacy') await this.generateDueLongMemories({ signal });
@@ -499,7 +498,7 @@ export class MemorySummarizer {
                 missingFloors: missing,
             };
             if (incremental) this.store.applyKeepItems(resolveKeepItems(keeps, result.content, newSummaries, summaries), { persist: false });
-            if (settings.activeStateEnabled) record.content = reconcileTrackedCheckpoint(record.content, this.store.current(), endFloor, startFloor);
+            record.content = settings.activeStateEnabled ? reconcileTrackedCheckpoint(record.content, this.store.current(), endFloor, startFloor) : deduplicateCheckpoint(record.content);
             this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && !isUsableMemory(existing)) });
             return record;
         } catch (error) {
@@ -539,7 +538,7 @@ export class MemorySummarizer {
             coveredFloors += checkpoint.endFloor - checkpoint.startFloor + 1;
             expectedStart = checkpoint.endFloor + 1;
             if (coveredFloors >= settings.longMemoryInterval) {
-                if (store.longMemories.some(item => item.startFloor === group[0].startFloor && (item.status === 'stale' || ['unmatched', 'unverified', 'changed'].includes(item.sourceValidity)))) return;
+                if (store.longMemories.some(item => item.startFloor === group[0].startFloor && (item.status === 'stale' || item.sourceValidity === 'changed'))) return;
                 await this.generateLongMemory(group, { overwrite: false, signal });
                 group = [];
                 coveredFloors = 0;

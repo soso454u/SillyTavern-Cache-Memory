@@ -1,7 +1,7 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.21.0';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.21.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.0';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.22.0';
 
-export const PLUGIN_VERSION = '1.21.0';
+export const PLUGIN_VERSION = '1.22.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1345,7 +1345,7 @@ export const V1200_DEFAULT_PROMPTS = Object.freeze({
     longMemory: insertPromptSection(V1160_DEFAULT_PROMPTS.longMemory, '【剧情日期/时间】', IMPORTANT_NPC_LONG_RULES),
 });
 
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V1210_DEFAULT_PROMPTS = Object.freeze({
     summary: insertPromptSection(V1200_DEFAULT_PROMPTS.summary, '【时间与地点】', `【任务、技能与属性记录规则】
 系统任务明确发布、推进、完成、失败或结算时记录变化；未完成任务在 Open 保留名称、条件、进度及待领取奖励；完成结果写 Event，仍有效后果写 State。世界书候选任务不等于已发布。
 技能解锁、升级、属性数值、奖励及道具变化时记录角色、项目、最新明确值与结果；候选奖励、待领取奖励不等于已获得。未明确完成不得判为完成；没有明确变化不得自行升级或推算。`),
@@ -1357,6 +1357,12 @@ KEEP 解决与替代仍须 NEW_SUMMARIES 的明确证据，不重复输出全部
 长期有效技能、能力、当前等级、重要属性及已获得系统奖励属于长期事实，按角色与项目维护当前有效版本。
 技能升级、属性明确变化或事实被替代时优先使用 UPDATED_FACTS 更新原 fact-id；只有明确永久失效且没有持续影响时使用 RETIRED_FACTS，仍遵守原有证据要求。
 未完成的短期任务由 Open Threads / KEEP 管理，不因未完成自动进入 Long Fact；已完成且无长期影响的任务不长期保留。`),
+});
+
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V1210_DEFAULT_PROMPTS,
+    checkpoint: V1210_DEFAULT_PROMPTS.checkpoint.replace('技能升级与属性变化以最新明确状态替代旧值。',
+        '技能升级与属性变化以最新明确状态替代旧值。同一任务、属性、物品或计划只在最合适的原栏目保留一条当前状态；明确被新计划替代的旧计划移出当前状态，必要历史原因仍可保留。不同人物的认知不能合并，长期未提及不等于任务结束。'),
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1382,7 +1388,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
     showWandButton: true,
     autoSummarize: true,
     activeStateEnabled: true,
-    injectionMaxTokens: 2800,
     independentApi: true,
     memoryStrategy: 'incremental',
     checkpointInterval: 5,
@@ -1418,12 +1423,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
 });
 
 export function normalizeSettings(saved = {}) {
-    const source = saved && typeof saved === 'object' ? saved : {};
+    const { injectionMaxTokens: _removedInjectionBudget, ...source } = saved && typeof saved === 'object' ? saved : {};
     const memoryStrategy = source.memoryStrategy === 'legacy' ? 'legacy' : 'incremental';
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];
@@ -1492,7 +1497,6 @@ export function normalizeSettings(saved = {}) {
         summaryFilterMode,
         summaryFilterTags: String(source.summaryFilterTags ?? DEFAULT_SETTINGS.summaryFilterTags),
         summaryMaxTokens,
-        injectionMaxTokens: Math.round(number(source.injectionMaxTokens, 2800, 256, 2800)),
         checkpointMaxTokens,
         longMemoryMaxTokens,
         maxTokens: longMemoryMaxTokens,

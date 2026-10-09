@@ -172,7 +172,7 @@ test('forcing a batch with a published checkpoint preserves both the checkpoint 
     assert.notEqual(prompt, '');
     assert.equal(f.store.current().injectionSnapshot.value, prompt);
     assert.equal(f.store.current().checkpoints[0].content, checkpoint.content);
-    assert.equal(f.store.current().checkpoints[0].status, 'stale');
+    assert.equal(f.store.current().checkpoints[0].status, 'frozen');
     assert.deepEqual(f.refreshes, []);
 });
 
@@ -354,7 +354,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.21.0');
+    assert.equal(PLUGIN_VERSION, '1.22.0');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);

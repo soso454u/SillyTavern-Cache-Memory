@@ -1,12 +1,8 @@
-import { INJECTION_MODES } from './defaults.js?v=1.21.0';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.21.0';
-import { stripStructuredSections } from './summary-format.js?v=1.21.0';
-import { budgetFrozenBlocks } from './injection-budget.js?v=1.21.0';
-
-function boundedInjection(texts, settings) {
-    const blocks = texts.map((text, index) => ({ id: String(index), type: /^\[KEEP\]/.test(text) ? 'keep' : /^\[LONG/.test(text) ? 'long' : 'checkpoint', startFloor: index, endFloor: index, text }));
-    const bounded = budgetFrozenBlocks(blocks, settings.injectionMaxTokens).blocks;
-    return bounded.length ? `<CACHE_MEMORY>\n\n${bounded.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
+import { INJECTION_MODES } from './defaults.js?v=1.22.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.22.0';
+import { stripStructuredSections } from './summary-format.js?v=1.22.0';
+function fullInjection(blocks) {
+    return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
 }
 
 function byRange(a, b) {
@@ -36,18 +32,18 @@ export function buildInjection(store, settings) {
                 .sort((a, b) => a.floor - b.floor);
             for (const item of summaries) blocks.push(`[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}`);
         }
-        return boundedInjection(blocks, settings);
+        return fullInjection(blocks);
     }
     const blocks = [];
     const longs = [...store.longMemories]
-        .filter(item => item.frozen !== false && item.status !== 'failed')
+        .filter(isUsableMemory)
         .sort(byRange);
     for (const item of longs) blocks.push(`[${String(item.id).toUpperCase().replaceAll('-', '_')}]\n${item.content}`);
 
     if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode)) {
         const coveredThrough = longs.at(-1)?.endFloor ?? 0;
         const checkpoints = [...store.checkpoints]
-            .filter(item => item.frozen !== false && item.status !== 'failed' && item.endFloor > coveredThrough)
+            .filter(item => isUsableMemory(item) && item.endFloor > coveredThrough)
             .sort(byRange)
             .slice(-settings.recentCheckpointCount);
         for (const item of checkpoints) blocks.push(`[${String(item.id).toUpperCase().replaceAll('-', '_')}]\n${item.content}`);
@@ -63,5 +59,5 @@ export function buildInjection(store, settings) {
         }
     }
 
-    return boundedInjection(blocks, settings);
+    return fullInjection(blocks);
 }

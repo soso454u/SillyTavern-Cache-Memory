@@ -9,7 +9,7 @@ test('overview reports expected memory counts, injection size and broken chains 
         .map(entry => [entry.messageId, { floor: entry.floor, status: 'frozen', frozen: true }]));
     const store = {
         summaries,
-        checkpoints: [{ id: 'checkpoint-001', startFloor: 1, endFloor: 5, status: 'frozen', frozen: true }],
+        checkpoints: [{ id: 'checkpoint-001', startFloor: 1, endFloor: 5, content: '完整阶段记忆', status: 'frozen', frozen: true }],
         longMemories: [],
         keepRegistry: { 'KEEP-0001': { status: 'active', sourceFloor: 1 } },
         injectionSnapshot: { blocks: [{ type: 'checkpoint' }], value: '<CACHE_MEMORY>\n[CHECKPOINT_001]\n中文 memory\n</CACHE_MEMORY>' },

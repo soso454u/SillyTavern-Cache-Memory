@@ -59,14 +59,17 @@ test('hung read releases queue and a later retry confirms normally', async () =>
     f.p.readRemoteStore = read; assert.equal((await f.p.flush()).state, 'confirmed');
 });
 
-test('conflicts survive browser reload, including new local edits', async () => {
-    const f = fixture(); add(f.remote, 'other'); add(f.metadata.cache_memory, 'one');
-    f.p.enqueue(f.metadata.cache_memory); await f.p.flush();
-    add(f.metadata.cache_memory, 'two'); f.p.enqueue(f.metadata.cache_memory); await f.p.flush();
+test('legacy pending conflicts automatically recover using current chat data after reload', async () => {
+    const f = fixture(); add(f.remote, 'one'); f.remote.summaries.one.event = 'remote differs'; add(f.metadata.cache_memory, 'one'); add(f.remote, 'other');
+    f.p.conflicts.set('a', { local: structuredClone(f.metadata.cache_memory), remote: structuredClone(f.remote) });
+    f.p.setState('a', 'conflict');
+    f.p.getChatId = () => 'inactive';
+    add(f.metadata.cache_memory, 'two'); f.p.enqueue(f.metadata.cache_memory);
     const reload = new MemoryPersistenceCoordinator(f.options);
-    reload.activate('a', f.metadata.cache_memory);
-    assert.equal(reload.getState().state, 'conflict');
-    assert.ok(reload.conflictBundle().local.summaries.two); assert.ok(reload.conflictBundle().remote.summaries.other);
+    reload.activate('a', f.metadata.cache_memory); await reload.flush();
+    assert.equal(reload.getState().state, 'confirmed'); assert.equal(reload.conflicts.size, 0);
+    assert.ok(f.remote.summaries.two); assert.ok(f.remote.summaries.other); assert.equal(f.remote.summaries.one.event, 'one');
+    assert.ok(Object.values(f.remote.recovery).some(item => item.kind === 'conflict-backup'));
 });
 
 test('page activation alone cannot confirm pending data', () => {

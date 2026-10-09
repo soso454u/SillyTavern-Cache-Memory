@@ -327,3 +327,15 @@ body.cache-memory-config-open { overflow: hidden; }
 }
 .cache-memory-status[hidden] { display: none !important; }
 .cache-memory-config-panel [data-memory-id] { scroll-margin-top: 140px; }
+
+/* The existing task status stays inside the plugin: desktop upper right,
+   mobile across the top. It shares the pinned area with the existing tabs. */
+.cache-memory-pinned { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); align-items: start; }
+.cache-memory-pinned > [data-freeze-status] { grid-column: 1; grid-row: 1; }
+.cache-memory-pinned > .cache-memory-tabs { grid-column: 1 / -1; }
+.cache-memory-config-panel .cache-memory-task-feedback { grid-column: 2; grid-row: 1; margin: 8px 12px 4px; border-radius: 9px; box-shadow: 0 3px 12px #0f172a18; max-height: 110px; overflow-y: auto; }
+#toast-container { z-index: 2147483010 !important; }
+@media (max-width: 640px) {
+    .cache-memory-pinned { grid-template-columns: minmax(0, 1fr); }
+    .cache-memory-config-panel .cache-memory-task-feedback { grid-column: 1; grid-row: 1; margin: 6px 10px; max-height: 85px; }
+}

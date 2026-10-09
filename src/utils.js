@@ -39,6 +39,8 @@ export function messageFingerprint(message) {
     ].join('\u001f'));
 }
 
+export const messageContentFingerprint = message => fnv1a(String(message?.mes ?? '').replace(/\s+/gu, ' ').trim());
+
 export function getAssistantMessages(chat) {
     let floor = 0;
     return (Array.isArray(chat) ? chat : []).flatMap((message, messageIndex) => {
@@ -56,6 +58,7 @@ export function getAssistantMessages(chat) {
             message,
             messageId: messageIdentity(message),
             fingerprint: messageFingerprint(message),
+            contentFingerprint: messageContentFingerprint(message),
         }];
     });
 }

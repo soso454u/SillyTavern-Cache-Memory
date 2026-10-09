@@ -1,10 +1,13 @@
-import { fnv1a } from './utils.js?v=1.21.0';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.21.0';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.21.0';
-import { projectActiveState } from './active-state.js?v=1.21.0';
+import { fnv1a } from './utils.js?v=1.22.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.0';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.22.0';
+import { matchesTrackedFact, projectActiveState } from './active-state.js?v=1.22.0';
+
+export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
 export const isUsableMemory = item => item && item.frozen !== false && ['frozen', 'manual-edited'].includes(item.status ?? 'frozen')
-    && !['unmatched', 'changed', 'unverified'].includes(item.sourceValidity);
+    && item.sourceValidity !== 'changed'
+    && (item.startFloor === undefined || hasAggregateContent(item));
 
 export function readSection(text, name) {
     const sections = String(text ?? '').split(/^\s*\[([^\]\n]+)\]\s*$/m);
@@ -116,8 +119,9 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
     }
     if (includeTracked) {
         for (const item of projectActiveState(store, throughFloor).filter(row => row.kind === 'state' && row.lifetime !== 'temporary' && row.acquisition !== 'pending')) {
-            const matches = [...facts.values()].filter(fact => fact.stateId === item.id || fact.status === 'active' && fact.text.includes(item.entity) && fact.text.includes(item.key));
-            const id = matches.length === 1 ? matches[0].id : item.id;
+            const matches = [...facts.values()].filter(fact => fact.status === 'active' && matchesTrackedFact(fact, item));
+            const id = matches[0]?.id ?? item.id;
+            for (const duplicate of matches.slice(1)) facts.set(duplicate.id, { ...duplicate, status: 'superseded' });
             facts.set(id, { id, stateId: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: item.needsReview ? 'needs-review' : item.status === 'active' ? 'active' : 'retired',
                 floor: item.sourceFloor, sourceId: item.sourceId, tracked: true, evidence: item.evidence });
         }
@@ -155,5 +159,12 @@ export function parseFactUpdates(output, projection, newSummaries) {
         const text = String(output).trim();
         if (![...active.values()].some(item => item.text === text)) updates.push({ action: 'add', id: `fact-${fnv1a(text)}`, text });
     }
-    return updates;
+    const revised = new Set(updates.filter(item => item.action === 'replace').map(item => item.text));
+    const seen = new Set();
+    return updates.filter(item => {
+        if (item.action === 'add' && revised.has(item.text)) return false;
+        const key = JSON.stringify([item.action, item.id, item.previousId]);
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+    });
 }

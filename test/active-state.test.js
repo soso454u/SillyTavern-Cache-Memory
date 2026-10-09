@@ -7,7 +7,6 @@ import { projectLongFacts } from '../src/continuity.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { normalizeSettings } from '../src/defaults.js';
 import { refreshSnapshot } from '../src/cache-control.js';
-import { estimateMemoryTokens } from '../src/injection-budget.js';
 
 const task = { kind: 'thread', entity: '林/主角', key: '松开的那只手', value: '已发布，尚未入睡', status: 'active', condition: '维持到入睡前才能结算', lifetime: 'temporary', evidence: '系统正式发布任务', confirmed: true };
 const skill = { kind: 'state', entity: '林/主角', key: '洞察', value: 'Lv.2', status: 'active', lifetime: 'permanent', evidence: '已获得洞察Lv.2', confirmed: true };
@@ -105,12 +104,13 @@ test('source edits invalidate dependent CP/Long without deleting earlier summari
     chat.pop(); store.reconcileDeletion(chat); assert.equal(Object.keys(store.current().summaries).length, 2);
 });
 
-test('oversized frozen injection is bounded only at publish boundaries; all stored records survive', () => {
+test('oversized frozen injection remains complete and only changes at publish boundaries', () => {
     const settings = normalizeSettings(), store = createEmptyStore('a');
     store.checkpoints = Array.from({ length: 30 }, (_, i) => ({ id: `checkpoint-${i}`, startFloor: i * 5 + 1, endFloor: i * 5 + 5, content: `剧情${i}\n${'汉'.repeat(2000)}`, status: 'frozen' }));
     refreshSnapshot(store, settings, 'new checkpoint');
     const frozen = store.injectionSnapshot.value;
-    assert.ok(estimateMemoryTokens(frozen) <= 2800); assert.ok(store.injectionSnapshot.budget.omitted + store.injectionSnapshot.budget.clipped > 0);
+    assert.ok(frozen.length > 60000); assert.equal(store.injectionSnapshot.budget, undefined);
+    for (let i = 0; i < 30; i++) assert.ok(frozen.includes(`剧情${i}\n${'汉'.repeat(2000)}`));
     assert.equal(store.checkpoints.length, 30); assert.match(frozen, /剧情29/);
     put(store, 151, [task]); assert.equal(refreshSnapshot(store, settings, 'new summary').value, frozen);
 });

@@ -47,11 +47,11 @@ test('loaded page memory is not called confirmed until a direct server read-back
     const remote = createEmptyStore('chat-a');
     remote.summaries.m2 = summary('m2', 2);
     fixture.remote = remote;
-    assert.equal((await fixture.coordinator.verify('chat-a')).state, MEMORY_SAVE_STATES.CONFLICT);
-    assert.ok(fixture.coordinator.conflictBundle('chat-a').remote.summaries.m2);
+    assert.equal((await fixture.coordinator.verify('chat-a')).state, MEMORY_SAVE_STATES.CONFIRMED);
+    assert.ok(fixture.metadata.cache_memory.summaries.m2);
 });
 
-test('stale device is blocked when remote memory changed after its baseline', async () => {
+test('stale device preserves a remote superset without overwriting newer records', async () => {
     const fixture = coordinatorFixture();
     fixture.metadata.cache_memory.summaries.m1 = summary('m1', 1);
     const newer = createEmptyStore('chat-a');
@@ -60,10 +60,10 @@ test('stale device is blocked when remote memory changed after its baseline', as
     fixture.remote = newer;
     fixture.coordinator.enqueue(fixture.metadata.cache_memory, 'old device update');
     const state = await fixture.coordinator.flush('chat-a');
-    assert.equal(state.state, MEMORY_SAVE_STATES.CONFLICT);
+    assert.equal(state.state, MEMORY_SAVE_STATES.CONFIRMED);
     assert.equal(fixture.saveCalls, 0);
-    assert.ok(fixture.coordinator.conflictBundle('chat-a').local.summaries.m1);
-    assert.ok(fixture.coordinator.conflictBundle('chat-a').remote.summaries.m2);
+    assert.ok(fixture.metadata.cache_memory.summaries.m1);
+    assert.ok(fixture.metadata.cache_memory.summaries.m2);
 });
 
 test('swallowed SillyTavern save failure remains retryable and is never reported confirmed', async () => {
