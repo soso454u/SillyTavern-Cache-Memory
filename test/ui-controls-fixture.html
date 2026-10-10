@@ -1,0 +1,83 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>窗口交互与主题回归</title>
+<style>
+/* Simulate a host theme that gives native buttons a strong default appearance. */
+body { margin: 0; background: #151820; color: #ddd; font: 16px/1.5 sans-serif; }
+body button { padding: 12px; border: 2px solid #aaa; border-radius: 4px; background: #eee; color: #444; box-shadow: 0 2px 5px #888; }
+#results { position: absolute; top: 0; white-space: pre-wrap; }
+</style>
+<div id="extensions_settings2"></div><div id="chat"></div><pre id="results">正在验证…</pre>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { normalizeSettings, ENSEMBLE_PROMPTS } from '../src/defaults.js';
+let settings = normalizeSettings({ globalPromptMode: 'blank' });
+let chatId = 'synthetic-controls-a';
+const metadata = {}, media = Object.assign(new EventTarget(), { matches: false });
+const nativeMatchMedia = window.matchMedia;
+window.matchMedia = () => media;
+const store = new MemoryStore({ getChatId: () => chatId, getMetadata: () => metadata, saveMetadata: () => {} });
+const ui = new CacheMemoryUI({ store, getSettings: () => settings, updateSettings: patch => settings = normalizeSettings({ ...settings, ...patch }),
+    persistSettings: async () => {}, getChat: () => [], apiClient: { hasApiKey: () => false, complete: () => { throw Error('模型请求禁止'); } }, summarizer: { isSummarizing: () => false } });
+ui.mountSettings();
+const results = window.controlResults = [];
+const assert = (name, passed) => { results.push({ name, passed: Boolean(passed) }); if (!passed) throw Error(name); };
+const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+const click = selector => { const element = document.querySelector(selector); if (!element) throw Error(`缺少 ${selector}`); element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); };
+const panel = name => ui.config.querySelector(`[data-settings-panel="${name}"]`);
+try {
+    click('[data-open-settings]');
+    assert('窗口状态属性不是按钮动作属性', !ui.config.matches('[data-summary-mode]') && ui.config.dataset.currentSummaryMode === 'normal');
+    const initialMode = store.current().summaryMode;
+    for (const name of ['manager', 'api', 'injection', 'prompts', 'general']) {
+        click(`[data-settings-tab="${name}"] span`);
+        assert(`实际点击 ${name} 菜单可切换且不改变模式`, !panel(name).hidden && store.current().summaryMode === initialMode);
+    }
+    click('button[data-summary-mode="ensemble"]');
+    assert('点击群像按钮同步编辑器和高亮', store.current().summaryMode === 'advanced' && ui.config.querySelector('[data-prompt="summary"]').value === ENSEMBLE_PROMPTS.summary && [...ui.config.querySelectorAll('button[data-summary-mode="ensemble"]')].every(button => button.getAttribute('aria-pressed') === 'true'));
+    click('[data-settings-tab="prompts"] span');
+    click('[data-settings-panel="prompts"] button[data-summary-mode="normal"]');
+    assert('提示词页按钮可切回普通且不吞菜单点击', store.current().summaryMode === 'normal' && !panel('prompts').hidden && ui.config.querySelector('[data-prompt="summary"]').value === settings.prompts.summary);
+    const details = panel('prompts').querySelector('[data-prompt="summary"]').closest('details');
+    details.querySelector('summary').click(); await settle();
+    const editor = details.querySelector('textarea');
+    editor.value = '合成普通自定义'; editor.dispatchEvent(new Event('input', { bubbles: true }));
+    assert('模式切换后提示词编辑仍自动保存', settings.prompts.summary === '合成普通自定义');
+    click('[data-theme-mode="dark"] svg');
+    assert('点击夜间图标立即生效且保存', settings.uiThemeMode === 'dark' && ui.config.dataset.uiTheme === 'dark' && getComputedStyle(ui.config.querySelector('.cache-memory-config-panel')).backgroundColor === 'rgb(23, 27, 34)');
+    click('[data-theme-mode="light"]');
+    assert('手动日间不会被系统事件覆盖', settings.uiThemeMode === 'light' && ui.config.dataset.uiTheme === 'light');
+    media.matches = true; media.dispatchEvent(new Event('change'));
+    assert('手动日间保持当前选择', ui.config.dataset.uiTheme === 'light');
+    click('[data-theme-mode="system"]');
+    assert('跟随系统立即读取当前夜间模式', settings.uiThemeMode === 'system' && ui.config.dataset.uiTheme === 'dark');
+    media.matches = false; media.dispatchEvent(new Event('change'));
+    assert('系统切到日间时窗口自动同步', ui.config.dataset.uiTheme === 'light');
+    const dialogPromise = ui.showPluginDialog({ title: '合成确认', message: '确认说明。'.repeat(300), confirmLabel: '确认', fields: [{ key: 'value', label: '合成输入', value: '保留值' }] });
+    media.matches = true; media.dispatchEvent(new Event('change'));
+    assert('打开的确认弹窗也跟随系统', ui.activeDialog.dataset.uiTheme === 'dark');
+    const bounds = ui.activeDialog.querySelector('form').getBoundingClientRect();
+    const frame = ui.config.querySelector('.cache-memory-config-frame').getBoundingClientRect();
+    assert('长确认弹窗始终在插件可见范围', bounds.top >= frame.top && bounds.bottom <= frame.bottom && bounds.left >= frame.left && bounds.right <= frame.right);
+    click('.cache-memory-modal-panel button[type="submit"]');
+    assert('确认数据与关闭行为不受主题影响', (await dialogPromise).value === '保留值' && !ui.activeDialog);
+    click('[data-settings-close] span');
+    assert('实际点击关闭按钮子元素可关闭', ui.config.hidden);
+    click('[data-open-settings]');
+    assert('重开后保留主题和所有交互', !ui.config.hidden && ui.config.dataset.uiTheme === 'dark' && settings.uiThemeMode === 'system');
+    click('[data-settings-tab="general"] span');
+    const checkbox = panel('general').querySelector('[data-setting="enabled"]');
+    checkbox.click();
+    assert('常规开关仍可点击保存', settings.enabled === false);
+    checkbox.click();
+    const close = ui.config.querySelector('[data-settings-close]'), rect = close.getBoundingClientRect();
+    const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    assert('关闭按钮没有被拖动或透明层遮挡', target === close || close.contains(target));
+    assert('手机无横向溢出', document.documentElement.scrollWidth <= innerWidth);
+    assert('插件主题不改变宿主背景', getComputedStyle(document.body).backgroundColor === 'rgb(21, 24, 32)');
+    assert('主题设置重载后保留', normalizeSettings(JSON.parse(JSON.stringify(settings))).uiThemeMode === 'system');
+} catch (error) { results.push({ name: error.message, passed: false }); }
+window.matchMedia = nativeMatchMedia;
+window.fixture = { ui, store, media, get settings() { return settings; } };
+document.getElementById('results').textContent = results.map(item => `${item.passed ? 'PASS' : 'FAIL'} ${item.name}`).join('\n');
+</script></html>
