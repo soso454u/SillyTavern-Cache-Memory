@@ -11,15 +11,28 @@ export function viewportSize(root) {
 }
 
 // iOS keyboards and zoom change the visible area without changing layout vh.
-export function bindDialogViewport(overlay, root, signal) {
+export function bindDialogViewport(overlay, root, signal, anchor = null) {
     let frame = null;
     const update = () => {
         frame = null;
         const view = viewportSize(root);
-        Object.assign(overlay.style, { top: `${view.top}px`, left: `${view.left}px`,
-            width: `${view.width}px`, height: `${view.height}px`, right: 'auto', bottom: 'auto' });
+        // A confirmation lives within both the plugin frame and the visual viewport.
+        // Use viewport coordinates because this overlay is fixed on document.body.
+        const rect = anchor?.getBoundingClientRect();
+        const left = rect ? Math.max(view.left, rect.left) : view.left;
+        const top = rect ? Math.max(view.top, rect.top) : view.top;
+        const right = rect ? Math.min(view.left + view.width, rect.right) : view.left + view.width;
+        const bottom = rect ? Math.min(view.top + view.height, rect.bottom) : view.top + view.height;
+        const width = Math.max(0, right - left), height = Math.max(0, bottom - top);
+        Object.assign(overlay.style, { top: `${top}px`, left: `${left}px`,
+            width: `${width}px`, height: `${height}px`, right: 'auto', bottom: 'auto' });
+        overlay.style.setProperty('--cm-dialog-height', `${height}px`);
     };
     const schedule = () => { if (frame === null) frame = root.requestAnimationFrame(update); };
+    const resizeObserver = anchor && root.ResizeObserver ? new root.ResizeObserver(schedule) : null;
+    const styleObserver = anchor && root.MutationObserver ? new root.MutationObserver(schedule) : null;
+    resizeObserver?.observe(anchor);
+    styleObserver?.observe(anchor, { attributes: true, attributeFilter: ['style'] });
     const dispose = () => {
         if (frame !== null) root.cancelAnimationFrame(frame);
         frame = null;
@@ -27,6 +40,8 @@ export function bindDialogViewport(overlay, root, signal) {
         root.visualViewport?.removeEventListener('resize', schedule);
         root.visualViewport?.removeEventListener('scroll', schedule);
         signal?.removeEventListener('abort', dispose);
+        resizeObserver?.disconnect();
+        styleObserver?.disconnect();
     };
     update();
     root.addEventListener('resize', schedule);

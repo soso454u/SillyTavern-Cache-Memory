@@ -1,17 +1,18 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.23.1';
-import { effectiveInjectionMode } from './cache-control.js?v=1.23.1';
-import { API_PROVIDERS, DEFAULT_PROMPTS, globalPromptText, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.23.1';
-import { HistoryBackfill } from './history-backfill.js?v=1.23.1';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.23.1';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.23.1';
-import { buildStructuredSummary } from './summary-format.js?v=1.23.1';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.23.1';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.23.1';
-import { parseFloorSummary } from './summarizer.js?v=1.23.1';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.23.1';
+import { generationPrompt } from './generation-prompts.js?v=1.24.0';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.24.0';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.0';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.0';
+import { parseFloorSummary } from './summarizer.js?v=1.24.0';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.0';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.23.1';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.23.1';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.0';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -328,6 +329,7 @@ export function configTemplate() {
                     </div>
                     <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button>
                 </header>
+                <div class="cache-memory-mode-switch"><span>当前聊天</span><div class="cache-memory-mode-buttons" role="group" aria-label="当前聊天总结模式"><button type="button" data-summary-mode="normal" aria-pressed="true">普通总结</button><button type="button" data-summary-mode="ensemble" aria-pressed="false">群像详细总结</button></div></div>
                 <div class="cache-memory-task-feedback cache-memory-status" data-cache-status data-state="idle" role="status" aria-live="polite" hidden></div>
                 <div class="cache-memory-config-status cache-memory-status" data-freeze-status data-state="success" hidden></div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
@@ -350,7 +352,6 @@ export function configTemplate() {
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
                         <div class="cache-memory-grid">
-                            <label>总结模式（当前聊天）<select data-summary-mode><option value="normal">普通模式（默认）</option><option value="advanced">复杂进阶总结（可选）</option></select><small>只影响后续整理，不重生成已有记忆；自定义提示词保留。</small></label>
                             <label>记忆策略<select data-setting="memoryStrategy"><option value="incremental">增量状态 + 长期事实 + KEEP</option><option value="legacy">兼容旧版分段摘要</option></select></label>
                             <label>过滤策略<select data-setting="summaryFilterMode"><option value="${SUMMARY_FILTER_MODES.DEFAULT}">默认（推荐）</option><option value="${SUMMARY_FILTER_MODES.CUSTOM}">自定义标签</option><option value="${SUMMARY_FILTER_MODES.FULL}">不过滤（完整正文）</option></select></label>
                             <label data-custom-filter>正文标签（按优先级，用逗号或换行分隔）<textarea rows="1" data-setting="summaryFilterTags" placeholder="content, context, story"></textarea></label>
@@ -433,11 +434,13 @@ export function configTemplate() {
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
-                        <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>分别编辑每一种记忆层使用的系统提示词；不熟悉时保持默认即可。</p></div></div>
+                        <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>两套模板分别自动保存；切换只影响以后生成的记忆。</p></div></div>
+                        <div class="cache-memory-mode-switch cache-memory-prompt-mode"><span>当前聊天使用的模板</span><div class="cache-memory-mode-buttons" role="group" aria-label="提示词模式"><button type="button" data-summary-mode="normal" aria-pressed="true">普通</button><button type="button" data-summary-mode="ensemble" aria-pressed="false">群像</button></div></div>
+                        <small class="cache-memory-help" data-prompt-mode-help></small>
                         <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
-                        <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
-                        <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
-                        <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
+                        <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
+                        <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="checkpoint" aria-label="实际完整提示词"></textarea></details></details>
+                        <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="longMemory" aria-label="实际完整提示词"></textarea></details></details>
                     </section>
                 </div>
             </div>
@@ -508,7 +511,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.23.1', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.0', import.meta.url).href;
         this.doc.head.append(this.style);
         this.root.addEventListener('resize', () => {
             for (const input of this.doc.querySelectorAll('.cache-memory-inline-editor textarea, .cache-memory-modal-panel textarea, .cache-memory-tracked-form textarea, #cache-memory-config textarea')) resizeMemoryTextarea(input);
@@ -654,16 +657,31 @@ export class CacheMemoryUI {
         for (const input of root?.querySelectorAll?.('textarea') ?? []) resizeMemoryTextarea(input);
     }
 
+    generationSettings() {
+        return memoryGenerationSettings(this.getSettings(), this.store?.current().summaryMode);
+    }
+
+    renderPromptPreviews(scope) {
+        const previews = [...scope.querySelectorAll('[data-effective-prompt]')].filter(element => element.closest('details')?.open);
+        if (!previews.length) return;
+        const settings = this.generationSettings();
+        for (const element of previews) element.value = generationPrompt(settings, element.dataset.effectivePrompt);
+    }
+
     refreshSummaryMode(root = this.config) {
-        const mode = root?.querySelector('[data-summary-mode]');
-        if (mode) { mode.value = this.store?.current().summaryMode ?? 'normal'; mode.disabled = !this.store?.current().chatId; }
+        if (!root) return;
+        const current = this.store?.current();
+        const mode = current?.summaryMode === 'advanced' ? 'ensemble' : 'normal';
+        if (root.dataset.summaryMode !== mode || root.dataset.summaryChatAvailable !== String(Boolean(current?.chatId))) this.populateSettings(root);
     }
 
     populateSettings(root) {
-        const settings = this.getSettings();
+        const settings = this.generationSettings();
+        const hasChat = Boolean(this.store?.current().chatId);
         const scopes = root ? [root] : this.settingsScopes();
         for (const scope of scopes) {
-            this.refreshSummaryMode(scope);
+            scope.dataset.summaryMode = settings.summaryMode;
+            scope.dataset.summaryChatAvailable = String(hasChat);
             const profileSelect = scope.querySelector('[data-api-profile]');
             if (profileSelect && this.apiClient?.listProfiles) {
                 const index = this.apiClient.listProfiles();
@@ -674,6 +692,15 @@ export class CacheMemoryUI {
                 const remove = scope.querySelector('[data-profile-action="delete"]');
                 if (remove) remove.disabled = index.profiles.length <= 1;
             }
+            for (const element of scope.querySelectorAll('[data-summary-mode]')) {
+                const active = element.dataset.summaryMode === settings.summaryMode;
+                element.classList.toggle('is-active', active);
+                element.setAttribute('aria-pressed', String(active));
+                element.disabled = !hasChat;
+            }
+            const modeHelp = scope.querySelector('[data-prompt-mode-help]');
+            if (modeHelp) modeHelp.textContent = `${settings.summaryMode === 'ensemble' ? '群像详细总结' : '普通总结'} · 编辑后自动保存，恢复默认仅影响本模式。展开可查看含全局及必要状态规则的完整提示词。`;
+            this.renderPromptPreviews(scope);
             const warning = scope.querySelector('[data-cache-mode-warning]');
             if (warning) warning.textContent = settings.strictCacheMode
                 ? `近期小总结会每轮改变 Prompt，不适合严格缓存模式。当前实际策略：${effectiveInjectionMode(settings)}；近期模式会自动降级到 Checkpoint 边界。`
@@ -873,7 +900,11 @@ export class CacheMemoryUI {
     bindSettings(root) {
         if (!root || root.dataset.cacheMemoryBound === 'true') return;
         root.dataset.cacheMemoryBound = 'true';
-        root.addEventListener('toggle', () => this.resizeTextareas(root), { capture: true, signal: this.controller.signal });
+        root.addEventListener('toggle', event => {
+            if (!event.target.open) return;
+            if (event.target.matches?.('.cache-memory-prompt-preview')) this.renderPromptPreviews(event.target);
+            this.resizeTextareas(event.target);
+        }, { capture: true, signal: this.controller.signal });
         root.addEventListener('focusout', event => {
             if (event.target.closest('[data-api-key]')) void this.saveInputApiKey(root);
         }, { signal: this.controller.signal });
@@ -883,11 +914,6 @@ export class CacheMemoryUI {
                 this.flushSettingInput();
                 event.target.value = value;
                 if (event.target.type === 'checkbox') event.target.checked = checked;
-            }
-            if (event.target.closest('[data-summary-mode]')) {
-                this.store.setSummaryMode(event.target.value);
-                this.renderManager();
-                return;
             }
             const profile = event.target.closest('[data-api-profile]');
             if (profile) {
@@ -931,7 +957,10 @@ export class CacheMemoryUI {
                 this.apiFormRevision++;
                 if (previousApiBaseUrl.trim()) root.querySelector('[data-api-key]').value = '';
             }
-            this.updateSettings({ [key]: value, ...(key === 'apiBaseUrl' ? { provider: API_PROVIDERS.OPENAI_COMPATIBLE } : {}) });
+            const modeGenerationKey = /^(summary|checkpoint|longMemory)Max(Length|Tokens)$/.test(key);
+            if (modeGenerationKey && this.generationSettings().summaryMode === 'ensemble') {
+                this.updateSettings({ ensembleGeneration: { ...this.getSettings().ensembleGeneration, [key]: value } });
+            } else this.updateSettings({ [key]: value, ...(key === 'apiBaseUrl' ? { provider: API_PROVIDERS.OPENAI_COMPATIBLE } : {}) });
             if (key === 'apiBaseUrl') {
                 this.updateSettings({ model: this.apiClient.savedConnectionModel?.() ?? '' });
                 if (!previousApiBaseUrl.trim()) void this.saveInputApiKey(root);
@@ -957,6 +986,7 @@ export class CacheMemoryUI {
             if (globalPrompt) {
                 if (this.getSettings().globalPromptMode === 'custom') {
                     this.updateSettings({ globalPromptCustom: globalPrompt.value });
+                    this.renderPromptPreviews(root);
                     this.markSettingsDirty();
                 }
                 return;
@@ -977,10 +1007,20 @@ export class CacheMemoryUI {
             }
             const element = event.target.closest('[data-prompt]');
             if (!element) return;
-            this.updateSettings({ prompts: { ...this.getSettings().prompts, [element.dataset.prompt]: element.value } });
+            const key = this.generationSettings().summaryMode === 'ensemble' ? 'ensemblePrompts' : 'prompts';
+            this.updateSettings({ [key]: { ...this.getSettings()[key], [element.dataset.prompt]: element.value } });
+            this.renderPromptPreviews(root);
             this.markSettingsDirty();
         }, { signal: this.controller.signal });
         root.addEventListener('click', async event => {
+            const mode = event.target.closest('[data-summary-mode]');
+            if (mode) {
+                if (!this.store?.current().chatId || mode.disabled) return;
+                this.store.setSummaryMode(mode.dataset.summaryMode === 'ensemble' ? 'advanced' : 'normal');
+                this.populateSettings();
+                this.renderManager();
+                return;
+            }
             if (event.target === this.config || event.target.closest('[data-settings-close]')) {
                 this.closeSettings();
                 return;
@@ -1031,8 +1071,10 @@ export class CacheMemoryUI {
             const reset = event.target.closest('[data-reset-prompt]');
             if (reset) {
                 const name = reset.dataset.resetPrompt;
-                const defaults = this.getSettings().memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
-                this.updateSettings({ prompts: { ...this.getSettings().prompts, [name]: defaults[name] } });
+                const mode = this.generationSettings().summaryMode;
+                const defaults = modePromptDefaults(this.getSettings(), mode);
+                const key = mode === 'ensemble' ? 'ensemblePrompts' : 'prompts';
+                this.updateSettings({ [key]: { ...this.getSettings()[key], [name]: defaults[name] } });
                 this.markSettingsDirty();
                 this.populateSettings();
                 return;
@@ -1264,7 +1306,7 @@ export class CacheMemoryUI {
                 let widget = message.querySelector('.cache-memory-message');
                 if (!entry || !anchor) { widget?.remove(); continue; }
                 const record = store.summaries[entry.messageId];
-                const busy = this.summarizer.isSummarizing(entry.messageId);
+                const busy = this.summarizer.isSummarizing(entry.messageId, store.chatId);
                 if (widget && (widget.dataset.messageId !== entry.messageId || widget.dataset.chatId !== store.chatId)) {
                     widget.remove(); widget = null;
                 }
@@ -1394,7 +1436,8 @@ export class CacheMemoryUI {
             form.append(header, content, actions);
             overlay.append(form);
             this.doc.body.append(overlay);
-            const releaseViewport = bindDialogViewport(overlay, this.root, this.controller.signal);
+            const anchor = this.config && !this.config.hidden ? this.config.querySelector('.cache-memory-config-frame') : null;
+            const releaseViewport = bindDialogViewport(overlay, this.root, this.controller.signal, anchor);
             this.activeDialog = overlay;
             let settled = false;
             const finish = value => {
@@ -1474,8 +1517,16 @@ export class CacheMemoryUI {
         this.activateSettingsTab('manager');
     }
 
+    queueManagerRender() {
+        if (this.destroyed || this.managerFrame != null || this.config?.hidden || !this.manager || this.manager.hidden) return;
+        this.managerFrame = this.root.requestAnimationFrame(() => {
+            this.managerFrame = null;
+            this.renderManager();
+        });
+    }
+
     renderManager() {
-        if (!this.manager || this.manager.hidden) return;
+        if (this.config?.hidden || !this.manager || this.manager.hidden) return;
         this.renderMemorySaveState();
         for (const tab of this.manager.querySelectorAll('[data-manager-view]')) {
             const active = tab.dataset.managerView === this.managerView;
@@ -1883,7 +1934,8 @@ export class CacheMemoryUI {
         const page = this.paginate(items, this.managerState.summaryPage, 20);
         this.managerState.summaryPage = page.page;
         const list = this.element('div', 'cache-memory-card-list');
-        for (const item of page.items) list.append(this.summaryCard(item));
+        const limit = memoryGenerationSettings(this.getSettings(), store.summaryMode).summaryMaxLength;
+        for (const item of page.items) list.append(this.summaryCard(item, limit));
         if (!page.items.length) list.append(this.element('p', 'cache-memory-empty', '暂无记忆'));
         root.append(list, this.pagination('summaryPage', page));
         return root;
@@ -2122,11 +2174,10 @@ export class CacheMemoryUI {
         body.append(sections);
     }
 
-    summaryCard({ entry, record }) {
+    summaryCard({ entry, record }, limit = this.generationSettings().summaryMaxLength) {
         const baseStatus = this.statusLabel(record);
         const count = record && record.status !== 'failed' ? [record.title, record.characters, record.event, record.state, record.open, record.quote, record.keep]
             .map(value => String(value ?? '').trim()).filter(Boolean).join('\n').length : 0;
-        const limit = this.getSettings().summaryMaxLength;
         const status = count ? `${baseStatus} · ${count}/${limit} 字${count > limit * 1.15 ? ' · 偏长' : ''}` : baseStatus;
         return this.foldCard({ key: entry.messageId, group: 'summaries', type: 'summary', id: entry.messageId,
             title: `第${entry.floor}层｜${record?.title ?? status}`, status, renderBody: body => {
@@ -2800,6 +2851,7 @@ export class CacheMemoryUI {
         if (this.root[OWNER_KEY] === this) delete this.root[OWNER_KEY];
         this.chatObserver?.disconnect();
         if (this.messageFrame != null) this.root.cancelAnimationFrame(this.messageFrame);
+        if (this.managerFrame != null) this.root.cancelAnimationFrame(this.managerFrame);
         this.wandObserver?.disconnect();
         this.wandObserver = null;
         this.doc.getElementById(ROOT_ID)?.remove();

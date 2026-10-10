@@ -1,7 +1,9 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.23.1';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.23.1';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.24.0';
+export { ENSEMBLE_PROMPTS };
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.0';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.24.0';
 
-export const PLUGIN_VERSION = '1.23.1';
+export const PLUGIN_VERSION = '1.24.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1417,6 +1419,27 @@ function promptFingerprint(value) {
     return (hash >>> 0).toString(16);
 }
 
+export const ENSEMBLE_GENERATION = Object.freeze({
+    summaryMaxLength: 800, checkpointMaxLength: 2000, longMemoryMaxLength: 3500,
+    summaryMaxTokens: 4096, checkpointMaxTokens: 8192, longMemoryMaxTokens: 12288,
+});
+
+export function modePromptDefaults(settings, mode) {
+    return mode === 'ensemble' ? ENSEMBLE_PROMPTS : settings.memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
+}
+
+// A request captures its mode once. Switching modes never edits saved memories or injection snapshots.
+export function memoryGenerationSettings(settings, mode = 'normal') {
+    const summaryMode = ['advanced', 'ensemble'].includes(mode) ? 'ensemble' : 'normal';
+    if (summaryMode !== 'ensemble') return { ...settings, summaryMode };
+    const generation = { ...ENSEMBLE_GENERATION, ...settings.ensembleGeneration };
+    // Leave room for Chinese text, structured deltas and output tags, even with an old small token setting.
+    for (const stage of ['summary', 'checkpoint', 'longMemory']) {
+        generation[`${stage}MaxTokens`] = Math.min(32000, Math.max(generation[`${stage}MaxTokens`], generation[`${stage}MaxLength`] * 3 + 1024));
+    }
+    return { ...settings, ...generation, summaryMode, prompts: { ...ENSEMBLE_PROMPTS, ...settings.ensemblePrompts } };
+}
+
 export const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     showWandButton: true,
@@ -1455,6 +1478,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     globalPromptMode: 'default',
     globalPromptCustom: '',
     prompts: DEFAULT_PROMPTS,
+    ensemblePrompts: ENSEMBLE_PROMPTS,
+    ensembleGeneration: ENSEMBLE_GENERATION,
 });
 
 export function normalizeSettings(saved = {}) {
@@ -1540,6 +1565,10 @@ export function normalizeSettings(saved = {}) {
         provider,
         injectionMode,
         prompts,
+        ensemblePrompts: Object.fromEntries(Object.entries(ENSEMBLE_PROMPTS).map(([key, fallback]) =>
+            [key, typeof source.ensemblePrompts?.[key] === 'string' ? source.ensemblePrompts[key] : fallback])),
+        ensembleGeneration: Object.fromEntries(Object.entries(ENSEMBLE_GENERATION).map(([key, fallback]) =>
+            [key, Math.round(number(source.ensembleGeneration?.[key], fallback, key.endsWith('Tokens') ? 32 : 50, key.endsWith('Tokens') ? 32000 : key.startsWith('summary') ? 5000 : key.startsWith('checkpoint') ? 12000 : 24000))])),
     };
 }
 

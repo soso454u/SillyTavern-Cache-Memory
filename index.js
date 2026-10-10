@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.23.1';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.23.1';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.23.1';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.23.1';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.23.1';
-import { getAssistantMessages } from './src/utils.js?v=1.23.1';
-import { MemoryStore } from './src/memory-store.js?v=1.23.1';
-import { MemorySummarizer } from './src/summarizer.js?v=1.23.1';
-import { CacheMemoryUI } from './src/ui.js?v=1.23.1';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.23.1';
-import { MemoryServerClient } from './src/memory-server.js?v=1.23.1';
+import { SummaryApiClient } from './src/api-client.js?v=1.24.0';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.0';
+import { getAssistantMessages } from './src/utils.js?v=1.24.0';
+import { MemoryStore } from './src/memory-store.js?v=1.24.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.24.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.24.0';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.0';
+import { MemoryServerClient } from './src/memory-server.js?v=1.24.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -139,8 +139,9 @@ const persistence = new MemoryPersistenceCoordinator({
             if (memoryChatId() !== chatId) return;
             ui?.renderMemorySaveState();
             if (status.state === 'confirmed' || status.state === 'conflict') {
-                ui?.renderManager();
-                ui?.renderMessageMemories();
+                ui?.refreshSummaryMode();
+                ui?.queueManagerRender();
+                ui?.queueMessageRender();
             }
         });
     },
@@ -152,8 +153,8 @@ const store = new MemoryStore({
     saveMetadata: (snapshot, reason) => persistence.enqueue(snapshot, reason),
     onChange: (changedStore, reason) => {
         queueMicrotask(() => {
-            ui?.renderMessageMemories();
-            ui?.renderManager();
+            ui?.queueMessageRender();
+            ui?.queueManagerRender();
             if (store.current().chatId !== changedStore.chatId || runtimeController.signal.aborted) return;
             if (settings && shouldRefreshInjection(settings, reason)) updateInjection(reason);
         });
@@ -176,7 +177,7 @@ const summarizer = new MemorySummarizer({
     commitMemory: (mutate, assertActive) => persistence.commitReplacement(store, mutate, assertActive),
     onStatus: (state, message, error) => {
         if (state !== 'settled') ui?.setStatus(state, message, error);
-        ui?.renderMessageMemories();
+        ui?.queueMessageRender();
         if (state === 'error') console.warn(LOG_PREFIX, message);
     },
 });
@@ -219,7 +220,7 @@ async function refreshChatState({ serverLoaded = false } = {}) {
         updateInjection('chat changed');
     } else if (serverLoaded) updateInjection('chat changed');
     else if (!settings.strictCacheMode) updateInjection('history metadata changed');
-    nextFrame(() => { ui?.refreshSummaryMode(); ui?.renderMessageMemories(); ui?.renderManager(); });
+    nextFrame(() => { ui?.refreshSummaryMode(); ui?.queueMessageRender(); ui?.queueManagerRender(); });
 }
 
 function cacheDebugSnapshot(messages) {
@@ -249,8 +250,8 @@ function bindEvents() {
     });
     bindEvent(event_types.CHAT_CHANGED, () => schedule(() => refreshChatState({ serverLoaded: true })));
     bindEvent(event_types.CHAT_LOADED, () => schedule(() => refreshChatState({ serverLoaded: true })));
-    bindEvent(event_types.CHARACTER_MESSAGE_RENDERED, () => nextFrame(() => { store.syncMessages(chat); ui?.renderMessageMemories(); }));
-    bindEvent(event_types.MORE_MESSAGES_LOADED, () => nextFrame(() => { store.syncMessages(chat); ui?.renderMessageMemories(); }));
+    bindEvent(event_types.CHARACTER_MESSAGE_RENDERED, () => nextFrame(() => { store.syncMessages(chat); ui?.queueMessageRender(); }));
+    bindEvent(event_types.MORE_MESSAGES_LOADED, () => nextFrame(() => { store.syncMessages(chat); ui?.queueMessageRender(); }));
     bindEvent(event_types.MESSAGE_SWIPED, messageIndex => {
         pendingSwipeIndex = Number(messageIndex);
         schedule(() => {

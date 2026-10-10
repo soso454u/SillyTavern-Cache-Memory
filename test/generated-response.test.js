@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cleanGeneratedResponse, prepareMemoryResponse } from '../src/response-cleanup.js';
 import { MemoryStore, createEmptyStore, memoryContentDigest, mergeMemoryStoresThreeWay } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
-import { normalizeSettings, DEFAULT_PROMPTS } from '../src/defaults.js';
+import { normalizeSettings, DEFAULT_PROMPTS, ENSEMBLE_PROMPTS } from '../src/defaults.js';
 import { getAssistantMessages } from '../src/utils.js';
 import { parseStateChanges, projectActiveState, trackedFactUpdates, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from '../src/active-state.js';
 import { shouldRefreshInjection } from '../src/cache-control.js';
@@ -99,7 +99,7 @@ test('chat mode persists independently, synchronizes and leaves frozen snapshot 
     f.store.clearCurrentChat(); assert.equal(f.store.current().summaryMode, 'advanced');
 });
 
-test('ordinary prompts are unchanged; advanced augments existing requests without replacing custom prompts', async () => {
+test('ordinary custom prompts survive while advanced requests use independent full templates', async () => {
     const f = fixture();
     await f.summarizer.summarizeEntry(f.entry, { deferAggregates: true });
     assert.equal(f.requests.length, 1);
@@ -113,15 +113,25 @@ test('ordinary prompts are unchanged; advanced augments existing requests withou
     f.settings.prompts.summary = '用户自定义：仍用 [SUMMARY] / [Event] 结构';
     await f.summarizer.summarizeEntry(f.entry, { overwrite: true, deferAggregates: true });
     assert.equal(f.requests.length, 2);
-    assert.match(f.requests.at(-1).systemPrompt, /用户自定义/);
-    assert.match(f.requests.at(-1).systemPrompt, /【复杂进阶总结/);
+    assert.match(f.requests.at(-1).systemPrompt, /长期群像 RP/);
+    assert.doesNotMatch(f.requests.at(-1).systemPrompt, /用户自定义|【复杂进阶总结|【持续状态增量】/);
     assert.match(f.requests.at(-1).userContent, /EXISTING_LONG_FACTS/);
+    assert.match(f.requests.at(-1).systemPrompt, /450–800/);
+    assert.equal(f.requests.at(-1).maxTokens, 4096);
     assert.equal(f.settings.prompts.summary, '用户自定义：仍用 [SUMMARY] / [Event] 结构');
     f.summarizer.apiClient.complete = async request => { f.requests.push(request); return { content: request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? long : cp }; };
     await f.summarizer.generateCheckpoint(1, 1);
     await f.summarizer.generateLongMemory(f.store.current().checkpoints);
     assert.equal(f.requests.length, 4);
-    assert.ok(f.requests.slice(2).every(request => request.systemPrompt.includes(STATE_AGGREGATION_RULES) && request.systemPrompt.includes('【复杂进阶总结')));
+    for (const [index, length, tokens] of [[2, 2000, 8192], [3, 3500, 12288]]) {
+        assert.match(f.requests[index].systemPrompt, new RegExp(`目标约? ${length}`));
+        assert.equal(f.requests[index].maxTokens, tokens);
+        assert.doesNotMatch(f.requests[index].systemPrompt, /{{maxLength}}/);
+        assert.match(f.requests[index].systemPrompt, /长期群像 RP/);
+        assert.doesNotMatch(f.requests[index].systemPrompt, /【复杂进阶总结/);
+        assert.equal(f.requests[index].systemPrompt.includes(STATE_AGGREGATION_RULES), false);
+    }
+    assert.equal(f.settings.ensemblePrompts.summary, ENSEMBLE_PROMPTS.summary);
 });
 
 test('advanced state updates keep absent NPCs, require explicit traits and replace latest fact by same stable id', () => {

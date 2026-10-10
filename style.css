@@ -252,7 +252,11 @@ body.cache-memory-config-open { overflow: hidden; }
     display: grid;
     place-items: center;
     grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-    padding: 18px;
+    --cm-dialog-pad-top: max(8px, env(safe-area-inset-top, 0px));
+    --cm-dialog-pad-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    padding: var(--cm-dialog-pad-top) max(8px, env(safe-area-inset-right, 0px)) var(--cm-dialog-pad-bottom) max(8px, env(safe-area-inset-left, 0px));
+    overflow: hidden;
+    isolation: isolate;
     background: rgba(15, 23, 42, 0.24);
     box-sizing: border-box;
 }
@@ -263,7 +267,12 @@ body.cache-memory-config-open { overflow: hidden; }
     --cm-teal: #087f72;
     --cm-teal-dark: #06665d;
     width: min(680px, 100%);
-    max-height: min(88vh, 88dvh, 100%);
+    position: relative;
+    inset: auto;
+    transform: none;
+    align-self: center;
+    height: auto;
+    max-height: calc(var(--cm-dialog-height, 100dvh) - var(--cm-dialog-pad-top) - var(--cm-dialog-pad-bottom));
     min-width: 0;
     min-height: 0;
     margin: 0;
@@ -321,7 +330,10 @@ body.cache-memory-config-open { overflow: hidden; }
     .cache-memory-page-status { flex-basis: 100%; order: -1; margin: 0; text-align: center; }
     .cache-memory-page-jump { flex: 1 1 100%; justify-content: center; }
     .cache-memory-modal-overlay { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
-    .cache-memory-modal-panel { max-height: min(92vh, 92dvh, 100%); }
+    .cache-memory-modal-header { padding: 10px 12px; }
+    .cache-memory-modal-content { padding: 12px; -webkit-overflow-scrolling: touch; }
+    .cache-memory-modal-actions { padding: 10px 12px; }
+    .cache-memory-modal-field input, .cache-memory-modal-field textarea, .cache-memory-modal-field select { font-size: 16px; }
     .cache-memory-dialog-header { cursor: default; touch-action: pan-y; }
 }
 
@@ -369,14 +381,25 @@ body.cache-memory-config-open { overflow: hidden; }
    mobile across the top. It shares the pinned area with the existing tabs. */
 .cache-memory-pinned { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); align-items: start; }
 .cache-memory-pinned > .cache-memory-dialog-header { grid-column: 1 / -1; grid-row: 1; }
-.cache-memory-pinned > [data-freeze-status] { grid-column: 1; grid-row: 2; }
+.cache-memory-mode-switch { grid-column: 1; grid-row: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; margin: 8px 12px 4px; color: #344258; font-size: 12px; }
+.cache-memory-mode-buttons { display: inline-flex; gap: 3px; min-width: 0; max-width: 100%; padding: 3px; border: 1px solid #cbd9e1; border-radius: 10px; background: #edf3f6; }
+.cache-memory-mode-buttons button { flex: 1 1 auto; min-width: 0; min-height: 32px; padding: 5px 9px; border: 1px solid transparent; border-radius: 7px; color: #5f6c80; background: transparent; font: inherit; font-weight: 650; cursor: pointer; touch-action: manipulation; }
+.cache-memory-mode-buttons button.is-active { border-color: #b2d7d0; color: #06665d; background: #fff; box-shadow: 0 1px 3px #0f172a12; }
+.cache-memory-mode-buttons button:focus-visible { outline: 2px solid #087f72; outline-offset: 2px; }
+.cache-memory-mode-buttons button:disabled { opacity: .5; cursor: default; }
+.cache-memory-prompt-mode { margin: 0; }
+.cache-memory-pinned > [data-freeze-status] { grid-column: 1 / -1; grid-row: 3; }
+.cache-memory-prompt-preview { margin-top: 12px; font-size: 12px; }
+.cache-memory-prompt-preview summary { cursor: pointer; }
+.cache-memory-prompt-preview textarea { width: 100%; box-sizing: border-box; }
 .cache-memory-pinned > .cache-memory-tabs { grid-column: 1 / -1; }
 .cache-memory-config-panel .cache-memory-task-feedback { grid-column: 2; grid-row: 2; margin: 8px 12px 4px; border-radius: 9px; box-shadow: 0 3px 12px #0f172a18; max-height: 110px; overflow-y: auto; }
 #toast-container { z-index: 2147483010 !important; }
 @media (max-width: 640px) {
     .cache-memory-pinned { grid-template-columns: minmax(0, 1fr); }
-    .cache-memory-config-panel .cache-memory-task-feedback { grid-column: 1; grid-row: 2; margin: 6px 10px; max-height: 85px; }
-    .cache-memory-pinned > [data-freeze-status] { grid-row: 3; }
+    .cache-memory-mode-switch { grid-column: 1; grid-row: 2; margin: 6px 10px; }
+    .cache-memory-config-panel .cache-memory-task-feedback { grid-column: 1; grid-row: 3; margin: 6px 10px; max-height: 85px; }
+    .cache-memory-pinned > [data-freeze-status] { grid-row: 4; }
 }
 
 .cache-memory-global-prompt > .cache-memory-field { margin-top: 14px; }
@@ -394,3 +417,5 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-person-table .cache-memory-tracked-form { grid-template-columns: minmax(0, 1fr); }
 
 .cache-memory-person-field { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+.cache-memory-prompt-preview textarea { max-height: 240px; overflow-y: auto; resize: vertical; }

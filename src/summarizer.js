@@ -1,12 +1,13 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.23.1';
-import { withGlobalPrompt } from './defaults.js?v=1.23.1';
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.23.1';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.23.1';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.23.1';
-import { extractSummarySource } from './summary-source.js?v=1.23.1';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.23.1';
-import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.23.1';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, ADVANCED_EXTRACTION_RULES, ADVANCED_AGGREGATION_RULES } from './active-state.js?v=1.23.1';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.0';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.0';
+import { generationPrompt } from './generation-prompts.js?v=1.24.0';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.0';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.0';
+import { extractSummarySource } from './summary-source.js?v=1.24.0';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.0';
+import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.24.0';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.0';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -71,7 +72,7 @@ export class MemorySummarizer {
         this.flushMemory = flushMemory;
         this.commitMemory = commitMemory;
         this.apiClient = apiClient;
-        this.getSettings = getSettings;
+        this.getSettings = () => memoryGenerationSettings(getSettings(), store.current().summaryMode);
         this.getChat = getChat;
         this.onStatus = onStatus;
         this.queue = Promise.resolve();
@@ -101,8 +102,8 @@ export class MemorySummarizer {
         }
     }
 
-    isSummarizing(messageId) {
-        const key = `${this.store.current().chatId}:${messageId}`;
+    isSummarizing(messageId, chatId = this.store.current().chatId) {
+        const key = `${chatId}:${messageId}`;
         return this.inFlight.has(key) || this.pendingSummaries.has(key);
     }
 
@@ -172,7 +173,7 @@ export class MemorySummarizer {
         if (this.inFlight.has(flightKey)) return null;
         this.inFlight.add(flightKey);
         const settings = this.getSettings();
-        const advanced = this.store.current().summaryMode === 'advanced';
+        const advanced = settings.summaryMode === 'ensemble';
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
         const targetVersions = () => JSON.stringify(this.store.summaryCandidates(entry).map(([id, item]) => [id, summaryVersion(item)]).sort());
@@ -189,7 +190,7 @@ export class MemorySummarizer {
         this.onStatus('busy', `正在总结第 ${entry.floor} 层`);
         try {
             assertContext();
-            const systemPrompt = replacePromptVariables(settings.prompts.summary, {
+            const systemPrompt = replacePromptVariables(generationPrompt(settings, 'summary'), {
                 maxLength: settings.summaryMaxLength,
                 floor: entry.floor,
             });
@@ -204,7 +205,7 @@ export class MemorySummarizer {
                 locationFound: Boolean(sourceMetadata.location),
             });
             const result = await this.apiClient.complete({
-                systemPrompt: withGlobalPrompt(settings, systemPrompt + (settings.activeStateEnabled ? STATE_EXTRACTION_RULES + (advanced ? ADVANCED_EXTRACTION_RULES : '') : '')),
+                systemPrompt,
                 userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata)
                     + trackedContext(this.generationStore(), settings, entry.floor - 1)
                     + (advanced ? `\n\n[EXISTING_LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.generationStore(), entry.floor - 1))}` : ''),
@@ -213,7 +214,7 @@ export class MemorySummarizer {
             });
             if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
             const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: summarySource.text, prompt: settings.prompts.summary });
-            const parsed = parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.memoryStrategy !== 'legacy' });
+            const parsed = parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
             if (!String(parsed.event || parsed.raw || '').trim()) throw new Error('摘要输出为空，原记忆保留');
             parsed.storyTime = sourceMetadata.storyTime;
             parsed.location = sourceMetadata.location;
@@ -541,7 +542,6 @@ export class MemorySummarizer {
 
     async generateCheckpoint(startFloor, endFloor, { overwrite = false, allowMissing = false, signal } = {}) {
         const settings = this.getSettings();
-        const advanced = this.store.current().summaryMode === 'advanced';
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
         const summaries = this.store.currentSummaries(this.getChat())
@@ -563,7 +563,7 @@ export class MemorySummarizer {
         const id = checkpoints.find(item => item.startFloor === startFloor && item.endFloor === endFloor)?.id
             ?? nextSequenceId('checkpoint', checkpoints);
         const newSummaries = summaries.map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
-        const incremental = settings.memoryStrategy !== 'legacy';
+        const incremental = settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy';
         const state = previousState(this.generationStore(), startFloor);
         if (incremental && settings.activeStateEnabled && state.id) state.content = reconcileTrackedCheckpoint(state.content, this.generationStore(), startFloor - 1, startFloor);
         const preceding = [...checkpoints].filter(cp => cp.endFloor < startFloor).sort((a, b) => b.endFloor - a.endFloor)[0];
@@ -592,13 +592,13 @@ export class MemorySummarizer {
         const userContent = incremental
             ? `[PREVIOUS_STATE]\n${state.content}\n\n[LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.generationStore(), startFloor - 1))}\n\n[ACTIVE_KEEP]\n${formatKeepItems(keeps)}\n\n[NEW_SUMMARIES]\n${newSummaries}`
             : newSummaries;
-        const systemPrompt = replacePromptVariables(settings.prompts.checkpoint, {
+        const systemPrompt = replacePromptVariables(generationPrompt(settings, 'checkpoint'), {
             startFloor,
             endFloor,
             maxLength: settings.checkpointMaxLength,
         });
         try {
-            const result = await this.apiClient.complete({ systemPrompt: withGlobalPrompt(settings, systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : '') + (advanced ? ADVANCED_AGGREGATION_RULES : '')), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal });
+            const result = await this.apiClient.complete({ systemPrompt, userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal });
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             assertSources();
@@ -673,7 +673,6 @@ export class MemorySummarizer {
 
     async generateLongMemory(checkpoints, { overwrite = false, signal } = {}) {
         const settings = this.getSettings();
-        const advanced = this.store.current().summaryMode === 'advanced';
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
         if (!Array.isArray(checkpoints) || !checkpoints.length) throw new Error('没有可用于长期记忆的 Checkpoint');
@@ -688,12 +687,12 @@ export class MemorySummarizer {
         this.assertUnambiguousPrevious(startFloor, false);
         const id = longMemories.find(item => item.startFloor === startFloor && item.endFloor === endFloor)?.id
             ?? nextSequenceId('long', longMemories);
-        const systemPrompt = replacePromptVariables(settings.prompts.longMemory, {
+        const systemPrompt = replacePromptVariables(generationPrompt(settings, 'longMemory'), {
             startFloor,
             endFloor,
             maxLength: settings.longMemoryMaxLength,
         });
-        const incremental = settings.memoryStrategy !== 'legacy';
+        const incremental = settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy';
         const projection = projectLongFacts(this.generationStore(), startFloor - 1);
         const newSummaries = this.store.currentSummaries(this.getChat())
             .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor)
@@ -721,7 +720,7 @@ export class MemorySummarizer {
         const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n');
         const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
         try {
-            const result = await this.apiClient.complete({ systemPrompt: withGlobalPrompt(settings, systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : '') + (advanced ? ADVANCED_AGGREGATION_RULES : '')), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal });
+            const result = await this.apiClient.complete({ systemPrompt, userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal });
             assertSources();
             if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
             const cleaned = prepareMemoryResponse(result.content, 'Long Memory', { source: userContent, prompt: settings.prompts.longMemory });

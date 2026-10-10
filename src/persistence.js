@@ -1,4 +1,4 @@
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.23.1';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.0';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
