@@ -1,0 +1,67 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>合成楼层记忆界面回归</title>
+<style>
+:root { --SmartThemeBodyColor: #e5d4c1; --SmartThemeBorderColor: #665544; --SmartThemeBlurTintColor: #252525; }
+body { background: #161616; color: var(--SmartThemeBodyColor); font: 18px/1.6 sans-serif; margin: 0; padding: 20px; }
+#chat { max-width: 900px; margin: auto; }
+.mes { padding: 12px; }
+#results { font: 14px/1.5 monospace; white-space: pre-wrap; }
+</style>
+<div id="extensions_settings2" hidden></div><div id="extensionsMenu" hidden></div><pre id="results">正在检查合成界面…</pre>
+<div id="chat"><div class="mes" mesid="0"><div class="mes_block"><div class="mes_text">合成剧情：旅行者找到书信，与同伴约定次日出发。</div></div></div></div>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { getAssistantMessages } from '../src/utils.js';
+const chat = [{ mes: '合成正文', gen_started: 'synthetic-generation' }];
+const metadata = {}, settings = normalizeSettings();
+const store = new MemoryStore({ getChatId: () => 'synthetic-message-ui', getMetadata: () => metadata, saveMetadata: () => {} });
+const entry = getAssistantMessages(chat)[0];
+store.addSummary({ messageId: entry.messageId, floor: 1, title: '书信与出发约定', characters: '旅行者、同伴', event: '找到书信，约定次日出发。', state: '行李已准备', quote: '明天一起出发', keep: '书信藏在行李内',
+    sourceFingerprint: entry.fingerprint, sourceContentFingerprint: entry.contentFingerprint, status: 'frozen', frozen: true });
+const ui = new CacheMemoryUI({ store, getSettings: () => settings, updateSettings: patch => Object.assign(settings, patch), getChat: () => chat,
+    apiClient: { hasApiKey: () => false }, summarizer: { isSummarizing: () => false } });
+ui.mountSettings(); ui.bindChatActions(); ui.renderMessageMemories();
+const results = window.messageResults = [];
+const assert = (name, passed) => { results.push({ name, passed: Boolean(passed) }); if (!passed) throw Error(name); };
+const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+const widget = () => document.querySelector('#chat .cache-memory-message');
+try {
+    await settle();
+    assert('单个居中入口，无原生箭头', document.querySelectorAll('#chat .cache-memory-message').length === 1 && getComputedStyle(widget().querySelector('summary')).textAlign === 'center' && getComputedStyle(widget().querySelector('summary'), '::marker').content === '""');
+    widget().querySelector('summary').click(); await settle();
+    widget().querySelector('[data-memory-action=edit]').click();
+    assert('楼层下直接编辑九个字段，无管理窗口', widget().querySelectorAll('[data-edit-field]').length === 9 && ui.config.hidden);
+    let field = widget().querySelector('[data-edit-field=event]');
+    field.value = '重绘后保留的合成草稿'; field.dispatchEvent(new Event('input', { bubbles: true })); field.focus();
+    ui.renderMessageMemories();
+    assert('普通刷新保留输入节点、焦点和草稿', widget().querySelector('[data-edit-field=event]') === field && document.activeElement === field);
+    document.querySelector('#chat .mes_block').innerHTML = '<div class="mes_text">宿主重绘后的合成消息</div>'; await settle();
+    assert('消息重绘自动挂载并保留展开和草稿', widget().open && widget().querySelector('[data-edit-field=event]').value === '重绘后保留的合成草稿');
+    const replacement = document.getElementById('chat').cloneNode(true); document.getElementById('chat').replaceWith(replacement); await settle();
+    widget().querySelector('[data-message-edit-save]').click(); await settle();
+    assert('聊天容器替换后仍可保存，独有原话和 KEEP 保留', store.getSummary(entry.messageId).event === '重绘后保留的合成草稿' && store.getSummary(entry.messageId).quote === '明天一起出发' && store.getSummary(entry.messageId).keep === '书信藏在行李内');
+    widget().querySelector('summary').click(); await settle();
+    document.querySelector('#chat .mes_block').innerHTML = '<div class="mes_text">再次重绘的合成消息</div>'; await settle();
+    assert('容器克隆后新的折叠选择仍被保留', !widget().open);
+    widget().querySelector('summary').click(); await settle();
+    widget().querySelector('[data-memory-action=edit]').click();
+    widget().querySelector('[data-edit-field=event]').value = '应取消的合成内容';
+    widget().querySelector('[data-message-edit-cancel]').click(); await settle();
+    assert('取消不修改已保存摘要', store.getSummary(entry.messageId).event === '重绘后保留的合成草稿' && !widget().querySelector('[data-edit-field]'));
+    let renders = 0; const render = ui.renderMessageMemories.bind(ui); ui.renderMessageMemories = () => { renders++; render(); };
+    for (let i = 0; i < 100; i++) document.querySelector('#chat .mes_text').textContent = `合成 DOM 变动 ${i}`;
+    await settle(); const firstRenders = renders; await settle();
+    assert('合并宿主变动，无自触发重绘循环', firstRenders >= 1 && firstRenders <= 3 && renders === firstRenders && document.querySelectorAll('#chat .cache-memory-message').length === 1);
+    settings.enabled = false; ui.renderMessageMemories(); await settle();
+    assert('禁用后观察器不重新插入入口', !widget()); settings.enabled = true; ui.renderMessageMemories();
+    document.documentElement.style.setProperty('--SmartThemeBodyColor', '#2b3d4f'); document.documentElement.style.setProperty('--SmartThemeBlurTintColor', '#f6f2eb'); document.body.style.background = '#f6f2eb';
+    widget().querySelector('summary').click(); await settle(); widget().querySelector('[data-memory-action=edit]').click();
+    assert('入口与编辑框即时跟随主题变量', getComputedStyle(widget().querySelector('summary')).color === 'rgb(43, 61, 79)' && getComputedStyle(widget().querySelector('textarea')).color === 'rgb(43, 61, 79)');
+    assert('窄屏无横向溢出', document.documentElement.scrollWidth <= innerWidth);
+    widget().querySelector('[data-message-edit-cancel]').click();
+} catch (error) { results.push({ name: error.message, passed: false }); }
+window.fixture = { ui, store, settings, chat };
+document.getElementById('results').textContent = results.map(item => `${item.passed ? 'PASS' : 'FAIL'} ${item.name}`).join('\n');
+</script></html>

@@ -495,7 +495,7 @@ test('connection test switches to max_completion_tokens when max_tokens is expli
         assert.equal(requests[0].payload.stream, true);
         assert.equal(requests[1].payload.max_completion_tokens, 16);
         assert.equal('max_tokens' in requests[1].payload, false);
-        assert.equal(requests[1].payload.temperature, 0);
+        assert.equal(requests[1].payload.temperature, settings.temperature);
     } finally {
         globalThis.fetch = originalFetch;
         if (originalParent === undefined) delete globalThis.parent;

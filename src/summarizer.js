@@ -1,10 +1,11 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.11';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.11';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.11';
-import { extractSummarySource } from './summary-source.js?v=1.22.11';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.11';
-import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.22.11';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.11';
+import { withGlobalPrompt } from './defaults.js?v=1.22.12';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.12';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.12';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.12';
+import { extractSummarySource } from './summary-source.js?v=1.22.12';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.12';
+import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.22.12';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.12';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -201,7 +202,7 @@ export class MemorySummarizer {
                 locationFound: Boolean(sourceMetadata.location),
             });
             const result = await this.apiClient.complete({
-                systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_EXTRACTION_RULES : ''),
+                systemPrompt: withGlobalPrompt(settings, systemPrompt + (settings.activeStateEnabled ? STATE_EXTRACTION_RULES : '')),
                 userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata)
                     + trackedContext(this.generationStore(), settings, entry.floor - 1),
                 maxTokens: settings.summaryMaxTokens,
@@ -592,7 +593,7 @@ export class MemorySummarizer {
             maxLength: settings.checkpointMaxLength,
         });
         try {
-            const result = await this.apiClient.complete({ systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : ''), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal });
+            const result = await this.apiClient.complete({ systemPrompt: withGlobalPrompt(settings, systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : '')), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal });
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             assertSources();
@@ -714,7 +715,7 @@ export class MemorySummarizer {
         const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n');
         const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
         try {
-            const result = await this.apiClient.complete({ systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : ''), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal });
+            const result = await this.apiClient.complete({ systemPrompt: withGlobalPrompt(settings, systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : '')), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal });
             assertSources();
             if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
             if (!String(result.content ?? '').trim()) throw new Error('长期记忆输出为空，原记忆保留');

@@ -143,10 +143,22 @@
 .cache-memory-actions .cache-memory-primary:hover { border-color: var(--cm-teal-dark); background: var(--cm-teal-dark); color: #fff; }
 #cache-memory-wand-entry { align-items: center; cursor: pointer; }
 #cache-memory-wand-entry span { min-width: 0; white-space: nowrap; }
-.cache-memory-message { margin-top: 8px; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 60%, transparent); font-size: 12px; }
-.cache-memory-message summary { color: var(--SmartThemeEmColor); cursor: pointer; user-select: none; }
-.cache-memory-message-body { padding: 7px 0 2px 14px; }
-.cache-memory-message-body p { margin: 4px 0; white-space: pre-wrap; }
+#chat .cache-memory-message { display: block; position: relative; clear: both; width: 100%; min-width: 0; box-sizing: border-box; margin: 10px 0 0; padding: 6px 0; border: 0; border-top: 1px solid var(--SmartThemeBorderColor, currentColor); color: var(--SmartThemeBodyColor, inherit); background: transparent; font: inherit; font-size: 0.9em; line-height: 1.5; }
+#chat .cache-memory-message > summary { display: block; position: static; width: 100%; box-sizing: border-box; padding: 8px 12px; color: var(--SmartThemeBodyColor, inherit); background: transparent; text-align: center; overflow-wrap: anywhere; list-style: none; cursor: pointer; user-select: none; }
+#chat .cache-memory-message > summary::marker { content: ''; }
+#chat .cache-memory-message > summary::-webkit-details-marker { display: none; }
+#chat .cache-memory-message > summary::before, #chat .cache-memory-message > summary::after { content: none; display: none; }
+#chat .cache-memory-message > summary:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; border-radius: 6px; }
+#chat .cache-memory-message-body { min-width: 0; padding: 8px 12px; color: inherit; text-align: start; overflow-wrap: anywhere; }
+#chat .cache-memory-message-body p { margin: 4px 0; white-space: pre-wrap; }
+#chat .cache-memory-message .cache-memory-inline-field { display: grid; gap: 6px; margin: 0; color: inherit; }
+#chat .cache-memory-message .cache-memory-inline-field > span { color: inherit; font: inherit; font-weight: 600; }
+#chat .cache-memory-message .cache-memory-inline-field input, #chat .cache-memory-message .cache-memory-inline-field textarea { display: block; width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--SmartThemeBorderColor, currentColor); border-radius: 6px; background: var(--SmartThemeBlurTintColor, transparent); color: var(--SmartThemeBodyColor, inherit); font: inherit; }
+#chat .cache-memory-message .cache-memory-inline-field textarea { resize: vertical; }
+#chat .cache-memory-message .cache-memory-inline-field input:focus, #chat .cache-memory-message .cache-memory-inline-field textarea:focus { border-color: currentColor; outline: 1px solid currentColor; box-shadow: none; }
+#chat .cache-memory-message .cache-memory-inline-actions { position: static; background: transparent; }
+#chat .cache-memory-message .menu_button { width: auto; margin: 0; border-color: var(--SmartThemeBorderColor, currentColor); background: var(--SmartThemeBlurTintColor, transparent); color: var(--SmartThemeBodyColor, inherit); font: inherit; }
+#chat .cache-memory-message .menu_button:hover { color: var(--SmartThemeBodyColor, inherit); background: var(--SmartThemeChatTintColor, var(--SmartThemeBlurTintColor, transparent)); border-color: currentColor; }
 .cache-memory-manager-toolbar { display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-bottom: 1px solid var(--cm-line); background: #f8fafc; }
 .cache-memory-manager-toolbar .cache-memory-danger { margin-left: auto; border-color: #dc6975; background: #fff5f6; color: #a51f32; }
 .cache-memory-manager-toolbar .cache-memory-danger:hover { border-color: #b42336; background: #b42336; color: #fff; }
@@ -366,3 +378,6 @@ body.cache-memory-config-open { overflow: hidden; }
     .cache-memory-config-panel .cache-memory-task-feedback { grid-column: 1; grid-row: 2; margin: 6px 10px; max-height: 85px; }
     .cache-memory-pinned > [data-freeze-status] { grid-row: 3; }
 }
+
+.cache-memory-global-prompt > .cache-memory-field { margin-top: 14px; }
+.cache-memory-config-panel .cache-memory-tab-panel[data-settings-panel="prompts"] > details > textarea { margin-top: 14px; }

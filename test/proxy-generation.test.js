@@ -350,7 +350,7 @@ test('streaming and non-streaming connection tests use 16 tokens and expose timi
     assert.equal(typeof streamed.ttfcMs, 'number');
     assert.equal(nonStreamed.ttfcMs, null);
     const bodies = requests.map(item => JSON.parse(item.options.body));
-    assert.ok(bodies.every(body => body.max_tokens === 16 && body.temperature === 0
+    assert.ok(bodies.every(body => body.max_tokens === 16 && body.temperature === 0.2
         && body.thinking.type === 'disabled'
         && JSON.parse(body.custom_include_body).thinking.type === 'disabled'
         && body.messages[0].content === 'Reply with exactly OK.' && body.messages[1].content === 'OK'));

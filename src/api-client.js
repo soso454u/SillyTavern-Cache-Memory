@@ -280,21 +280,66 @@ export class SummaryApiClient {
         this.activeControllers = new Set();
         this.cancelledControllers = new WeakSet();
         this.responseControls = new WeakMap();
+        this.connectionTokens = new Map();
+        this.connectionRevision = 0;
+    }
+
+    connectionStorageKey(apiBaseUrl = this.getSettings().apiBaseUrl) {
+        return `${this.storageKey}:connection:${encodeURIComponent(normalizeApiBaseUrl(apiBaseUrl))}`;
+    }
+
+    readConnection(apiBaseUrl = this.getSettings().apiBaseUrl) {
+        const endpoint = normalizeApiBaseUrl(apiBaseUrl);
+        if (!endpoint) return {};
+        const saved = parseJson(this.storage.getItem(this.connectionStorageKey(endpoint)));
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) return saved;
+        const legacy = this.storage.getItem(this.storageKey);
+        const owner = parseJson(this.storage.getItem(`${this.storageKey}:legacy-owner`))?.endpoint ?? this.legacyEndpoint;
+        if (!legacy || owner && owner !== endpoint) return {};
+        // Bind the former global key to one endpoint only; never reuse it for a new URL.
+        this.legacyEndpoint = endpoint;
+        const connection = { key: legacy, model: String(this.getSettings().model ?? '') };
+        this.storage.setItem?.(`${this.storageKey}:legacy-owner`, JSON.stringify({ endpoint }));
+        this.storage.setItem?.(this.connectionStorageKey(endpoint), JSON.stringify(connection));
+        return connection;
+    }
+
+    saveConnectionModel(model, apiBaseUrl = this.getSettings().apiBaseUrl) {
+        if (!normalizeApiBaseUrl(apiBaseUrl)) return;
+        this.storage.setItem(this.connectionStorageKey(apiBaseUrl), JSON.stringify({ ...this.readConnection(apiBaseUrl), model: String(model ?? '') }));
+    }
+
+    savedConnectionModel() {
+        return String(this.readConnection().model ?? '');
+    }
+
+    modelListIdentity() {
+        const endpoint = normalizeApiBaseUrl(this.getSettings().apiBaseUrl);
+        const key = this.readConnection().key ?? '';
+        let token = this.connectionTokens.get(endpoint);
+        if (!token || token.key !== key) {
+            token = { key, revision: ++this.connectionRevision };
+            this.connectionTokens.set(endpoint, token);
+        }
+        return `${endpoint}:${token.revision}`;
     }
 
     hasApiKey() {
-        return Boolean(this.storage.getItem(this.storageKey));
+        return Boolean(this.readConnection().key);
     }
 
     async saveApiKey(value) {
         const key = String(value ?? '').trim();
         if (!key) return this.hasApiKey();
-        this.storage.setItem(this.storageKey, key);
+        if (!normalizeApiBaseUrl(this.getSettings().apiBaseUrl)) return false;
+        this.storage.setItem(this.connectionStorageKey(), JSON.stringify({ ...this.readConnection(), key }));
         return true;
     }
 
     clearApiKey() {
-        this.storage.removeItem(this.storageKey);
+        this.storage.setItem(this.connectionStorageKey(), JSON.stringify({ ...this.readConnection(), key: '' }));
+        const owner = parseJson(this.storage.getItem(`${this.storageKey}:legacy-owner`))?.endpoint ?? this.legacyEndpoint;
+        if (owner === normalizeApiBaseUrl(this.getSettings().apiBaseUrl)) this.storage.removeItem(this.storageKey);
     }
 
     abortAll() {
@@ -388,7 +433,7 @@ export class SummaryApiClient {
         const settings = this.getSettings();
         const startedAt = now();
         const stream = kind === 'completion' && payload?.stream === true;
-        const apiKey = String(apiKeyOverride || this.storage.getItem(this.storageKey) || '').trim();
+        const apiKey = String(apiKeyOverride || this.readConnection().key || '').trim();
         const endpoint = kind === 'models' ? normalizeModelsUrl(settings.apiBaseUrl) : normalizeBaseUrl(settings.apiBaseUrl);
         const path = kind === 'models' ? ST_MODELS_PROXY_PATH : ST_GENERATE_PROXY_PATH;
         const secrets = [apiKey];
@@ -401,7 +446,7 @@ export class SummaryApiClient {
         const requestDebug = kind === 'completion' ? {
             transport: diagnostics.transport,
             stream,
-            model: String(payload?.model ?? ''),
+            model: safeText(payload?.model ?? '', secrets, Infinity),
             max_tokens: payload?.max_tokens,
             max_completion_tokens: payload?.max_completion_tokens,
             temperature: payload?.temperature,
@@ -580,7 +625,7 @@ export class SummaryApiClient {
     async test({ stream = true } = {}) {
         const result = await this.complete({
             systemPrompt: 'Reply with exactly OK.', userContent: 'OK', maxTokens: 16,
-            temperature: 0, transportMode: stream ? 'stream' : 'non-stream',
+            transportMode: stream ? 'stream' : 'non-stream',
         });
         return { ok: true, status: result.status, model: this.getSettings().model, source: result.source,
             content: result.content, contentType: result.diagnostics.contentType,

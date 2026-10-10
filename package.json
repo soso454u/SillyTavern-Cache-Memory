@@ -1,6 +1,6 @@
 {
   "name": "sillytavern-cache-memory",
-  "version": "1.22.11",
+  "version": "1.22.12",
   "description": "Cache-friendly append-only story memory for SillyTavern.",
   "type": "module",
   "scripts": {
