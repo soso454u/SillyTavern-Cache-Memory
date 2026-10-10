@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.22.5';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.5';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.5';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.5';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.5';
-import { getAssistantMessages } from './src/utils.js?v=1.22.5';
-import { MemoryStore } from './src/memory-store.js?v=1.22.5';
-import { MemorySummarizer } from './src/summarizer.js?v=1.22.5';
-import { CacheMemoryUI } from './src/ui.js?v=1.22.5';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.5';
-import { MemoryServerClient } from './src/memory-server.js?v=1.22.5';
+import { SummaryApiClient } from './src/api-client.js?v=1.22.6';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.6';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.6';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.6';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.6';
+import { getAssistantMessages } from './src/utils.js?v=1.22.6';
+import { MemoryStore } from './src/memory-store.js?v=1.22.6';
+import { MemorySummarizer } from './src/summarizer.js?v=1.22.6';
+import { CacheMemoryUI } from './src/ui.js?v=1.22.6';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.6';
+import { MemoryServerClient } from './src/memory-server.js?v=1.22.6';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -173,6 +173,7 @@ const summarizer = new MemorySummarizer({
     getChat: () => chat,
     getPersistenceState: () => persistence.getState(),
     flushMemory: chatId => persistence.flush(chatId),
+    commitMemory: (mutate, assertActive) => persistence.commitReplacement(store, mutate, assertActive),
     onStatus: (state, message, error) => {
         if (state !== 'settled') ui?.setStatus(state, message, error);
         ui?.renderMessageMemories();
@@ -201,6 +202,13 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     store.persistMigration();
     store.syncMessages(chat);
+    if (store.hasSupersededRecords(chat)) {
+        try { await persistence.commitReplacement(store, () => store.cleanupSuperseded(chat), () => {
+            if (revision !== refreshRevision || memoryChatId() !== chatId) throw Object.assign(new Error('聊天加载已改变，取消本次清理'), { code: 'CHAT_CHANGED' });
+        }); }
+        catch (error) { console.warn(LOG_PREFIX, '旧版本清理未确认，原记忆保留', error.message); }
+        if (revision !== refreshRevision || memoryChatId() !== chatId) return;
+    }
     const switched = chatId !== activeChatId;
     if (switched) {
         summarizer.invalidateContext();
@@ -251,6 +259,10 @@ function bindEvents() {
             updateInjection('manual edit');
             pendingSwipeIndex = null;
             refreshChatState();
+            if (settings.enabled && settings.autoSummarize && settings.independentApi) {
+                const entry = getAssistantMessages(chat).find(item => item.messageIndex === Number(messageIndex));
+                if (entry) summarizer.summarizeMessage(entry.messageId).catch(error => console.warn(LOG_PREFIX, error.message));
+            }
         }, 50);
     });
     bindEvent(event_types.MESSAGE_DELETED, () => {
@@ -258,7 +270,18 @@ function bindEvents() {
         schedule(refreshChatState);
     });
     for (const name of [event_types.MESSAGE_EDITED, event_types.MESSAGE_UPDATED]) {
-        bindEvent(name, () => schedule(() => { store.syncMessages(chat); updateInjection('manual edit'); refreshChatState(); }));
+        bindEvent(name, messageIndex => {
+            const chatId = memoryChatId();
+            schedule(() => {
+                if (memoryChatId() !== chatId) return;
+                store.rebindSummaryAtMessageIndex(messageIndex, chat);
+                store.syncMessages(chat); updateInjection('manual edit'); refreshChatState();
+                if (!isGenerating() && settings.enabled && settings.autoSummarize && settings.independentApi) {
+                    const entry = getAssistantMessages(chat).find(item => item.messageIndex === Number(messageIndex));
+                    if (entry) summarizer.summarizeMessage(entry.messageId).catch(error => console.warn(LOG_PREFIX, error.message));
+                }
+            });
+        });
     }
 }
 

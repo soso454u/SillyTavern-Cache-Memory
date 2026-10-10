@@ -13,6 +13,11 @@ function fixture() {
     return { metadata, store };
 }
 
+function loadedChat(store) {
+    const latest = Math.max(0, ...Object.values(store.current().summaries).map(item => item.floor || 0));
+    return Array.from({ length: latest }, (_, i) => ({ name: '合成角色', mes: `合成正文${i + 1}`, gen_started: `g${i}` }));
+}
+
 function addSummary(store, floor, text) {
     const raw = `[SUMMARY]\n[Title]\nS${floor}\n[Characters]\n姜梨/陆雾\n[Event]\n${text}\n[KEEP]\n- 姜梨答应十二月前陪陆雾回巴黎见外婆`;
     store.addSummary({ messageId: `m${floor}`, floor, title: `S${floor}`, characters: '姜梨/陆雾', event: text, raw, format: 'structured', status: 'frozen', frozen: true });
@@ -153,7 +158,7 @@ test('incremental checkpoints carry prior state and KEEP; fact extraction append
     for (let floor = 21; floor <= 24; floor += 1) addSummary(store, floor, `本阶段第${floor}层明确发生的事件`);
     const inputs = [];
     let factCalls = 0;
-    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2, longMemoryInterval: 2, checkpointMaxLength: 100 }), getChat: () => [], apiClient: {
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2, longMemoryInterval: 2, checkpointMaxLength: 100 }), getChat: () => loadedChat(store), apiClient: {
         complete: async request => {
             inputs.push(request.userContent);
             if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) {
@@ -207,7 +212,7 @@ test('Checkpoint lifecycle deltas update the registry and are stripped from save
     for (const item of records) store.addSummary({ messageId: item.id, floor: item.floor, title: `S${item.floor}`, characters: '姜梨/陆雾', event: item.event,
         keep: item.keep, raw: `[SUMMARY]\n[Title]\nS${item.floor}\n[Characters]\n姜梨/陆雾\n[Event]\n${item.event}\n[KEEP]\n${item.keep}`, format: 'structured', status: 'frozen', frozen: true });
     const keeps = collectKeepItems(store.current());
-    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2 }), getChat: () => [], apiClient: {
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2 }), getChat: () => loadedChat(store), apiClient: {
         complete: async () => ({ content: `[CHECKPOINT]\n[Current State]\n已更新\n[RESOLVED_KEEP]\n- ${keeps[0].id} | 秘密已公开 | 姜梨公开了秘密\n[SUPERSEDED_KEEP]\n- ${keeps[1].id} | 改为明年 | 陆雾改为明年去巴黎` }),
     } });
     const checkpoint = await summarizer.generateCheckpoint(1, 2);
@@ -230,7 +235,7 @@ test('story metadata flows from summaries into checkpoints, long memories and KE
     assert.equal(keep.sourceStoryTime, '2025/01/02 09:16');
     assert.equal(keep.sourceLocation, '湖畔酒店');
 
-    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 3, longMemoryInterval: 3 }), getChat: () => [], apiClient: {
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 3, longMemoryInterval: 3 }), getChat: () => loadedChat(store), apiClient: {
         complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]')
             ? '[LONG_MEMORY]\n- 【姜梨｜秘密】姜梨曾公开秘密\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无'
             : `[CHECKPOINT]\n[Current State]\n已公开\n[RESOLVED_KEEP]\n- ${keep.id} | 秘密已公开 | 姜梨公开了秘密` }),
@@ -374,7 +379,7 @@ test('KEEP and stable facts survive 100 incremental checkpoints through floor 10
         messageId: `m${floor}`, floor, title: `S${floor}`, event: '普通场景变化', status: 'frozen', frozen: true,
     };
     store.addLongMemory({ id: 'long-001', startFloor: 0, endFloor: 0, memoryKind: 'facts', factUpdates: [{ id: 'fact-stable', action: 'add', text: '陆雾不知道姜梨看过那封邮件' }], status: 'frozen', frozen: true });
-    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings(), getChat: () => [], apiClient: {
+    const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings(), getChat: () => loadedChat(store), apiClient: {
         complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n无' : '[CHECKPOINT]\n当前普通场景状态' }),
     } });
     for (let end = 10; end <= 1000; end += 10) {

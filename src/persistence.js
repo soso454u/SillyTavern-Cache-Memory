@@ -1,4 +1,4 @@
-import { memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.22.5';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.22.6';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -69,6 +69,8 @@ export class MemoryPersistenceCoordinator {
         this.conflicts = new Map();
         this.running = new Map();
         this.pausedSaves = new Map();
+        this.replacementStores = new Map();
+        this.replacementRuns = new Map();
         this.restorePending();
     }
 
@@ -381,10 +383,20 @@ export class MemoryPersistenceCoordinator {
     }
 
     enqueue(value, reason = 'memory changed') {
-        const snapshot = normalizeStore(clone(value), value?.chatId || this.getChatId());
+        let snapshot = normalizeStore(clone(value), value?.chatId || this.getChatId());
         const chatId = String(snapshot.chatId ?? '');
         if (!chatId) return Promise.resolve({ state: MEMORY_SAVE_STATES.UNKNOWN });
         const previous = this.pending.get(chatId);
+        let replacementFallback = reason === 'memory import' ? null : previous?.replacementFallback;
+        if (reason === 'memory import') this.replacementStores.delete(chatId);
+        if (replacementFallback && memoryContentDigest(snapshot) !== previous.digest) {
+            const incoming = clone(snapshot);
+            const combined = mergeMemoryStoresSafely(replacementFallback, incoming, previous.snapshot, chatId);
+            // An edit made while a generated replacement is saving wins over
+            // that local draft. Disjoint edits accompany it; neither is lost.
+            snapshot = combined.conflicts.length ? incoming : combined.merged;
+            replacementFallback = incoming;
+        }
         const digest = memoryContentDigest(snapshot);
         const explicit = ['manual save', 'memory import', 'store migration', 'initial authoritative migration'].includes(reason);
         // Rendering/reloading the same snapshot must not restart a failed save.
@@ -407,6 +419,7 @@ export class MemoryPersistenceCoordinator {
             restore: reason === 'memory import' || Boolean(previous?.restore),
             sequence: ++this.sequence,
             queuedAt: new Date().toISOString(),
+            ...(replacementFallback ? { replacementFallback } : {}),
         };
         this.pending.set(chatId, entry);
         const locallyRetained = this.persistPending();
@@ -420,9 +433,77 @@ export class MemoryPersistenceCoordinator {
         if (!id || !this.pending.has(id)) return this.getState(id);
         if (this.running.has(id)) return this.running.get(id);
         if (this.pausedSaves.has(id)) return this.getState(id);
-        const task = this.process(id).catch(error => this.setState(id, MEMORY_SAVE_STATES.FAILED, error.message)).finally(() => this.running.delete(id));
+        const visible = this.replacementStores.get(id)?.store;
+        if (visible && this.pending.get(id)?.replacementFallback) visible.replacementView = clone(this.pending.get(id).replacementFallback);
+        const task = this.process(id).catch(error => this.setState(id, MEMORY_SAVE_STATES.FAILED, error.message)).finally(() => {
+            this.running.delete(id);
+            const pending = this.pending.get(id);
+            if (pending?.replacementFallback && String(this.getChatId()) === id) this.getMetadata().cache_memory = clone(pending.replacementFallback);
+            if (pending && visible) delete visible.replacementView;
+            const replacement = this.replacementStores.get(id);
+            if (!pending && replacement && String(this.getChatId()) === id && this.getState(id).state === MEMORY_SAVE_STATES.CONFIRMED) {
+                this.replacementStores.delete(id);
+                delete replacement.store.replacementView;
+                replacement.store.persist(replacement.reason);
+            }
+        });
         this.running.set(id, task);
         return task;
+    }
+
+    commitReplacement(store, mutate, assertActive = () => {}) {
+        const chatId = String(this.getChatId()), epoch = this.epoch;
+        const previous = this.replacementRuns.get(chatId) ?? Promise.resolve();
+        const task = previous.catch(() => {}).then(() => {
+            if (String(this.getChatId()) !== chatId || this.epoch !== epoch) throw Object.assign(new Error('聊天已切换，取消旧聊天替换'), { code: 'CHAT_CHANGED' });
+            return this.performReplacement(store, mutate, assertActive);
+        }).finally(() => { if (this.replacementRuns.get(chatId) === task) this.replacementRuns.delete(chatId); });
+        this.replacementRuns.set(chatId, task);
+        return task;
+    }
+
+    async performReplacement(store, mutate, assertActive) {
+        const chatId = String(this.getChatId()), epoch = this.epoch;
+        let state = await this.flush(chatId);
+        if (state.state === MEMORY_SAVE_STATES.UNKNOWN) state = await this.reread(chatId);
+        if (state.state !== MEMORY_SAVE_STATES.CONFIRMED) throw Object.assign(new Error(`原记忆尚未确认，未替换：${state.detail}`), { code: 'SAVE_UNCONFIRMED' });
+        if (String(this.getChatId()) !== chatId || this.epoch !== epoch) throw Object.assign(new Error('聊天已切换，取消旧聊天替换'), { code: 'CHAT_CHANGED' });
+        assertActive();
+        const previous = clone(store.current()), persist = store.persist;
+        let candidate, result, reason = 'memory replacement';
+        // Build the complete replacement without publishing/injecting it. The
+        // old effective snapshot stays visible until the server confirms it.
+        store.persist = why => { reason = why; return store.current(); };
+        try { result = mutate(); candidate = clone(store.current()); }
+        finally { store.persist = persist; this.getMetadata().cache_memory = previous; }
+        store.replacementView = clone(previous);
+        this.replacementStores.set(chatId, { store, reason });
+        try {
+            await this.enqueue(candidate, reason);
+            const pending = this.pending.get(chatId);
+            if (pending) {
+                pending.replacementFallback = previous;
+                if (!this.persistPending()) {
+                    this.pending.delete(chatId); this.replacementStores.delete(chatId);
+                    this.getMetadata().cache_memory = previous;
+                    this.setState(chatId, MEMORY_SAVE_STATES.FAILED, '无法保留替换前的临时副本，原记忆未替换；请检查浏览器存储空间');
+                    throw Object.assign(new Error(this.getState(chatId).detail), { code: 'SAVE_UNCONFIRMED' });
+                }
+            }
+            state = await this.flush(chatId);
+            if (String(this.getChatId()) !== chatId || this.epoch !== epoch) throw Object.assign(new Error('保存期间聊天已切换，未发布替换结果'), { code: 'CHAT_CHANGED' });
+            if (state.state !== MEMORY_SAVE_STATES.CONFIRMED) throw Object.assign(new Error(`替换尚未确认，原记忆保留：${state.detail}`), { code: 'SAVE_UNCONFIRMED' });
+            const committed = this.getMetadata().cache_memory;
+            for (const section of ['summaries', 'checkpoints', 'longMemories']) {
+                const map = value => Array.isArray(value[section]) ? Object.fromEntries(value[section].map(item => [item.id, item])) : value[section];
+                const before = map(previous), desired = map(candidate), actual = map(committed);
+                const version = item => item ? section === 'summaries' ? summaryVersion(item) : aggregateVersion(item) : null;
+                for (const id of new Set([...Object.keys(before), ...Object.keys(desired)])) {
+                    if (version(before[id]) !== version(desired[id]) && version(actual[id]) !== version(desired[id])) throw Object.assign(new Error('保存期间记忆被再次编辑，未采用这次生成结果'), { code: 'SAVE_UNCONFIRMED' });
+                }
+            }
+        } finally { delete store.replacementView; }
+        return result;
     }
 
     async process(chatId) {

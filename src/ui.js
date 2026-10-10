@@ -1,17 +1,17 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.5';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.5';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.5';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.5';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.5';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.5';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.5';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.5';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.5';
-import { parseFloorSummary } from './summarizer.js?v=1.22.5';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.5';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.6';
+import { effectiveInjectionMode } from './cache-control.js?v=1.22.6';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.6';
+import { HistoryBackfill } from './history-backfill.js?v=1.22.6';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.6';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.6';
+import { buildStructuredSummary } from './summary-format.js?v=1.22.6';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.6';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.6';
+import { parseFloorSummary } from './summarizer.js?v=1.22.6';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.6';
 
-import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.5';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.5';
+import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.6';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.6';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -451,7 +451,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.5', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.22.6', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 

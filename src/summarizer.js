@@ -1,10 +1,10 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.5';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.5';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.5';
-import { extractSummarySource } from './summary-source.js?v=1.22.5';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.5';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.22.5';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.5';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.6';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.6';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.6';
+import { extractSummarySource } from './summary-source.js?v=1.22.6';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.6';
+import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.22.6';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.6';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -63,10 +63,11 @@ export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}
 }
 
 export class MemorySummarizer {
-    constructor({ store, apiClient, getSettings, getChat, getPersistenceState = () => ({}), flushMemory = async () => ({ state: 'confirmed' }), onStatus = () => {} }) {
+    constructor({ store, apiClient, getSettings, getChat, getPersistenceState = () => ({}), flushMemory = async () => ({ state: 'confirmed' }), commitMemory = async mutate => mutate(), onStatus = () => {} }) {
         this.store = store;
         this.getPersistenceState = getPersistenceState;
         this.flushMemory = flushMemory;
+        this.commitMemory = commitMemory;
         this.apiClient = apiClient;
         this.getSettings = getSettings;
         this.getChat = getChat;
@@ -79,6 +80,24 @@ export class MemorySummarizer {
     }
 
     invalidateContext() { this.contextRevision++; }
+
+    generationStore() {
+        const store = this.store.current();
+        return { ...store, summaries: Object.fromEntries(this.store.currentSummaries(this.getChat()).map(item => [item.messageId, item])),
+            checkpoints: store.checkpoints.filter(item => !item.sourceReplaced),
+            longMemories: store.longMemories.filter(item => !item.sourceReplaced) };
+    }
+
+    assertUnambiguousPrevious(startFloor, includeCheckpoints = true) {
+        const store = this.generationStore(), ranges = new Map();
+        for (const [type, rows] of [['Checkpoint', includeCheckpoints ? store.checkpoints : []], ['Long Memory', store.longMemories]]) for (const item of rows) {
+            if (!isUsableMemory(item) || !(item.endFloor < startFloor)) continue;
+            const key = `${type}:${item.startFloor}:${item.endFloor}`;
+            const version = aggregateVersion({ ...item, id: '' });
+            if (ranges.has(key) && ranges.get(key) !== version) throw new Error(`前序第 ${item.startFloor}–${item.endFloor} 层有无法确认的不同记录，请先重新生成该范围`);
+            ranges.set(key, version);
+        }
+    }
 
     isSummarizing(messageId) {
         const key = `${this.store.current().chatId}:${messageId}`;
@@ -114,7 +133,7 @@ export class MemorySummarizer {
         if (!settings.enabled || !settings.autoSummarize || !settings.independentApi) return null;
         const assistants = this.store.syncMessages(this.getChat());
         const latest = assistants.at(-1);
-        if (!latest || this.store.getSummary(latest.messageId) || this.isSummarizing(latest.messageId)) return null;
+        if (!latest || this.isSummarizing(latest.messageId)) return null;
         return this.summarizeEntry(latest);
     }
 
@@ -142,15 +161,17 @@ export class MemorySummarizer {
     }
 
     async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal } = {}) {
-        const existing = this.store.getSummary(entry.messageId);
-        if (existing && existing.status !== 'failed' && !overwrite) return existing;
-        overwrite ||= existing?.status === 'failed';
+        const existing = this.store.getSummaryForEntry(entry) ?? this.store.summaryCandidates(entry).map(([, item]) => item).find(isUsableMemory);
+        if (isUsableMemory(existing) && summaryMatchesEntry(existing, entry) && !overwrite) return existing;
+        overwrite ||= Boolean(this.store.getSummary(entry.messageId));
         const flightKey = `${this.store.current().chatId}:${entry.messageId}`;
         if (this.inFlight.has(flightKey)) return null;
         this.inFlight.add(flightKey);
         const settings = this.getSettings();
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
+        const targetVersions = () => JSON.stringify(this.store.summaryCandidates(entry).map(([id, item]) => [id, summaryVersion(item)]).sort());
+        const expectedTargets = targetVersions();
         const assertContext = () => {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('摘要');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
@@ -158,6 +179,7 @@ export class MemorySummarizer {
             if (!current || current.fingerprint !== entry.fingerprint || current.floor !== entry.floor) {
                 throw Object.assign(new Error('请求期间原文已编辑、删除或切换备选回复，请重试本层'), { code: 'SOURCE_CHANGED' });
             }
+            if (targetVersions() !== expectedTargets) throw Object.assign(new Error('另一窗口或设备已更新本层记忆，未覆盖较新摘要'), { code: 'SOURCE_CHANGED' });
         };
         this.onStatus('busy', `正在总结第 ${entry.floor} 层`);
         try {
@@ -179,12 +201,13 @@ export class MemorySummarizer {
             const result = await this.apiClient.complete({
                 systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_EXTRACTION_RULES : ''),
                 userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata)
-                    + trackedContext(this.store.current(), settings, entry.floor - 1),
+                    + trackedContext(this.generationStore(), settings, entry.floor - 1),
                 maxTokens: settings.summaryMaxTokens,
                 signal,
             });
             if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
             const parsed = parseFloorSummary(result.content, settings.summaryMaxLength, { preserveFull: settings.memoryStrategy !== 'legacy' });
+            if (!String(parsed.event || parsed.raw || '').trim()) throw new Error('摘要输出为空，原记忆保留');
             parsed.storyTime = sourceMetadata.storyTime;
             parsed.location = sourceMetadata.location;
             if (parsed.format === 'structured') parsed.raw = buildStructuredSummary(parsed);
@@ -195,6 +218,7 @@ export class MemorySummarizer {
                 messageId: entry.messageId,
                 sourceFingerprint: entry.fingerprint,
                 sourceContentFingerprint: entry.contentFingerprint,
+                sourceMessageKey: entry.sourceMessageKey,
                 title: parsed.title,
                 characters: parsed.characters,
                 storyTime: parsed.storyTime,
@@ -212,7 +236,7 @@ export class MemorySummarizer {
                 frozen: true,
                 status: 'frozen',
             };
-            this.store.addSummary(record, { overwrite, background: deferAggregates || this.aggregateDeferrals > 0 });
+            await this.commitMemory(() => this.store.addSummary(record, { overwrite, entry, background: deferAggregates || this.aggregateDeferrals > 0 }), assertContext);
             let aggregateFailure = '';
             try {
                 if (!deferAggregates && !this.aggregateDeferrals) await this.generateDueAggregates({ signal });
@@ -227,7 +251,7 @@ export class MemorySummarizer {
         } catch (error) {
             // Network failures can arrive after a chat switch or source edit too.
             try { assertContext(); } catch (contextError) { error = contextError; }
-            if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED'].includes(error.code)) {
+            if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) {
                 this.onStatus('warning', error.message);
                 throw error;
             }
@@ -237,6 +261,7 @@ export class MemorySummarizer {
                 messageId: entry.messageId,
                 sourceFingerprint: entry.fingerprint,
                 sourceContentFingerprint: entry.contentFingerprint,
+                sourceMessageKey: entry.sourceMessageKey,
                 title: '生成失败',
                 characters: '',
                 event: '',
@@ -280,13 +305,13 @@ export class MemorySummarizer {
             const ranges = [];
             for (let startFloor = 1; startFloor + interval - 1 <= latestFloor; startFloor += interval) {
                 const endFloor = startFloor + interval - 1;
-                if (!items.some(item => item.startFloor === startFloor && item.endFloor === endFloor && isUsableMemory(item))) ranges.push({ startFloor, endFloor });
+                if (!items.some(item => item.startFloor === startFloor && item.endFloor === endFloor && isUsableMemory(item) && !item.sourceReplaced)) ranges.push({ startFloor, endFloor });
             }
             return ranges;
         };
         const longMemories = missingRanges(store.longMemories, longSpan);
         const needed = floor => !onlyLong || longMemories.some(range => floor >= range.startFloor && floor <= range.endFloor);
-        return { latestFloor, summaries: assistants.filter(entry => needed(entry.floor) && !isUsableMemory(store.summaries[entry.messageId])),
+        return { latestFloor, summaries: assistants.filter(entry => needed(entry.floor) && (!isUsableMemory(this.store.getSummaryForEntry(entry)) || !summaryMatchesEntry(this.store.getSummaryForEntry(entry), entry))),
             checkpoints: missingRanges(store.checkpoints, checkpointInterval).filter(range => needed(range.startFloor)), longMemories };
     }
 
@@ -320,12 +345,12 @@ export class MemorySummarizer {
                         let record;
                         if (phase === 'Summary') {
                             const existing = this.store.getSummary(entry.messageId);
-                            if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
+                            if (isUsableMemory(existing) && summaryMatchesEntry(existing, entry)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
                             record = await this.summarizeMessage(entry.messageId, { overwrite: Boolean(existing), deferAggregates: true, signal, expectedFingerprint: entry.fingerprint });
                         } else {
                             const items = phase === 'Checkpoint' ? this.store.current().checkpoints : this.store.current().longMemories;
                             const existing = items.find(item => item.startFloor === entry.startFloor && item.endFloor === entry.endFloor);
-                            if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
+                            if (isUsableMemory(existing) && !existing.sourceReplaced) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
                             record = await this.enqueueForCurrentChat(() => {
                                 assertActive();
                                 if (phase === 'Checkpoint') return this.generateCheckpoint(entry.startFloor, entry.endFloor, { overwrite: Boolean(existing), signal });
@@ -431,11 +456,11 @@ export class MemorySummarizer {
 
     getCheckpointUpdatePlan(ids = null) {
         const store = this.store.current();
-        const selected = new Set(ids ?? store.checkpoints.filter(item => !isUsableMemory(item) || item.factCorrection).map(item => item.id));
+        const selected = new Set(ids ?? store.checkpoints.filter(item => !isUsableMemory(item) || item.factCorrection || item.sourceReplaced).map(item => item.id));
         return store.checkpoints.filter(item => selected.has(item.id)).sort((a, b) => a.startFloor - b.startFloor).map(item => ({
             id: item.id, startFloor: item.startFloor, endFloor: item.endFloor,
             missingFloors: Array.from({ length: item.endFloor - item.startFloor + 1 }, (_, i) => item.startFloor + i)
-                .filter(floor => !Object.values(store.summaries).some(summary => summary.floor === floor && isUsableMemory(summary))),
+                .filter(floor => !this.store.currentSummaries(this.getChat()).some(summary => summary.floor === floor)),
         }));
     }
 
@@ -453,7 +478,7 @@ export class MemorySummarizer {
                 if (this.getPersistenceState().state === 'conflict') throw new Error('检测到跨设备冲突，更新已停止');
                 progress.currentRange = range; onProgress({ ...progress });
                 const current = this.store.current().checkpoints.find(cp => cp.id === range.id);
-                if (!ids && isUsableMemory(current) && !current.factCorrection) { progress.skipped++; progress.processed++; onProgress({ ...progress }); continue; }
+                if (!ids && isUsableMemory(current) && !current.factCorrection && !current.sourceReplaced) { progress.skipped++; progress.processed++; onProgress({ ...progress }); continue; }
                 try {
                     const created = await this.generateCheckpoint(range.startFloor, range.endFloor, { overwrite: true, signal });
                     if (!created) throw new Error('来源 Summary 尚不可用，请先读取服务器、校验或修复摘要');
@@ -511,7 +536,7 @@ export class MemorySummarizer {
         const settings = this.getSettings();
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
-        const summaries = Object.values(this.store.current().summaries)
+        const summaries = this.store.currentSummaries(this.getChat())
             .filter(item => item.floor >= startFloor && item.floor <= endFloor && isUsableMemory(item))
             .sort((a, b) => a.floor - b.floor);
         const missing = [];
@@ -525,22 +550,28 @@ export class MemorySummarizer {
         if (!summaries.length) throw new Error('该范围没有可用于 Checkpoint 的小总结');
         const checkpoints = this.store.current().checkpoints;
         const existing = checkpoints.find(item => item.startFloor === startFloor && item.endFloor === endFloor);
-        if (existing && isUsableMemory(existing) && !overwrite) return existing;
+        if (existing && isUsableMemory(existing) && !existing.sourceReplaced && !overwrite) return existing;
+        this.assertUnambiguousPrevious(startFloor);
         const id = checkpoints.find(item => item.startFloor === startFloor && item.endFloor === endFloor)?.id
             ?? nextSequenceId('checkpoint', checkpoints);
         const newSummaries = summaries.map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
         const incremental = settings.memoryStrategy !== 'legacy';
-        const state = previousState(this.store.current(), startFloor);
+        const state = previousState(this.generationStore(), startFloor);
         const preceding = [...checkpoints].filter(cp => cp.endFloor < startFloor).sort((a, b) => b.endFloor - a.endFloor)[0];
-        if (preceding && !isUsableMemory(preceding)) throw new Error(`前序 ${preceding.id} 尚无可用内容，已停止后续生成`);
+        if (preceding && (!isUsableMemory(preceding) || preceding.sourceReplaced)) throw new Error(`前序 ${preceding.id} 尚无当前来源的可用内容，已停止后续生成`);
         const checkpointVersions = state.id ? { [state.id]: aggregateVersion([...checkpoints, ...this.store.current().longMemories].find(cp => cp.id === state.id)) } : {};
         const keeps = collectKeepItems(this.store.current(), endFloor);
         const storyMetadata = storyMetadataRange(summaries);
-        const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.store.current(), endFloor) : null;
+        const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.generationStore(), endFloor) : null;
         const sourceVersions = Object.fromEntries(summaries.map(item => [item.messageId, summaryVersion(item)]));
         const chatVersion = JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]));
+        const targetVersions = () => JSON.stringify(this.store.current().checkpoints.filter(item => item.startFloor === startFloor && item.endFloor === endFloor).map(item => [item.id, aggregateVersion(item)]));
+        const expectedTargets = targetVersions();
         const assertSources = () => {
-            if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.store.current(), endFloor)) throw Object.assign(new Error('聚合期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
+            if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
+            if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
+            if (targetVersions() !== expectedTargets) throw Object.assign(new Error('阶段记忆已被其他窗口更新，未覆盖较新记录'), { code: 'SOURCE_CHANGED' });
+            if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.generationStore(), endFloor)) throw Object.assign(new Error('聚合期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
             if (Object.entries(checkpointVersions).some(([id, version]) => aggregateVersion([...this.store.current().checkpoints, ...this.store.current().longMemories].find(cp => cp.id === id)) !== version)
                 || chatVersion !== JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]))
                 || Object.entries(sourceVersions).some(([id, version]) => !isUsableMemory(this.store.getSummary(id)) || summaryVersion(this.store.getSummary(id)) !== version)) {
@@ -548,7 +579,7 @@ export class MemorySummarizer {
             }
         };
         const userContent = incremental
-            ? `[PREVIOUS_STATE]\n${state.content}\n\n[LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.store.current(), startFloor - 1))}\n\n[ACTIVE_KEEP]\n${formatKeepItems(keeps)}\n\n[NEW_SUMMARIES]\n${newSummaries}`
+            ? `[PREVIOUS_STATE]\n${state.content}\n\n[LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.generationStore(), startFloor - 1))}\n\n[ACTIVE_KEEP]\n${formatKeepItems(keeps)}\n\n[NEW_SUMMARIES]\n${newSummaries}`
             : newSummaries;
         const systemPrompt = replacePromptVariables(settings.prompts.checkpoint, {
             startFloor,
@@ -556,11 +587,12 @@ export class MemorySummarizer {
             maxLength: settings.checkpointMaxLength,
         });
         try {
-            const result = await this.apiClient.complete({ systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : ''), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.store.current(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal });
+            const result = await this.apiClient.complete({ systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : ''), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal });
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             assertSources();
             if (result.finishReason === 'length') throw new Error('Checkpoint 输出达到 token 上限，请提高最大输出长度后重试');
+            if (!String(result.content ?? '').trim()) throw new Error('阶段记忆输出为空，原记忆保留');
             const record = {
                 id,
                 startFloor,
@@ -578,13 +610,15 @@ export class MemorySummarizer {
                 status: 'frozen',
                 missingFloors: missing,
             };
-            if (incremental) this.store.applyKeepItems(resolveKeepItems(keeps, result.content, newSummaries, summaries), { persist: false });
-            record.content = settings.activeStateEnabled ? reconcileTrackedCheckpoint(record.content, this.store.current(), endFloor, startFloor) : deduplicateCheckpoint(record.content);
-            this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && !isUsableMemory(existing)) });
+            await this.commitMemory(() => {
+                if (incremental) this.store.applyKeepItems(resolveKeepItems(keeps, result.content, newSummaries, summaries), { persist: false });
+                record.content = settings.activeStateEnabled ? reconcileTrackedCheckpoint(record.content, this.generationStore(), endFloor, startFloor) : deduplicateCheckpoint(record.content);
+                return this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing) || existing.sourceReplaced)) });
+            }, assertSources);
             return record;
         } catch (error) {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
-            if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED'].includes(error.code)) throw error;
+            if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) throw error;
             if (!existing || existing.status === 'failed') this.store.addCheckpoint({
                 id,
                 startFloor,
@@ -631,14 +665,15 @@ export class MemorySummarizer {
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
         if (!Array.isArray(checkpoints) || !checkpoints.length) throw new Error('没有可用于长期记忆的 Checkpoint');
-        if (checkpoints.some(item => !isUsableMemory(item))) throw new Error('来源 Checkpoint 尚无可用内容，不能用于长期整理');
+        if (checkpoints.some(item => !isUsableMemory(item) || item.sourceReplaced)) throw new Error('来源 Checkpoint 尚无可用内容，不能用于长期整理');
         const sorted = [...checkpoints].sort((a, b) => a.startFloor - b.startFloor);
         if (sorted.some((item, i) => i && item.startFloor !== sorted[i - 1].endFloor + 1)) throw new Error('来源 Checkpoint 区间存在缺口，不能作为完整 Long Memory 输入');
         const startFloor = sorted[0].startFloor;
         const endFloor = sorted.at(-1).endFloor;
         const longMemories = this.store.current().longMemories;
         const existing = longMemories.find(item => item.startFloor === startFloor && item.endFloor === endFloor);
-        if (existing && isUsableMemory(existing) && !overwrite) return existing;
+        if (existing && isUsableMemory(existing) && !existing.sourceReplaced && !overwrite) return existing;
+        this.assertUnambiguousPrevious(startFloor, false);
         const id = longMemories.find(item => item.startFloor === startFloor && item.endFloor === endFloor)?.id
             ?? nextSequenceId('long', longMemories);
         const systemPrompt = replacePromptVariables(settings.prompts.longMemory, {
@@ -647,30 +682,37 @@ export class MemorySummarizer {
             maxLength: settings.longMemoryMaxLength,
         });
         const incremental = settings.memoryStrategy !== 'legacy';
-        const projection = projectLongFacts(this.store.current(), startFloor - 1);
-        const newSummaries = Object.values(this.store.current().summaries)
+        const projection = projectLongFacts(this.generationStore(), startFloor - 1);
+        const newSummaries = this.store.currentSummaries(this.getChat())
             .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor)
             .sort((a, b) => a.floor - b.floor).map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
-        const sourceSummaries = Object.values(this.store.current().summaries)
+        const sourceSummaries = this.store.currentSummaries(this.getChat())
             .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor);
         const storyMetadata = storyMetadataRange(sourceSummaries);
         const sourceVersions = Object.fromEntries(sourceSummaries.map(item => [item.messageId, summaryVersion(item)]));
-        const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.store.current(), endFloor) : null;
+        const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.generationStore(), endFloor) : null;
         const checkpointVersions = sorted.map(item => JSON.stringify(item));
         const chatVersion = JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]));
-        const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n');
-        const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
-        try {
-            const result = await this.apiClient.complete({ systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : ''), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.store.current(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal });
+        const targetVersions = () => JSON.stringify(this.store.current().longMemories.filter(item => item.startFloor === startFloor && item.endFloor === endFloor).map(item => [item.id, aggregateVersion(item)]));
+        const expectedTargets = targetVersions();
+        const assertSources = () => {
+            if (targetVersions() !== expectedTargets) throw Object.assign(new Error('长期记忆已被其他窗口更新，未覆盖较新记录'), { code: 'SOURCE_CHANGED' });
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Long Memory');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
-            if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.store.current(), endFloor)) throw Object.assign(new Error('整理期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
+            if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.generationStore(), endFloor)) throw Object.assign(new Error('整理期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
             if (chatVersion !== JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]))
                 || Object.entries(sourceVersions).some(([id, version]) => !isUsableMemory(this.store.getSummary(id)) || summaryVersion(this.store.getSummary(id)) !== version)
                 || sorted.some((item, index) => { const current = this.store.current().checkpoints.find(cp => cp.id === item.id); return !isUsableMemory(current) || JSON.stringify(current) !== checkpointVersions[index]; })) {
                 throw Object.assign(new Error('聚合期间来源已改变，未提交过期 Long Memory'), { code: 'SOURCE_CHANGED' });
             }
+        };
+        const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n');
+        const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
+        try {
+            const result = await this.apiClient.complete({ systemPrompt: systemPrompt + (settings.activeStateEnabled ? STATE_AGGREGATION_RULES : ''), userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal });
+            assertSources();
             if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
+            if (!String(result.content ?? '').trim()) throw new Error('长期记忆输出为空，原记忆保留');
             const record = {
                 id,
                 startFloor,
@@ -688,17 +730,17 @@ export class MemorySummarizer {
                 status: 'frozen',
             };
             if (settings.activeStateEnabled && incremental) {
-                record.factUpdates = trackedFactUpdates(record.factUpdates, this.store.current(), endFloor, projection.facts);
-                const threads = trackedLines(this.store.current(), endFloor, 'thread');
-                threads.push(...projectActiveState(this.store.current(), endFloor).filter(item => item.kind === 'thread' && !item.needsReview && !isTrackedActive(item) && item.sourceFloor >= startFloor)
+                record.factUpdates = trackedFactUpdates(record.factUpdates, this.generationStore(), endFloor, projection.facts);
+                const threads = trackedLines(this.generationStore(), endFloor, 'thread');
+                threads.push(...projectActiveState(this.generationStore(), endFloor).filter(item => item.kind === 'thread' && !item.needsReview && !isTrackedActive(item) && item.sourceFloor >= startFloor)
                     .map(item => `- 已结束 ${item.entity} · ${item.key}：${item.value} (${item.status}，历史结果)`));
                 record.continuityState = threads.length ? `[Open Threads]\n${threads.join('\n')}` : '';
             }
-            this.store.addLongMemory(record, { overwrite: overwrite || Boolean(existing && !isUsableMemory(existing)) });
+            await this.commitMemory(() => this.store.addLongMemory(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing) || existing.sourceReplaced)) }), assertSources);
             return record;
         } catch (error) {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Long Memory');
-            if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED'].includes(error.code)) throw error;
+            if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) throw error;
             if (!existing || existing.status === 'failed') this.store.addLongMemory({
                 id,
                 startFloor,

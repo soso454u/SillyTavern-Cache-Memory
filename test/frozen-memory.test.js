@@ -32,7 +32,7 @@ test('the reported six source flags keep all 205 summaries usable and floor 14 c
     }
     f.metadata.cache_memory.checkpoints = [1, 6].map(start => ({ id: `cp-${start}`, startFloor: start, endFloor: start + 4,
         content: `冻结阶段 ${start}`, status: 'stale', sourceValidity: 'changed', invalidSourceIds: ['old-task-source'] }));
-    f.chat[13].mes = '确实编辑了原消息，但用户决定继续用旧摘要';
+    f.chat[13].mes = '原始正文   14\n'; // Formatting alone is not a replacement.
     f.store.syncMessages(f.chat);
     const overview = memoryOverviewStats(f.store.current(), getAssistantMessages(f.chat), normalizeSettings());
     assert.deepEqual(overview.summaries, { actual: 205, generated: 205, expected: 207 });
@@ -69,7 +69,7 @@ test('legacy flags restore frozen/manual records without changing content, faile
 test('only an explicit selection regenerates an existing frozen CP; repeated edits do not accumulate copies', async () => {
     const f = fixture(5);
     f.store.addCheckpoint({ id: 'cp', startFloor: 1, endFloor: 5, content: '用户旧阶段', status: 'frozen' });
-    f.chat[0].mes = '修改消息'; f.store.revalidate(f.chat);
+    f.store.revalidate(f.chat);
     await f.summarizer.updateCheckpoints(); assert.equal(f.calls.length, 0);
     const result = await f.summarizer.updateCheckpoints({ ids: ['cp'] });
     assert.equal(result.created, 1); assert.equal(f.calls.length, 1);

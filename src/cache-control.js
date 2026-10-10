@@ -1,8 +1,8 @@
-import { INJECTION_MODES } from './defaults.js?v=1.22.5';
-import { buildInjection } from './injection.js?v=1.22.5';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.22.5';
-import { fnv1a } from './utils.js?v=1.22.5';
-import { stripStructuredSections } from './summary-format.js?v=1.22.5';
+import { INJECTION_MODES } from './defaults.js?v=1.22.6';
+import { buildInjection } from './injection.js?v=1.22.6';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.22.6';
+import { fnv1a } from './utils.js?v=1.22.6';
+import { stripStructuredSections } from './summary-format.js?v=1.22.6';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;

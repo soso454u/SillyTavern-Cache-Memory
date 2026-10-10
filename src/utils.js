@@ -41,6 +41,16 @@ export function messageFingerprint(message) {
 
 export const messageContentFingerprint = message => fnv1a(String(message?.mes ?? '').replace(/\s+/gu, ' ').trim());
 
+// ST keeps the identities of real alternatives in swipe_info. A floor alone
+// cannot establish that two imported records came from the same message.
+function swipeMessageIds(message) {
+    return (Array.isArray(message.swipe_info) ? message.swipe_info : []).flatMap((info, index) => {
+        if (!info || typeof message.swipes?.[index] !== 'string') return [];
+        return [messageIdentity({ ...message, send_date: info.send_date ?? '', gen_started: info.gen_started ?? '',
+            extra: info.extra ?? {}, mes: message.swipes[index] })];
+    });
+}
+
 export function getAssistantMessages(chat) {
     let floor = 0;
     return (Array.isArray(chat) ? chat : []).flatMap((message, messageIndex) => {
@@ -52,6 +62,7 @@ export function getAssistantMessages(chat) {
             && !message.extra?.model;
         if (isUngeneratedGreeting) return [];
         floor += 1;
+        const relatedMessageIds = swipeMessageIds(message);
         return [{
             floor,
             messageIndex,
@@ -59,6 +70,8 @@ export function getAssistantMessages(chat) {
             messageId: messageIdentity(message),
             fingerprint: messageFingerprint(message),
             contentFingerprint: messageContentFingerprint(message),
+            relatedMessageIds,
+            sourceMessageKey: relatedMessageIds[0] ?? messageIdentity(message),
         }];
     });
 }

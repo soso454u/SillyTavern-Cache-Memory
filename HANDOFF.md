@@ -1,3 +1,21 @@
+# 接续说明（2026-10-10，v1.22.6）
+
+本轮基于 12b9c97。用户要求一层一份当前 Summary、一段一份当前 CP/Long，保存确认后直接替换旧版本；能证明已替代的旧数据清理，不确定保留；不因加载／旧指纹创建版本；不改注入、Strict Cache 或界面。
+
+根因：messageIdentity 包含生成信息，Swipe 可换 ID；旧 rebindSummaryAtMessageIndex 只移动键并改 KEEP，漏 CP/Long 引用且会把旧正文摘要直接当成新正文；CP/Long 收集 Object.values(summaries) 按 floor，允许同层旧 unverified 记录一起入模型；aggregate add 只按 ID 替换，范围重复可保留。
+
+utils 为 assistant entry 带实际 swipe_info/swipes 身份及 sourceMessageKey，不改原 messageIdentity 算法，也不修改聊天消息。显式编辑/Swipe 只登记运行期同槽关系，正文未匹配不再提前重绑定旧摘要。MemoryStore.currentSummaries 逐条当前 assistant 选一个匹配摘要，旧指纹缺失保守接受唯一 legacy floor-only 数据，不制造新 ID；未知/未匹配副本不送入生成上下文。已知 sourceContentFingerprint 不匹配则等待新摘要；不恢复旧 stale 技术提示。Summary 替换修正 KEEP/stateOverrides/sourceVersions/summaryIds，旧 ID 留无正文 replacedBy tombstone 防旧窗口复活。引用的正文已明确替换时 sourceReplaced 只供后续生成/一键补全使用，不改冻结显示及已发布注入字节；普通加载不设置该标记。CP/Long 按精确范围替换全部旧副本，重绑 checkpointIds/previousCheckpointId/checkpointVersions；无证明的范围冲突保留，显式重生成可以整段替换。
+
+MemoryPersistenceCoordinator.commitReplacement 串行构造候选，先等原记忆确认；同步构造时暂缓 persist/onChange，旧有效视图保持到服务器读回。失败从 replacementFallback 保留原有效记录，新候选只在临时 pending journal 重试，成功清理；不新增永久备份。保存中再次编辑则按共同原快照合并不相交修改，同条本机更新不被较早模型草稿覆盖，生成任务核实自身结果确实生效才报成功。服务器仍用既有三方比较/CAS/读回，不按客户端时间戳决定胜负。生成前捕获目标记录及输入版本，模型完成及提交前再次检查，包括首次服务器核验读到更新目标的情况。空输出不替换原记忆。生成后 publish/onChange 的原因沿用原注入规则，重试成功也通知。
+
+index 显式编辑/Swipe 在原 autoSummarize 条件下调用当前条目总结；相同正文无额外请求。refreshChatState 读服务器并 sync 后，若存在可确认旧记录，以同一事务清理；旧 Summary 凭实际 Swipe 身份/明确事件/同来源标识清理，聚合凭相同内容或当前来源证据去重；不靠楼层或时间戳猜测。不要清空未知孤立记录。注入/缓存等其余模块仅版本 URL 更新。
+
+验证：npm run check、npm test 全 260 项通过；新 current-memory-replacement.test.js 15 项包含第207层及CP-042输入/引用、保留有效视图直到读回、原生/权威失败回退、范围替换与引用、保守清理、缺指纹/刷新、首次核验读到新版本、空模型输出、保存中用户再次编辑、另一设备新记录及旧替换 ID 防复活。旧冻结测试改为验证格式差异不会重做，去掉“实际改了正文却必须给CP用旧摘要”的过时断言；continuity 测试现在提供已加载的合成 chat，不再用空聊天生成范围。Chrome 合成界面绑定实际 commitReplacement，验证209层生成4Long/读回/查看全文及手机布局/四边缩放。无真实模型或私人聊天。版本 1.22.6，Store v6 未升级。
+
+限制：原生 ST 无原子 CAS；没有服务端推送，所有旧窗口都应更新并重载。清理仅作用于实际载入的聊天；无法证明归属的旧数据保留。已有已发布剧情文本不会被本地清理自动改写，明确来源被替换的阶段／长期记忆需按现有补全或重新生成操作重新保存。
+
+以下历史说明服从当前版本及最新用户要求。
+
 # 接续说明（2026-10-10，v1.22.5）
 
 本轮基于 6e602f5。用户最终取消下拉框方案，保留分类按钮；分类按钮入框自动换行、随内容滚动。新增独立 Long Memory 页，显示已生成 / 应有、缺失完整楼层分组、明确生成入口及可展开原始正文；原长期事实页保留投影事实及编辑能力。原入口藏于长期事实页底部，摘要/CP 的局部处理完成并不代表 Long 已生成；各自完成提示标明范围，一键/Long 补全结束重查计划，仍有缺项不能报完成。概览 CP/Long 使用 isUsableMemory 计数，不再误排除只有结构化 factUpdates 的记录。应有 Long 组长对齐原有 CP 完整分组规则。
