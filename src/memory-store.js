@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.7';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.7';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.7';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.8';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.8';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.8';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {

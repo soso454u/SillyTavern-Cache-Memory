@@ -1,4 +1,4 @@
-import { fnv1a } from './utils.js?v=1.22.7';
+import { fnv1a } from './utils.js?v=1.22.8';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
