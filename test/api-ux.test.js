@@ -226,3 +226,21 @@ test('connection-test buttons show thinking truncation as warning and always re-
     assert.match(f.status.at(-1).message, /^测试未获得有效输出/);
     assert.equal(button.disabled, false);
 });
+
+test('automatic settings changes flush pending input without resetting the next selected control', t => {
+    const f = fixture(t);
+    const input = { tagName: 'INPUT', type: 'number', value: '0.8', dataset: { setting: 'temperature' }, isConnected: true, validity: { valid: true },
+        closest: selector => selector === '[data-setting]' ? input : null,
+        dispatchEvent: () => f.handlers.change({ target: input }) };
+    const select = { tagName: 'SELECT', type: 'select-one', value: 'disabled', dataset: { setting: 'thinkingMode' },
+        closest: selector => selector === '[data-setting]' ? select : null };
+    f.ui.populateSettings = () => { select.value = f.settings.thinkingMode; };
+    f.handlers.input({ target: input });
+    assert.equal(f.ui.pendingSettingInput, input);
+    f.handlers.change({ target: select });
+    assert.equal(f.settings.temperature, 0.8);
+    assert.equal(f.settings.thinkingMode, 'disabled');
+    assert.equal(f.ui.pendingSettingInput, null);
+    clearTimeout(f.ui.settingsSaveTimer);
+    clearTimeout(f.ui.settingInputTimer);
+});

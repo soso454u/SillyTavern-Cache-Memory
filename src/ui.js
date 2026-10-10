@@ -1,17 +1,17 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.13';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.13';
-import { API_PROVIDERS, DEFAULT_PROMPTS, globalPromptText, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.13';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.13';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.13';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.13';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.13';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.13';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.13';
-import { parseFloorSummary } from './summarizer.js?v=1.22.13';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.13';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.23.0';
+import { effectiveInjectionMode } from './cache-control.js?v=1.23.0';
+import { API_PROVIDERS, DEFAULT_PROMPTS, globalPromptText, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.23.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.23.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.23.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.23.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.23.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.23.0';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.23.0';
+import { parseFloorSummary } from './summarizer.js?v=1.23.0';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.23.0';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.13';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.13';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.23.0';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.23.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -323,7 +323,7 @@ export function configTemplate() {
                 <header class="cache-memory-dialog-header">
                     <div class="cache-memory-dialog-title" title="拖动标题栏移动弹窗">
                         <i class="fa-solid fa-brain" aria-hidden="true"></i>
-                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节</small></div>
+                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节</small><small class="cache-memory-auto-save" data-settings-save-state data-state="saved" role="status">已自动保存</small></div>
                     </div>
                     <button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button>
                 </header>
@@ -349,6 +349,7 @@ export function configTemplate() {
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
                         <div class="cache-memory-grid">
+                            <label>总结模式（当前聊天）<select data-summary-mode><option value="normal">普通模式（默认）</option><option value="advanced">复杂进阶总结（可选）</option></select><small>只影响后续整理，不重生成已有记忆；自定义提示词保留。</small></label>
                             <label>记忆策略<select data-setting="memoryStrategy"><option value="incremental">增量状态 + 长期事实 + KEEP</option><option value="legacy">兼容旧版分段摘要</option></select></label>
                             <label>过滤策略<select data-setting="summaryFilterMode"><option value="${SUMMARY_FILTER_MODES.DEFAULT}">默认（推荐）</option><option value="${SUMMARY_FILTER_MODES.CUSTOM}">自定义标签</option><option value="${SUMMARY_FILTER_MODES.FULL}">不过滤（完整正文）</option></select></label>
                             <label data-custom-filter>正文标签（按优先级，用逗号或换行分隔）<textarea rows="1" data-setting="summaryFilterTags" placeholder="content, context, story"></textarea></label>
@@ -366,6 +367,12 @@ export function configTemplate() {
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
                         <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>统一使用 OpenAI 兼容接口。</p></div></div>
+                        <div class="cache-memory-profile-controls">
+                            <label>接口配置<select data-api-profile aria-label="选择接口配置"></select></label>
+                            <button type="button" class="menu_button" data-profile-action="add">新增</button>
+                            <button type="button" class="menu_button" data-profile-action="rename">重命名</button>
+                            <button type="button" class="menu_button" data-profile-action="delete">删除</button>
+                        </div>
                         <div class="cache-memory-api-guide"><i class="fa-solid fa-circle-info"></i><span><strong>设置顺序：</strong>填写接口地址和密钥（自动保存）→ 下拉选择或手动填写模型 → 测试连接。密钥只保存在当前浏览器。</span></div>
                         <div class="cache-memory-grid">
                             <label>接口类型<input type="text" value="OpenAI 兼容接口" readonly></label>
@@ -432,10 +439,6 @@ export function configTemplate() {
                         <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
                     </section>
                 </div>
-                <footer class="cache-memory-settings-save">
-                    <span data-settings-save-state data-state="saved">已保存</span>
-                    <button type="button" class="menu_button cache-memory-primary" data-save-settings><i class="fa-solid fa-floppy-disk"></i> 保存设置</button>
-                </footer>
             </div>
             ${['n', 'e', 's', 'w'].map(edge => `<span class="cache-memory-resize-handle" data-resize-edge="${edge}" aria-hidden="true"></span>`).join('')}
             </div>
@@ -482,6 +485,10 @@ export class CacheMemoryUI {
         this.managerEditing = null;
         this.keepBatchMode = false;
         this.settingsDirty = false;
+        this.settingsSaveRevision = 0;
+        this.settingsSaveTimer = null;
+        this.settingInputTimer = null;
+        this.pendingSettingInput = null;
         this.showSummaryHealthDetails = false;
         this.lastMergeReport = null;
         this.missingCheckpointController = null;
@@ -500,7 +507,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.13', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.23.0', import.meta.url).href;
         this.doc.head.append(this.style);
         this.root.addEventListener('resize', () => {
             for (const input of this.doc.querySelectorAll('.cache-memory-inline-editor textarea, .cache-memory-modal-panel textarea, .cache-memory-tracked-form textarea, #cache-memory-config textarea')) resizeMemoryTextarea(input);
@@ -522,6 +529,11 @@ export class CacheMemoryUI {
     }
 
     createConfig() {
+        if (!this.apiProfilesInitialized && this.apiClient?.listProfiles) {
+            const index = this.apiClient.listProfiles();
+            this.updateSettings(this.apiClient.selectProfile(index.activeId));
+            this.apiProfilesInitialized = true;
+        }
         this.mountStyles();
         this.config = this.doc.getElementById(CONFIG_ID);
         if (this.config) return;
@@ -641,10 +653,26 @@ export class CacheMemoryUI {
         for (const input of root?.querySelectorAll?.('textarea') ?? []) resizeMemoryTextarea(input);
     }
 
+    refreshSummaryMode(root = this.config) {
+        const mode = root?.querySelector('[data-summary-mode]');
+        if (mode) { mode.value = this.store?.current().summaryMode ?? 'normal'; mode.disabled = !this.store?.current().chatId; }
+    }
+
     populateSettings(root) {
         const settings = this.getSettings();
         const scopes = root ? [root] : this.settingsScopes();
         for (const scope of scopes) {
+            this.refreshSummaryMode(scope);
+            const profileSelect = scope.querySelector('[data-api-profile]');
+            if (profileSelect && this.apiClient?.listProfiles) {
+                const index = this.apiClient.listProfiles();
+                profileSelect.replaceChildren(...index.profiles.map(profile => {
+                    const option = this.element('option', '', profile.name); option.value = profile.id; return option;
+                }));
+                profileSelect.value = index.activeId;
+                const remove = scope.querySelector('[data-profile-action="delete"]');
+                if (remove) remove.disabled = index.profiles.length <= 1;
+            }
             const warning = scope.querySelector('[data-cache-mode-warning]');
             if (warning) warning.textContent = settings.strictCacheMode
                 ? `近期小总结会每轮改变 Prompt，不适合严格缓存模式。当前实际策略：${effectiveInjectionMode(settings)}；近期模式会自动降级到 Checkpoint 边界。`
@@ -652,6 +680,7 @@ export class CacheMemoryUI {
             for (const element of scope.querySelectorAll('[data-legacy-setting]')) element.hidden = settings.memoryStrategy !== 'legacy';
             for (const element of scope.querySelectorAll('[data-custom-filter]')) element.hidden = settings.summaryFilterMode !== SUMMARY_FILTER_MODES.CUSTOM;
             for (const element of scope.querySelectorAll('[data-setting]')) {
+                if (element === this.pendingSettingInput) continue;
                 const key = element.dataset.setting;
                 if (element.type === 'checkbox') element.checked = Boolean(settings[key]);
                 else element.value = settings[key] ?? '';
@@ -685,22 +714,67 @@ export class CacheMemoryUI {
 
     renderSettingsSaveState() {
         for (const output of this.config?.querySelectorAll?.('[data-settings-save-state]') ?? []) {
-            output.dataset.state = this.settingsDirty ? 'dirty' : 'saved';
-            output.textContent = this.settingsDirty ? '有未保存修改' : '已保存';
+            output.dataset.state = this.settingsSaveFailed ? 'failed' : this.settingsDirty ? 'saving' : 'saved';
+            output.textContent = this.settingsSaveFailed ? '自动保存失败' : this.settingsDirty ? '正在自动保存…' : '已自动保存';
         }
     }
 
     markSettingsDirty() {
         this.settingsDirty = true;
+        this.settingsSaveFailed = false;
+        this.settingsSaveRevision++;
+        try { this.apiClient?.saveProfileSettings?.(); }
+        catch { this.settingsSaveFailed = true; this.setStatus('error', '接口配置保存失败，请检查浏览器本地存储权限。'); }
         this.renderSettingsSaveState();
+        clearTimeout(this.settingsSaveTimer);
+        this.settingsSaveTimer = setTimeout(() => {
+            void this.saveSettingsNow().catch(() => {});
+        }, 400);
     }
 
     async saveSettingsNow() {
-        if (this.persistSettings) await this.persistSettings();
-        else this.updateSettings?.({});
-        this.settingsDirty = false;
-        this.renderSettingsSaveState();
-        notify('success', 'Cache Memory 设置已保存');
+        clearTimeout(this.settingsSaveTimer);
+        this.settingsSaveTimer = null;
+        const revision = this.settingsSaveRevision;
+        try {
+            this.apiClient?.saveProfileSettings?.();
+            if (this.persistSettings) await this.persistSettings();
+            else this.updateSettings?.({});
+            if (revision === this.settingsSaveRevision) {
+                this.settingsDirty = false;
+                this.settingsSaveFailed = false;
+            }
+        } catch (error) {
+            this.settingsSaveFailed = true;
+            this.setStatus('error', '设置自动保存失败，请检查连接后重新修改设置。');
+            throw error;
+        } finally { this.renderSettingsSaveState(); }
+    }
+
+    flushSettingInput() {
+        clearTimeout(this.settingInputTimer);
+        this.settingInputTimer = null;
+        const input = this.pendingSettingInput;
+        this.pendingSettingInput = null;
+        if (input?.isConnected && input.validity?.valid !== false) input.dispatchEvent(new this.root.Event('change', { bubbles: true }));
+    }
+
+    async switchApiProfile(id, root = this.config, { remove = false } = {}) {
+        this.flushSettingInput();
+        await this.saveInputApiKey(root);
+        this.apiClient.saveProfileSettings();
+        const settings = remove ? this.apiClient.deleteProfile(id) : this.apiClient.selectProfile(id);
+        clearTimeout(this.apiKeySaveTimer);
+        clearTimeout(this.modelListTimer);
+        this.apiFormRevision++;
+        const keyInput = root?.querySelector('[data-api-key]');
+        if (keyInput) keyInput.value = '';
+        this.updateSettings(settings);
+        this.markSettingsDirty();
+        this.populateSettings();
+        this.modelOptionsIdentity = this.currentModelListIdentity();
+        this.renderModelOptions(this.modelLists.get(this.modelOptionsIdentity) ?? []);
+        this.scheduleModelList(root);
     }
 
     persistConnectionModel(model) {
@@ -711,6 +785,7 @@ export class CacheMemoryUI {
     async saveInputApiKey(root = this.config) {
         clearTimeout(this.apiKeySaveTimer);
         this.apiKeySaveTimer = null;
+        const revision = this.apiFormRevision;
         const input = root?.querySelector('[data-api-key]');
         const value = String(input?.value ?? '').trim();
         if (!value) return;
@@ -720,6 +795,7 @@ export class CacheMemoryUI {
                 this.setStatus('warning', '请先填写接口地址，密钥尚未保存。');
                 return;
             }
+            if (this.destroyed || revision !== this.apiFormRevision) return;
             if (input.value.trim() === value && this.doc?.activeElement !== input) input.value = '';
             this.populateSettings();
             this.scheduleModelList(root);
@@ -801,6 +877,24 @@ export class CacheMemoryUI {
             if (event.target.closest('[data-api-key]')) void this.saveInputApiKey(root);
         }, { signal: this.controller.signal });
         root.addEventListener('change', event => {
+            if (this.pendingSettingInput && event.target !== this.pendingSettingInput) {
+                const { value, checked } = event.target;
+                this.flushSettingInput();
+                event.target.value = value;
+                if (event.target.type === 'checkbox') event.target.checked = checked;
+            }
+            if (event.target.closest('[data-summary-mode]')) {
+                this.store.setSummaryMode(event.target.value);
+                this.renderManager();
+                return;
+            }
+            const profile = event.target.closest('[data-api-profile]');
+            if (profile) {
+                const id = profile.value;
+                void this.switchApiProfile(id, root).catch(() => this.setStatus('error', '接口配置切换失败，当前输入已保留。'));
+                return;
+            }
+            if (event.target === this.pendingSettingInput) { clearTimeout(this.settingInputTimer); this.pendingSettingInput = null; }
             if (event.target.closest('[data-api-key]')) { void this.saveInputApiKey(root); return; }
             const cachePolicy = event.target.closest('[data-api-cache-policy]');
             if (cachePolicy) {
@@ -873,6 +967,13 @@ export class CacheMemoryUI {
                 this.markSettingsDirty();
                 return;
             }
+            const settingInput = event.target.closest('[data-setting]');
+            if (settingInput && !['checkbox', 'select-one'].includes(settingInput.type)) {
+                clearTimeout(this.settingInputTimer);
+                this.pendingSettingInput = settingInput;
+                this.settingInputTimer = setTimeout(() => this.flushSettingInput(), 400);
+                return;
+            }
             const element = event.target.closest('[data-prompt]');
             if (!element) return;
             this.updateSettings({ prompts: { ...this.getSettings().prompts, [element.dataset.prompt]: element.value } });
@@ -892,9 +993,27 @@ export class CacheMemoryUI {
                 this.activateSettingsTab(tab.dataset.settingsTab);
                 return;
             }
-            if (event.target.closest('[data-save-settings]')) {
-                try { await this.saveSettingsNow(); }
-                catch (error) { notify('error', `保存设置失败：${error.message}`); }
+            const profileAction = event.target.closest('[data-profile-action]');
+            if (profileAction) {
+                this.flushSettingInput();
+                const index = this.apiClient.listProfiles();
+                const current = index.profiles.find(item => item.id === index.activeId);
+                const action = profileAction.dataset.profileAction;
+                try {
+                    if (action === 'delete') {
+                        if (!await this.showPluginDialog({ title: '删除接口配置', message: `删除「${current.name}」及其在本浏览器保存的密钥？`, confirmLabel: '删除', danger: true })) return;
+                        await this.switchApiProfile(current.id, root, { remove: true });
+                    } else {
+                        const values = await this.showPluginDialog({ title: action === 'add' ? '新增接口配置' : '重命名接口配置', fields: [{ key: 'name', label: '配置名称', value: action === 'add' ? '' : current.name }] });
+                        if (!values) return;
+                        if (action === 'add') {
+                            await this.saveInputApiKey(root);
+                            this.apiClient.saveProfileSettings();
+                            await this.switchApiProfile(this.apiClient.addProfile(values.name), root);
+                        } else this.apiClient.renameProfile(values.name);
+                        this.populateSettings();
+                    }
+                } catch { this.setStatus('error', '配置操作失败，请填写名称并检查浏览器本地存储权限。'); }
                 return;
             }
             if (event.target.closest('[data-api-cache-probe]')) {
@@ -988,7 +1107,9 @@ export class CacheMemoryUI {
 
     closeSettings() {
         if (!this.config || this.config.hidden) return;
+        this.flushSettingInput();
         void this.saveInputApiKey();
+        if (this.settingsDirty) void this.saveSettingsNow().catch(() => {});
         clearTimeout(this.modelListTimer);
         this.resetConfigDrag?.();
         this.config.hidden = true;
@@ -1528,15 +1649,53 @@ export class CacheMemoryUI {
             return form;
         };
         const add = this.element('details', 'cache-memory-card'); add.append(this.element('summary', '', '手动添加 / 从旧 Open 字段登记'), formFor()); root.append(add);
+        const advanced = kind === 'state' && this.store.current().summaryMode === 'advanced';
+        const people = new Map();
+        const personBody = name => {
+            if (!people.has(name)) {
+                const group = this.element('details', 'cache-memory-card cache-memory-person');
+                group.append(this.element('summary', '', name));
+                const table = this.element('table', 'cache-memory-person-table');
+                const head = this.element('thead'); head.innerHTML = '<tr><th>资料</th><th>当前值 / 历史结果</th><th>来源</th></tr>';
+                const body = this.element('tbody'); table.append(head, body); group.append(table); root.append(group);
+                people.set(name, body);
+            }
+            return people.get(name);
+        };
         for (const [title, items] of [['当前记录', active], ['已结束 / 历史结果', archived]]) {
-            root.append(this.element('h4', '', `${title} · ${items.length}`));
+            if (!advanced) root.append(this.element('h4', '', `${title} · ${items.length}`));
             for (const item of items) {
                 const card = this.element('details', 'cache-memory-card');
                 card.append(this.element('summary', '', `${item.needsReview ? '⚠ 待核对 · ' : ''}${item.entity} · ${item.key} · ${item.value}`));
                 card.append(this.element('p', '', `${item.id} · 来源第 ${item.sourceFloor} 层 · ${item.status} · ${item.lifetime}`));
                 card.append(this.element('p', '', `证据：${item.evidence || '用户确认'}；条件：${item.condition || '未提供'}`));
                 for (const prior of item.history) card.append(this.element('small', 'cache-memory-state-history', `第 ${prior.sourceFloor} 层：${prior.value} (${prior.status})`));
-                card.append(formFor(item)); root.append(card);
+                card.append(formFor(item));
+                if (advanced) {
+                    const row = this.element('tr');
+                    const detail = this.element('td');
+                    const title = `${item.needsReview ? '⚠ 待核对 · ' : ''}${item.key}`;
+                    card.querySelector('summary').textContent = title;
+                    const button = this.element('button', 'cache-memory-person-field', title);
+                    button.type = 'button'; button.dataset.personField = item.id; button.setAttribute('aria-expanded', 'false');
+                    detail.append(button);
+                    row.append(detail, this.element('td', '', item.value), this.element('td', '', `第 ${item.sourceFloor} 层 · ${item.status}`));
+                    const editorRow = this.element('tr'); editorRow.hidden = true;
+                    const editorCell = this.element('td'); editorCell.colSpan = 3; editorCell.append(card); editorRow.append(editorCell);
+                    button.addEventListener('click', () => { editorRow.hidden = false; card.open = !card.open; this.resizeTextareas(card); }, { signal: this.controller.signal });
+                    card.addEventListener('toggle', () => { editorRow.hidden = !card.open; button.setAttribute('aria-expanded', String(card.open)); }, { signal: this.controller.signal });
+                    personBody(item.entity).append(row, editorRow);
+                } else root.append(card);
+            }
+        }
+        if (advanced) {
+            for (const fact of projectLongFacts(this.store.current()).facts.filter(item => item.status === 'active')) {
+                if (rows.some(item => fact.stateId === item.id)) continue;
+                const tracked = fact.text.match(/^(.+?)\s·\s([^：:]+)[：:]\s*(.*)$/s);
+                const parts = tracked ? { subject: tracked[1], category: tracked[2], detail: tracked[3] } : this.factParts(fact.text);
+                const row = this.element('tr');
+                row.append(this.element('td', '', parts.category || '长期事实'), this.element('td', '', parts.detail), this.element('td', '', 'Long Facts'));
+                personBody(parts.subject || '长期事实（未标人物）').append(row);
             }
         }
         return root;
@@ -2599,7 +2758,12 @@ export class CacheMemoryUI {
 
     destroy() {
         if (this.destroyed) return;
+        this.flushSettingInput();
+        void this.saveInputApiKey();
+        if (this.settingsDirty) void this.saveSettingsNow().catch(() => {});
         this.destroyed = true;
+        clearTimeout(this.settingsSaveTimer);
+        clearTimeout(this.settingInputTimer);
         clearTimeout(this.apiKeySaveTimer);
         clearTimeout(this.modelListTimer);
         this.backfill?.cancel({ discard: true });

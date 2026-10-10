@@ -1,11 +1,11 @@
 {
   "name": "sillytavern-cache-memory",
-  "version": "1.22.13",
+  "version": "1.23.0",
   "description": "Cache-friendly append-only story memory for SillyTavern.",
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check index.js && node --check src/active-state.js && node --check src/api-client.js && node --check src/api-cache-adapter.js && node --check src/memory-server.js && node --check server-plugin/cache-memory-api-adapter/index.mjs && node --check server-plugin/cache-memory-memory/index.mjs && node --check src/cache-control.js && node --check src/ui-context.js && node --check src/continuity.js && node --check src/defaults.js && node --check src/memory-store.js && node --check src/memory-import.js && node --check src/persistence.js && node --check src/summarizer.js && node --check src/injection.js && node --check src/injection-target.js && node --check src/ui.js && node --check src/history-backfill.js && node --check src/summary-format.js && node --check src/summary-source.js && node --check src/story-metadata.js && node --check src/utils.js"
+    "check": "node --check index.js && node --check src/active-state.js && node --check src/api-client.js && node --check src/api-cache-adapter.js && node --check src/memory-server.js && node --check server-plugin/cache-memory-api-adapter/index.mjs && node --check server-plugin/cache-memory-memory/index.mjs && node --check src/cache-control.js && node --check src/ui-context.js && node --check src/continuity.js && node --check src/defaults.js && node --check src/memory-store.js && node --check src/memory-import.js && node --check src/persistence.js && node --check src/summarizer.js && node --check src/response-cleanup.js && node --check src/injection.js && node --check src/injection-target.js && node --check src/ui.js && node --check src/history-backfill.js && node --check src/summary-format.js && node --check src/summary-source.js && node --check src/story-metadata.js && node --check src/utils.js"
   },
   "engines": {
     "node": ">=20"

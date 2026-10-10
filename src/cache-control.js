@@ -1,9 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.22.13';
-import { buildInjection } from './injection.js?v=1.22.13';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.22.13';
-import { fnv1a } from './utils.js?v=1.22.13';
-import { stripStructuredSections } from './summary-format.js?v=1.22.13';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.22.13';
+import { INJECTION_MODES } from './defaults.js?v=1.23.0';
+import { buildInjection } from './injection.js?v=1.23.0';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.23.0';
+import { fnv1a } from './utils.js?v=1.23.0';
+import { stripStructuredSections } from './summary-format.js?v=1.23.0';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.23.0';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -13,6 +13,7 @@ export function effectiveInjectionMode(settings) {
 }
 
 export function shouldRefreshInjection(settings, reason) {
+    if (reason === 'summary mode changed') return false;
     if (!settings.strictCacheMode) return true;
     if (['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason)) return true;
     const mode = effectiveInjectionMode(settings);

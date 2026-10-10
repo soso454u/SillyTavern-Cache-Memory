@@ -1,4 +1,4 @@
-import { fnv1a } from './utils.js?v=1.22.13';
+import { fnv1a } from './utils.js?v=1.23.0';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
@@ -25,15 +25,18 @@ export function stateId(item) {
 
 // Only a small, evidenced delta is extracted in the existing Summary request.
 // Legacy Open/State prose is retained, never guessed into a completed task.
-export function parseStateChanges(text, source, known = []) {
+export function parseStateChanges(text, source, known = [], { advanced = false } = {}) {
     let rows;
     try { rows = JSON.parse(clean(text).replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return []; }
     if (!Array.isArray(rows)) return [];
     const byId = new Map(known.map(item => [item.id, item]));
-    return rows.slice(0, 24).flatMap(row => {
+    return rows.slice(0, advanced ? 96 : 24).flatMap(row => {
         if (!row || !['thread', 'state'].includes(row.kind) || row.confirmed !== true) return [];
         const entity = clean(row.entity), key = clean(row.key), value = clean(row.value), evidence = clean(row.evidence);
         if (!entity || !key || !value || evidence.length < 4 || !String(source).includes(evidence)) return [];
+        // Stable traits need an explicit statement, not an inferred one-off action.
+        if (advanced && ['personality', 'preference', 'clothing'].includes(clean(row.category))
+            && !/(?:性格|性子|生性|天性|素来|平时|通常|一贯|向来|总是|喜欢|喜爱|偏好|爱好|讨厌|厌恶|不喜欢|习惯|personality|temperament|by nature|introvert|extrovert|always|usually|prefers?|likes?|loves?|hates?|dislikes?|favourite|favorite)/iu.test(evidence)) return [];
         const requested = byId.get(clean(row.id));
         if (row.id && (!requested || !sameSubject(requested, { ...row, entity, key }))) return [];
         const id = requested?.id ?? known.find(item => sameSubject(item, { ...row, entity, key }))?.id ?? stateId({ ...row, entity, key });
@@ -212,3 +215,15 @@ export const STATE_EXTRACTION_RULES = `\n【持续状态增量】
 世界书候选任务、计划获取能力禁止提取；已正式发布的待领取奖励记 acquisition:pending，不能当作已获得的长期能力。任务正式发布后长期未提及仍 active；只凭剧情明确完成或系统结算才能 completed。已完成且领取的任务禁止恢复为进行中或待领取；后续重复任务须有明确重新发布的证据并使用区别于旧任务的新 key。首次看到的明确完成/领取结果也应记录，不依赖旧层已有 Changes。维持到入睡前等条件未满足不得提前完成。升级只更新同一技能当前等级，属性记最新确认数值，临时效果保留结束条件。NPC 认知、关系变化必须有明确证据。KEEP 仅强调关键事实，不堆放全部任务和技能。JSON 与正文合计遵守现有输出上限。`;
 
 export const STATE_AGGREGATION_RULES = `\n[CURRENT_TRACKED_STATE] 是截至本区间的已确认事项与角色状态，sourceFloor 表示最后确认楼层；NEW_SUMMARIES 或更晚 Checkpoint 中的明确变化优先于旧来源状态。已完成任务及已领取奖励不得复活为未完成/未领取；任务名称外的“任务：”“剧情判定”等格式不构成另一项任务。将仍有意义的任务进度/完成条件精简融入原 Open Threads、Current State 栏目；未提及不等于结束。区分历史事件和当前值，同一任务、属性、技能、物品或计划在当前状态中只保留一条最新确认值；旧计划被明确替代时移出当前计划，必要原因可留在原历史栏目。不得把同一条状态复制到多个栏目；人物认知差、重要 NPC 与尚未解决事项继续保留，不能因未提及而删除。同一技能仅呈现最新等级。Long Memory 只留长期能力、重要变化及必要历史结果，短期已结算任务不再作为活跃事项。无需回显 JSON，不重复 KEEP/已有 Long Facts，遵守原长度目标。`;
+
+export const ADVANCED_EXTRACTION_RULES = `
+【复杂进阶总结（可选）】
+仍沿用原 Summary 格式和 [Changes]，不增加请求。重要 NPC 按完整人物身份分别记录，已有事实未提及也保留；只输出本层新确认或明确变化。
+复用现有 kind:state，category 可为 identity/relationship/personality/preference/clothing/knowledge/history/skill/effect。记录明确身份、人物关系、稳定性格、喜好、穿搭偏好、秘密、各自认知差、重要经历、技能及当前状态。
+性格、喜好、穿搭偏好必须在 evidence 中有直接陈述或明确总结长期习惯的原文，禁止从单次行为、单次穿着或情绪推断；缺乏证据则省略。其他字段同样需要本层连续原文证据。
+重新登场先继承 CURRENT_TRACKED_STATE 与 EXISTING_LONG_FACTS 的已知事实。关系、技能、喜好、身份、状态明确变化时复用同人物同字段的稳定 key 和已有 ID，只记录最新确认值；key 不包含等级或当前值，不拆出矛盾的重复字段。知识以知情者为 entity，不能把读者知道的秘密写成角色已知。临时状态标 temporary 和失效条件，长期事实标 permanent。遵守现有输出预算，优先重要人物和变化，不回显整张资料表。`;
+
+export const ADVANCED_AGGREGATION_RULES = `
+【复杂进阶总结（可选）】
+沿用原 Checkpoint / Long Memory 栏目和输出预算，分别保留重要人物的身份、关系、稳定性格、明确喜好与穿搭偏好、秘密与认知差、重要经历、技能和当前状态，不将多个重要 NPC 长期合成一句话。
+只整理已有证据，禁止从单次行为推测稳定性格或喜好。人物久未登场不等于失效，继承仍长期有效的既有事实；新证据明确变化才更新同人物同字段当前版本，必要经历放在历史叙述，避免新旧矛盾并列。复用 Characters / Current State / Secrets & Knowledge 及已有 Long Facts，不增加资料表或额外注入栏目。`;

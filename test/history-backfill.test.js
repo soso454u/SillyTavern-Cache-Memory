@@ -354,7 +354,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts survive and obsolete request timeouts are ignored', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.22.13');
+    assert.equal(PLUGIN_VERSION, '1.23.0');
     assert.equal(Object.hasOwn(settings, 'timeoutMs'), false);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);

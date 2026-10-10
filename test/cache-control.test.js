@@ -151,7 +151,7 @@ test('automatic 105 floors create 21 frozen CP and segmented Long1-50/51-100, pr
         apiClient: { complete: async request => {
             requests.push(request);
             return { content: request.userContent.startsWith('body') ? `[SUMMARY]\n[Event]\n${request.userContent}`
-                : request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n- a persistent fact' : '[CHECKPOINT]\nphase state' };
+                : request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n- a persistent fact' : '[CHECKPOINT]\n[Current State]\nphase state' };
         } } });
     for (const entry of getAssistantMessages(chat)) await summarizer.summarizeEntry(entry);
     const current = store.current();
@@ -211,7 +211,7 @@ test('Long generation failure publishes the completed CP once; retry commits Lon
     const chat = Array.from({ length: 50 }, (_, index) => ({ name: 'A', mes: 'body', gen_started: String(index), send_date: String(index) }));
     for (const entry of getAssistantMessages(chat)) store.current().summaries[`m${entry.floor}`].sourceContentFingerprint = entry.contentFingerprint;
     const summarizer = new MemorySummarizer({ store, getSettings: () => settings, getChat: () => chat, apiClient: {
-        complete: async request => { if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) throw new Error('Long unavailable'); return { content: '[CHECKPOINT]\ncompleted 46-50' }; },
+        complete: async request => { if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) throw new Error('Long unavailable'); return { content: '[CHECKPOINT]\n[Current State]\ncompleted 46-50' }; },
     } });
     const count = refreshes.length;
     await assert.rejects(summarizer.generateDueAggregates(), /Long unavailable/);

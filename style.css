@@ -381,3 +381,16 @@ body.cache-memory-config-open { overflow: hidden; }
 
 .cache-memory-global-prompt > .cache-memory-field { margin-top: 14px; }
 .cache-memory-config-panel .cache-memory-tab-panel[data-settings-panel="prompts"] > details > textarea { margin-top: 6px; }
+
+.cache-memory-auto-save { color: var(--cm-teal-dark); font-size: 11px; }
+.cache-memory-auto-save[data-state="failed"] { color: #b42336; }
+.cache-memory-profile-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; margin-bottom: 10px; }
+.cache-memory-profile-controls label { flex: 1 1 180px; display: grid; gap: 4px; min-width: 0; }
+
+.cache-memory-person-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.9em; }
+.cache-memory-person-table th, .cache-memory-person-table td { padding: 4px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--SmartThemeBorderColor, #8884); }
+.cache-memory-person-table th:last-child { width: 22%; }
+.cache-memory-person-table .cache-memory-card { padding: 3px; margin: 0; }
+.cache-memory-person-table .cache-memory-tracked-form { grid-template-columns: minmax(0, 1fr); }
+
+.cache-memory-person-field { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }

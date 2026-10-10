@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.13';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.22.13';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.13';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.23.0';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.23.0';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.23.0';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -33,6 +33,7 @@ export function createEmptyStore(chatId = '') {
     return {
         version: STORE_VERSION,
         chatId: String(chatId ?? ''),
+        summaryMode: 'normal',
         summaries: {},
         checkpoints: [],
         longMemories: [],
@@ -79,6 +80,7 @@ export function normalizeStore(value, chatId = '') {
         ...retained,
         version: Math.max(STORE_VERSION, Number(store.version) || 0),
         chatId: String(chatId ?? store.chatId ?? ''),
+        summaryMode: store.summaryMode === 'advanced' ? 'advanced' : 'normal',
         summaries,
         checkpoints,
         longMemories,
@@ -195,6 +197,14 @@ export class MemoryStore {
             if (needsMigration) this.pendingMigrations.add(normalized.chatId);
         }
         return normalized;
+    }
+
+    setSummaryMode(mode) {
+        const store = this.current();
+        const next = mode === 'advanced' ? 'advanced' : 'normal';
+        if (store.summaryMode === next) return;
+        store.summaryMode = next;
+        this.persist('summary mode changed');
     }
 
     persistMigration() {
@@ -760,6 +770,7 @@ export class MemoryStore {
         const chatId = this.getChatId();
         const previous = this.current();
         const cleared = createEmptyStore(chatId);
+        cleared.summaryMode = previous.summaryMode;
         cleared.tombstones = { ...previous.tombstones };
         for (const [type, ids] of [['Summary', Object.keys(previous.summaries)], ['Checkpoint', previous.checkpoints.map(item => item.id)], ['Long Memory', previous.longMemories.map(item => item.id)], ['KEEP', Object.keys(previous.keepRegistry)], ['stateOverrides', Object.keys(previous.stateOverrides)]]) {
             for (const id of ids) cleared.tombstones[`${type}:${id}`] = { deletedAt: new Date().toISOString() };
@@ -814,6 +825,7 @@ function stableClone(value, { omitVolatile = false } = {}) {
 export function memoryContentDigest(value) {
     const store = value && typeof value === 'object' ? value : {};
     const serialized = JSON.stringify(stableClone({
+        summaryMode: store.summaryMode === 'advanced' ? 'advanced' : 'normal',
         summaries: store.summaries ?? {},
         checkpoints: [...(store.checkpoints ?? [])].sort((a, b) => String(a.id).localeCompare(String(b.id))),
         longMemories: [...(store.longMemories ?? [])].sort((a, b) => String(a.id).localeCompare(String(b.id))),
@@ -908,6 +920,7 @@ export function mergeMemoryStoresThreeWay(baseValue, localValue, remoteValue, ch
     const local = normalizeStore(structuredClone(localValue), chatId);
     const remote = normalizeStore(structuredClone(remoteValue), chatId);
     const merged = structuredClone(remote), conflicts = [];
+    merged.summaryMode = local.summaryMode !== base.summaryMode ? local.summaryMode : remote.summaryMode;
     for (const [section, type] of [['summaries', 'Summary'], ['checkpoints', 'Checkpoint'], ['longMemories', 'Long Memory'],
         ['keepRegistry', 'KEEP'], ['stateOverrides', 'stateOverrides'], ['tombstones', 'tombstones']]) {
         const list = ['checkpoints', 'longMemories'].includes(section);

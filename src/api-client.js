@@ -1,3 +1,5 @@
+export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'tokenLimitParameter', 'generationTransport']);
+
 export const MODEL_LIST_WARNING = '无法获取模型列表，请手动填写模型名称。';
 const ST_MODELS_PROXY_PATH = '/api/backends/chat-completions/status';
 const ST_GENERATE_PROXY_PATH = '/api/backends/chat-completions/generate';
@@ -301,15 +303,104 @@ export class SummaryApiClient {
         this.responseControls = new WeakMap();
         this.connectionTokens = new Map();
         this.connectionRevision = 0;
+        this.activeProfileId = null;
+    }
+
+    profileIndex() {
+        const index = parseJson(this.storage.getItem(`${this.storageKey}:profiles`));
+        if (!Array.isArray(index?.profiles) || !index.profiles.some(item => item.id === index.activeId)) return null;
+        // A different ST window may switch profiles in the same browser. Keep
+        // this client's key paired with its own currently displayed URL.
+        if (!index.profiles.some(item => item.id === this.activeProfileId)) this.activeProfileId = index.activeId;
+        return { ...index, activeId: this.activeProfileId };
+    }
+
+    profileSettings(settings = this.getSettings()) {
+        return Object.fromEntries(API_PROFILE_FIELDS.filter(key => settings[key] !== undefined).map(key => [key, settings[key]]));
+    }
+
+    listProfiles() {
+        let index = this.profileIndex();
+        if (!index) {
+            const connection = this.readConnection();
+            const id = globalThis.crypto?.randomUUID?.() ?? `profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            index = { activeId: id, profiles: [{ id, name: '默认配置' }] };
+            this.storage.setItem(`${this.storageKey}:profile:${id}`, JSON.stringify({ ...this.profileSettings(), model: connection.model || this.getSettings().model || '', key: connection.key ?? (!normalizeApiBaseUrl(this.getSettings().apiBaseUrl) ? this.storage.getItem(this.storageKey) || '' : '') }));
+            // Older versions kept one key/model per URL. Preserve those saved URLs as selectable profiles too.
+            const prefix = `${this.storageKey}:connection:`;
+            const oldKeys = Array.from({ length: this.storage.length ?? 0 }, (_, i) => this.storage.key(i)).filter(key => key?.startsWith(prefix));
+            for (const oldKey of oldKeys) {
+                let endpoint;
+                try { endpoint = decodeURIComponent(oldKey.slice(prefix.length)); } catch { continue; }
+                const old = parseJson(this.storage.getItem(oldKey));
+                if (!endpoint || endpoint === normalizeApiBaseUrl(this.getSettings().apiBaseUrl) || !old || typeof old !== 'object') continue;
+                const savedId = `${id}-${index.profiles.length}`;
+                let name; try { name = new URL(endpoint).host; } catch { name = `模型${index.profiles.length + 1}`; }
+                this.storage.setItem(`${this.storageKey}:profile:${savedId}`, JSON.stringify({ ...this.profileSettings(), apiBaseUrl: endpoint, model: String(old.model ?? ''), key: String(old.key ?? '') }));
+                index.profiles.push({ id: savedId, name });
+            }
+            this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
+            this.activeProfileId = id;
+        }
+        return index;
+    }
+
+    saveProfileSettings() {
+        if (!this.profileIndex()) return;
+        this.storage.setItem(this.connectionStorageKey(), JSON.stringify({ ...this.readConnection(), ...this.profileSettings() }));
+    }
+
+    selectProfile(id) {
+        const index = this.listProfiles();
+        if (!index.profiles.some(profile => profile.id === id)) throw new Error('接口配置不存在');
+        const saved = parseJson(this.storage.getItem(`${this.storageKey}:profile:${id}`));
+        if (!saved || typeof saved !== 'object') throw new Error('接口配置无法读取，当前连接保留');
+        index.activeId = id;
+        this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
+        this.activeProfileId = id;
+        return this.profileSettings(saved);
+    }
+
+    addProfile(name) {
+        const index = this.listProfiles();
+        const id = globalThis.crypto?.randomUUID?.() ?? `profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const label = String(name ?? '').trim();
+        if (!label) throw new Error('请填写配置名称');
+        this.storage.setItem(`${this.storageKey}:profile:${id}`, JSON.stringify({ ...this.profileSettings(), apiBaseUrl: '', model: '', key: '' }));
+        index.profiles.push({ id, name: label });
+        this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
+        return id;
+    }
+
+    renameProfile(name) {
+        const index = this.listProfiles(), label = String(name ?? '').trim();
+        if (!label) throw new Error('请填写配置名称');
+        index.profiles.find(item => item.id === index.activeId).name = label;
+        this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
+    }
+
+    deleteProfile(id) {
+        const index = this.listProfiles();
+        if (index.profiles.length <= 1) throw new Error('请至少保留一套接口配置');
+        if (!index.profiles.some(item => item.id === id)) throw new Error('接口配置不存在');
+        const nextId = index.activeId === id ? index.profiles.find(item => item.id !== id).id : index.activeId;
+        const settings = this.selectProfile(nextId);
+        index.profiles = index.profiles.filter(item => item.id !== id);
+        index.activeId = nextId;
+        this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
+        this.storage.removeItem(`${this.storageKey}:profile:${id}`);
+        return settings;
     }
 
     connectionStorageKey(apiBaseUrl = this.getSettings().apiBaseUrl) {
+        const index = this.profileIndex();
+        if (index) return `${this.storageKey}:profile:${index.activeId}`;
         return `${this.storageKey}:connection:${encodeURIComponent(normalizeApiBaseUrl(apiBaseUrl))}`;
     }
 
     readConnection(apiBaseUrl = this.getSettings().apiBaseUrl) {
         const endpoint = normalizeApiBaseUrl(apiBaseUrl);
-        if (!endpoint) return {};
+        if (!endpoint && !this.profileIndex()) return {};
         const saved = parseJson(this.storage.getItem(this.connectionStorageKey(endpoint)));
         if (saved && typeof saved === 'object' && !Array.isArray(saved)) return saved;
         const legacy = this.storage.getItem(this.storageKey);
@@ -333,7 +424,7 @@ export class SummaryApiClient {
     }
 
     modelListIdentity() {
-        const endpoint = normalizeApiBaseUrl(this.getSettings().apiBaseUrl);
+        const endpoint = `${this.profileIndex()?.activeId ?? ''}:${normalizeApiBaseUrl(this.getSettings().apiBaseUrl)}`;
         const key = this.readConnection().key ?? '';
         let token = this.connectionTokens.get(endpoint);
         if (!token || token.key !== key) {
@@ -350,7 +441,7 @@ export class SummaryApiClient {
     async saveApiKey(value) {
         const key = String(value ?? '').trim();
         if (!key) return this.hasApiKey();
-        if (!normalizeApiBaseUrl(this.getSettings().apiBaseUrl)) return false;
+        if (!normalizeApiBaseUrl(this.getSettings().apiBaseUrl) && !this.profileIndex()) return false;
         this.storage.setItem(this.connectionStorageKey(), JSON.stringify({ ...this.readConnection(), key }));
         return true;
     }
@@ -420,8 +511,7 @@ export class SummaryApiClient {
         this.responseControls.delete(response);
     }
 
-    buildPayload(request = {}) {
-        const settings = this.getSettings();
+    buildPayload(request = {}, settings = this.getSettings()) {
         if (!settings.apiBaseUrl) throw new Error('请先填写接口地址');
         if (!settings.model) throw new Error('请先填写摘要模型');
         const { systemPrompt, userContent, maxTokens, messages, extraBody, transportMode, signal, ...compatibility } = request;
@@ -446,11 +536,11 @@ export class SummaryApiClient {
     }
 
     // Models, test and every generation share live ST headers, URL normalization and diagnostics.
-    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '', signal } = {}) {
-        const settings = this.getSettings();
+    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '', signal, connection } = {}) {
+        const settings = connection?.settings ?? { ...this.getSettings() };
         const startedAt = now();
         const stream = kind === 'completion' && payload?.stream === true;
-        const apiKey = String(apiKeyOverride || this.readConnection().key || '').trim();
+        const apiKey = String(apiKeyOverride || (connection ? connection.key : this.readConnection().key) || '').trim();
         const endpoint = kind === 'models' ? normalizeModelsUrl(settings.apiBaseUrl) : normalizeBaseUrl(settings.apiBaseUrl);
         const path = kind === 'models' ? ST_MODELS_PROXY_PATH : ST_GENERATE_PROXY_PATH;
         const secrets = [apiKey];
@@ -593,20 +683,21 @@ export class SummaryApiClient {
     }
 
     async complete(request) {
-        const payload = this.buildPayload(request);
-        const settings = this.getSettings();
+        const settings = { ...this.getSettings() };
+        const connection = { settings, key: this.readConnection().key ?? '' };
+        const payload = this.buildPayload(request, settings);
         const mode = ['auto', 'stream', 'non-stream'].includes(request.transportMode)
             ? request.transportMode
             : settings.generationTransport ?? 'auto';
         const run = async stream => {
             const attemptPayload = { ...payload, stream };
-            try { return await this.requestOpenAICompatible({ payload: attemptPayload, signal: request.signal }); }
+            try { return await this.requestOpenAICompatible({ payload: attemptPayload, signal: request.signal, connection }); }
             catch (error) {
                 // Retry only an explicit rejected parameter, preserving the selected transport and output budget.
                 if (!attemptPayload.max_tokens || !/max_tokens/.test(error.message) || !/unsupported|not supported|unknown|use.*max_completion_tokens/i.test(error.message)) throw error;
                 attemptPayload.max_completion_tokens = attemptPayload.max_tokens;
                 delete attemptPayload.max_tokens;
-                return this.requestOpenAICompatible({ payload: attemptPayload, signal: request.signal });
+                return this.requestOpenAICompatible({ payload: attemptPayload, signal: request.signal, connection });
             }
         };
         const preferStream = mode !== 'non-stream';
@@ -646,13 +737,14 @@ export class SummaryApiClient {
     }
 
     async test({ stream = true } = {}) {
-        const settings = this.getSettings();
+        const settings = { ...this.getSettings() };
+        const connection = { settings, key: this.readConnection().key ?? '' };
         // One click, one request: do not retry a paid diagnostic with other parameters.
         const payload = this.buildPayload({
             systemPrompt: 'Reply with exactly OK.', userContent: 'OK',
             maxTokens: settings.summaryMaxTokens ?? settings.maxTokens ?? 1024,
-        });
-        const { data, response, diagnostics, source } = await this.requestOpenAICompatible({ payload: { ...payload, stream } });
+        }, settings);
+        const { data, response, diagnostics, source } = await this.requestOpenAICompatible({ payload: { ...payload, stream }, connection });
         const parts = chunkParts(data);
         const content = contentText(parts.content || data?.content || data?.response).trim();
         const reasoning = parts.reasoning.trim();

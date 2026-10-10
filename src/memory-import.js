@@ -1,6 +1,6 @@
-import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.22.13';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.13';
-import { projectLongFacts } from './continuity.js?v=1.22.13';
+import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.23.0';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.23.0';
+import { projectLongFacts } from './continuity.js?v=1.23.0';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {

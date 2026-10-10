@@ -9,7 +9,7 @@ import { isUsableMemory } from '../src/continuity.js';
 import { memoryOverviewStats } from '../src/ui.js';
 import { threeWayMerge } from '../server-plugin/cache-memory-memory/index.mjs';
 
-function fixture(count = 15, complete = async () => ({ content: '[CHECKPOINT]\n[Current State]\n合成阶段内容' })) {
+function fixture(count = 15, complete = async request => ({ content: request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n合成长期事实' : '[CHECKPOINT]\n[Current State]\n合成阶段内容' })) {
     const chat = Array.from({ length: count }, (_, i) => ({ name: '合成角色', mes: `原始正文 ${i + 1}`, gen_started: `g${i}` }));
     const metadata = { cache_memory: createEmptyStore('a') };
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });

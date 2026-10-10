@@ -348,7 +348,7 @@ test('truncated model output does not replace an existing frozen summary and fai
     assert.equal(store.getSummary(entry.messageId).title, 'original');
     await assert.rejects(summarizer.generateCheckpoint(1, 1), /token 上限/);
     assert.deepEqual(summarizer.getNextCheckpointRange(), { startFloor: 1, endFloor: 1 });
-    summarizer.apiClient.complete = async () => ({ content: '[CHECKPOINT]\ncomplete' });
+    summarizer.apiClient.complete = async () => ({ content: '[CHECKPOINT]\n[Current State]\ncomplete' });
     await summarizer.generateCheckpoint(1, 1);
     assert.equal(store.current().checkpoints.length, 1);
     assert.equal(store.current().checkpoints[0].status, 'frozen');
@@ -368,7 +368,7 @@ test('automatic incremental stages feed new facts into the next state and never 
                 return { content: factCalls === 1 ? '[LONG_MEMORY]\n- 【姜梨/陆雾｜约定】十二月前去巴黎' : '[LONG_MEMORY]\n无' };
             }
             stateInputs.push(userContent);
-            return { content: '[CHECKPOINT]\n当前状态' };
+            return { content: '[CHECKPOINT]\n[Current State]\n当前状态' };
         } } });
     for (const entry of getAssistantMessages(chat)) await summarizer.summarizeEntry(entry);
     assert.equal(store.current().checkpoints.length, 2);
@@ -386,7 +386,7 @@ test('KEEP and stable facts survive 100 incremental checkpoints through floor 10
     };
     store.addLongMemory({ id: 'long-001', startFloor: 0, endFloor: 0, memoryKind: 'facts', factUpdates: [{ id: 'fact-stable', action: 'add', text: '陆雾不知道姜梨看过那封邮件' }], status: 'frozen', frozen: true });
     const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings(), getChat: () => loadedChat(store), apiClient: {
-        complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n无' : '[CHECKPOINT]\n当前普通场景状态' }),
+        complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n无' : '[CHECKPOINT]\n[Current State]\n当前普通场景状态' }),
     } });
     for (let end = 10; end <= 1000; end += 10) {
         await summarizer.generateCheckpoint(end - 9, end);

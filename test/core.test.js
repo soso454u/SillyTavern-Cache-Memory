@@ -238,7 +238,7 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
             if (userContent.startsWith('body')) {
                 return { content: `<title>T${calls}</title><characters>C</characters><event>${userContent}</event>`, status: 200 };
             }
-            return { content: `aggregate-${calls}`, status: 200 };
+            return { content: userContent.startsWith('[CHECKPOINT') ? `[LONG_MEMORY]\naggregate-${calls}` : `[CHECKPOINT]\n[Events]\naggregate-${calls}`, status: 200 };
         },
     };
     const summarizer = new MemorySummarizer({
@@ -306,7 +306,7 @@ test('changing intervals keeps checkpoint ids append-only and collision-free', a
     const settings = normalizeSettings({ checkpointInterval: 40, longMemoryInterval: 80 });
     const summarizer = new MemorySummarizer({
         store: fixture.store,
-        apiClient: { complete: async () => ({ content: 'new checkpoint' }) },
+        apiClient: { complete: async () => ({ content: '[CHECKPOINT]\n[Current State]\nnew checkpoint' }) },
         getSettings: () => settings,
         getChat: () => chat,
     });
