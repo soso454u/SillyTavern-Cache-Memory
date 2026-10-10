@@ -133,13 +133,15 @@ test('local edits during preflight stop manual upload and keep the newest local 
     assert.equal(f.p.pending.get(f.id).snapshot.summaries[f.entries[0].messageId].event, '读取期间最新编辑');
 });
 
-test('manual upload without atomic version support preserves conflict instead of blind native overwrite', async () => {
-    const f = fixture({ authority: false });
+test('manual upload on ordinary ST backs up and overwrites the exact local choice, then verifies', async () => {
+    const f = fixture({ authority: false }), before = clone(f.record.store);
+    const desired = memoryContentDigest(f.metadata.cache_memory);
     f.p.holdConflict(f.id, f.metadata.cache_memory, f.record.store);
     const status = await f.p.uploadCurrentChat(f.id);
-    assert.equal(status.state, 'conflict'); assert.match(status.detail, /不支持原子版本校验/); assert.equal(f.writes.length, 0);
-    f.record.store = clone(f.metadata.cache_memory);
-    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'confirmed'); assert.equal(f.writes.length, 0);
+    assert.equal(status.state, 'confirmed'); assert.match(status.detail, /无原子版本校验/);
+    assert.equal(f.writes.length, 1); assert.equal(memoryContentDigest(f.record.store), desired);
+    assert.deepEqual(f.p.uploadBackup().store, before); assert.equal(f.p.pending.size, 0);
+    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'confirmed'); assert.equal(f.writes.length, 1);
 });
 
 test('ordinary automatic saving still protects same-ID conflicts without creating an upload backup', async () => {
@@ -256,4 +258,16 @@ test('foreign native chat identity blocks manual upload and missing authority fa
     const f = fixture(); f.p.authoritativeAvailable = () => false;
     f.p.readRemoteStore = async () => createEmptyStore('other-chat');
     assert.notEqual((await f.p.uploadCurrentChat(f.id)).state, 'confirmed'); assert.equal(f.writes.length, 0);
+});
+
+
+test('the local conflict button uses the exact manual upload without another choice dialog on ordinary ST', async () => {
+    const f = fixture({ authority: false }); let confirms = 0;
+    const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { store: f.store, persistence: f.p, getChat: () => f.chat,
+        showPluginDialog: async () => { confirms++; return {}; }, renderMemorySaveState() {}, renderManager() {}, renderMessageMemories() {} });
+    f.p.holdConflict(f.id, f.metadata.cache_memory, f.record.store);
+    const digest = memoryContentDigest(f.metadata.cache_memory);
+    await ui.handleManagerClick({ target: { closest: selector => selector === '[data-memory-conflict="local"]' ? {} : null } });
+    assert.equal(confirms, 0); assert.equal(f.p.getState().state, 'confirmed'); assert.equal(f.writes.length, 1);
+    assert.equal(memoryContentDigest(f.record.store), digest); assert.ok(f.p.uploadBackup());
 });

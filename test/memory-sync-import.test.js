@@ -183,15 +183,15 @@ test('temporarily unloaded sources change diagnostics without causing automatic 
     assert.equal(saves, 0); assert.equal(f.store.current().summaries.m1.event, 'summary 1');
 });
 
-for (const authority of [false, true]) test(`reload adopts last saved server memory over old local edits without merging or uploading (authority=${authority})`, async () => {
+for (const authority of [false, true]) test(`reload preserves genuine pending edits and reports independent same-ID server edits (authority=${authority})`, async () => {
     const f = fixture(authority, 1);
     f.metadata.cache_memory.summaries.m1.event = 'local unsaved version';
     f.p.enqueue(f.metadata.cache_memory);
     f.remote = makeStore(2); f.remote.summaries.m1.event = 'latest saved server version';
-    assert.equal((await f.p.loadLatest('a')).state, 'confirmed');
-    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'latest saved server version');
-    assert.ok(f.metadata.cache_memory.summaries.m2);
-    assert.equal(f.p.pending.size, 0); assert.equal(f.p.conflicts.size, 0); assert.equal(f.writes, 0);
+    assert.equal((await f.p.loadLatest('a')).state, 'conflict');
+    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'local unsaved version');
+    assert.ok(f.p.conflictBundle().remote.summaries.m2);
+    assert.equal(f.p.pending.size, 1); assert.equal(f.p.conflicts.size, 1); assert.equal(f.writes, 0);
 });
 
 test('a new authority migrates existing native server memory instead of replacing it with an empty record', async () => {

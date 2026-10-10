@@ -1,9 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.2';
-import { buildInjection } from './injection.js?v=1.24.2';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.24.2';
-import { fnv1a } from './utils.js?v=1.24.2';
-import { stripStructuredSections } from './summary-format.js?v=1.24.2';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.2';
+import { INJECTION_MODES } from './defaults.js?v=1.24.3';
+import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.3';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.24.3';
+import { fnv1a } from './utils.js?v=1.24.3';
+import { stripStructuredSections } from './summary-format.js?v=1.24.3';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.3';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -80,6 +80,7 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
                 const text = omitRepeatedStateLines(block.text, currentLines, { omit: !published.has(block.id) });
                 return text === block.text ? block : { ...block, text };
             });
+            blocks = compactInjectionBlocks(blocks, sourceStore, { published, compactPublished: rebuild || reason === 'new long memory' });
             value = blocks.length ? `<CACHE_MEMORY>\n冻结块按提交顺序排列。后续有证据的事实更新优先；旧记录保留历史意义，已解决事项不要恢复为未解决。\n\n${blocks.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
         }
     }

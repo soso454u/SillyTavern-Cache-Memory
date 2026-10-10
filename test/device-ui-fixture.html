@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0}#results{white-space:pre-wrap;overflow-wrap:anywhere}</style>
+<div id="extensions_settings2"></div><div id="chat"><div class="mes" mesid="0"><div class="mes_text">合成正文</div></div></div><pre id="results">正在验证</pre>
+<script type="module">
+import { CacheMemoryUI, memoryOverviewStats } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { MemorySummarizer } from '../src/summarizer.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { getAssistantMessages } from '../src/utils.js';
+let settings = normalizeSettings();
+const chat = Array.from({length: 207}, (_, i) => ({name: '合成角色', mes: `合成正文${i}`, gen_started: `g${i}`}));
+const metadata = {};
+const store = new MemoryStore({getChatId: () => 'ui-synthetic', getMetadata: () => metadata, saveMetadata() {}});
+for (const entry of getAssistantMessages(chat)) store.current().summaries[entry.messageId] = {messageId: entry.messageId, floor: entry.floor, event: `合成事件${entry.floor}`, frozen: true, status: 'frozen', sourceFingerprint: entry.fingerprint, sourceContentFingerprint: entry.contentFingerprint};
+for (let n = 0; n < 4; n++) store.current().longMemories.push({id: `long-${n + 4}`, startFloor: n * 50 + 1, endFloor: n * 50 + 50, content: `完整合成长记忆${n}`, frozen: true, status: 'frozen', sourceReplaced: true});
+const apiClient = {hasApiKey: () => false, complete() {throw Error('禁止模型请求');}};
+const summarizer = new MemorySummarizer({store, apiClient, getChat: () => chat, getSettings: () => settings});
+const ui = window.ui = new CacheMemoryUI({store, summarizer, apiClient, getChat: () => chat, getSettings: () => settings, updateSettings: patch => settings = normalizeSettings({...settings,...patch}), persistSettings: async () => {}});
+ui.mountSettings(); ui.bindChatActions(); ui.openManager();
+const results = window.results = [];
+const assert = (name, pass) => {results.push({name, pass: !!pass}); if (!pass) throw Error(name);};
+const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+try {
+ await settle();
+ assert('概览包含上传导入与补全长期记忆', ui.manager.querySelector('[data-manager-overview-only]').getClientRects().length && ui.manager.querySelector('[data-fill-long-memories]'));
+ assert('四条冻结记录不是缺失，不产生模型请求', summarizer.getMissingMemoryPlan({onlyLong:true}).longMemories.length === 0 && ui.manager.querySelector('[data-fill-long-memories]').disabled && memoryOverviewStats(store.current(), getAssistantMessages(chat), settings).longMemories.actual === 4);
+ let renders = 0; const render = ui.renderManager.bind(ui); ui.renderManager = () => {renders++; render();};
+ for(let i=0;i<10;i++) ui.manager.querySelector('[data-manager-view="long"]').click();
+ await settle();
+ assert('连续点击同页只重建一次', renders === 1);
+ assert('长期记忆页隐藏公共工具和诊断且只保留四条原记录', !ui.manager.querySelector('[data-manager-overview-only]').getClientRects().length && ui.manager.querySelectorAll('[data-memory-type="long"]').length === 4 && !ui.manager.querySelector('[data-fill-long-memories]'));
+ for (const view of ['summaries','facts','keeps','threads','states','checkpoints']) {ui.manager.querySelector(`[data-manager-view="${view}"]`).click();await settle();assert(`${view} 隐藏公共工具`, !ui.manager.querySelector('[data-manager-overview-only]').getClientRects().length);}
+ let messagePasses=0; const messageRender=ui.renderMessageMemories.bind(ui);ui.renderMessageMemories=()=>{messagePasses++;messageRender();};
+ const text=document.querySelector('.mes_text');for(let i=0;i<100;i++)text.append(document.createTextNode('流式Token'));
+ await settle();assert('一百个流式文字变更不会全量重绘记忆',messagePasses===0);
+ for(let i=0;i<30;i++)window.visualViewport?.dispatchEvent(new Event('scroll'));
+ await settle(); assert('滚动后窗口仍可操作', !ui.config.hidden);
+ ui.manager.querySelector('[data-manager-view="overview"]').click();await settle();assert('回到概览可见工具与补全入口',ui.manager.querySelector('[data-manager-overview-only]').getClientRects().length&&ui.manager.querySelector('[data-fill-long-memories]'));
+ window.fixtureReady=true;
+ document.getElementById('results').textContent=JSON.stringify(results,null,2);
+} catch(error) {window.fixtureError=error.stack;document.getElementById('results').textContent=error.stack;}
+</script>

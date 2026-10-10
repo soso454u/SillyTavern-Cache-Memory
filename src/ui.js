@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.2';
-import { generationPrompt } from './generation-prompts.js?v=1.24.2';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.2';
-import { effectiveInjectionMode } from './cache-control.js?v=1.24.2';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.2';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.2';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.2';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.2';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.2';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.2';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.2';
-import { parseFloorSummary } from './summarizer.js?v=1.24.2';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.2';
+import { applyUITheme } from './ui-theme.js?v=1.24.3';
+import { generationPrompt } from './generation-prompts.js?v=1.24.3';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.3';
+import { effectiveInjectionMode } from './cache-control.js?v=1.24.3';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.3';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.3';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.3';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.3';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.3';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.3';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.3';
+import { parseFloorSummary } from './summarizer.js?v=1.24.3';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.3';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.2';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.2';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.3';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.3';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -285,6 +285,7 @@ function managerPanelTemplate() {
             <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
                 <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="long">长期记忆 Long Memory</button>
             </nav>
+            <div data-manager-overview-only>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-save-memory title="以当前本机记忆为准上传，覆盖前备份服务器原数据">上传记忆到服务器</button>
                 <button type="button" class="menu_button" data-read-server>从服务器恢复记忆</button>
@@ -313,6 +314,7 @@ function managerPanelTemplate() {
             <div data-conflict-details></div>
             </details>
             <div class="cache-memory-save-state" data-memory-save-box data-state="unknown"><strong>记忆保存状态：</strong><span data-memory-save-status>状态未知</span></div>
+            </div>
             <div class="cache-memory-manager-content" data-manager-content></div>
         </section>`;
 }
@@ -512,7 +514,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.2', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.3', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -647,14 +649,21 @@ export class CacheMemoryUI {
             for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) edge.addEventListener(name, stop, { signal: this.controller.signal });
         }
         const resize = () => {
+            if (overlay.hidden || !overlay.isConnected) return;
             reset();
             const b = limits();
             if (width !== null) { width = Math.min(width, b.right - b.left); panel.style.width = `${width}px`; }
             if (height !== null) { height = Math.min(height, b.bottom - b.top); panel.style.height = `${height}px`; }
         };
-        root.addEventListener('resize', resize, { signal: this.controller.signal });
-        root.visualViewport?.addEventListener('resize', resize, { signal: this.controller.signal });
-        root.visualViewport?.addEventListener('scroll', resize, { signal: this.controller.signal });
+        let viewportFrame = null;
+        const queueResize = () => {
+            if (overlay.hidden || viewportFrame !== null) return;
+            viewportFrame = root.requestAnimationFrame(() => { viewportFrame = null; resize(); });
+        };
+        root.addEventListener('resize', queueResize, { signal: this.controller.signal });
+        root.visualViewport?.addEventListener('resize', queueResize, { signal: this.controller.signal });
+        root.visualViewport?.addEventListener('scroll', queueResize, { passive: true, signal: this.controller.signal });
+        this.controller.signal.addEventListener('abort', () => { if (viewportFrame !== null) root.cancelAnimationFrame(viewportFrame); }, { once: true });
         this.controller.signal.addEventListener('abort', stop, { once: true });
         return reset;
     }
@@ -1309,7 +1318,13 @@ export class CacheMemoryUI {
         this.chatObserver?.disconnect();
         this.observedChat = chat;
         if (!chat) return;
-        this.chatObserver ??= new this.root.MutationObserver(() => this.queueMessageRender());
+        this.chatObserver ??= new this.root.MutationObserver(records => {
+            // Token streaming and opening our details don't change message
+            // identities. Avoid hashing the entire RP history for each token.
+            if (records.some(record => record.type === 'attributes'
+                || [...record.addedNodes, ...record.removedNodes].some(node => node.nodeType === 1
+                    && (node.matches?.('.mes, .mes_text') || node.querySelector?.('.mes, .mes_text'))))) this.queueMessageRender();
+        });
         this.chatObserver.observe(chat, { childList: true, subtree: true, attributes: true, attributeFilter: ['mesid'] });
         this.queueMessageRender();
     }
@@ -1562,6 +1577,12 @@ export class CacheMemoryUI {
 
     renderManager() {
         if (this.config?.hidden || !this.manager || this.manager.hidden) return;
+        if (this.managerFrame != null) {
+            this.root.cancelAnimationFrame(this.managerFrame);
+            this.managerFrame = null;
+        }
+        const overview = this.manager.querySelector('[data-manager-overview-only]');
+        if (overview) overview.hidden = this.managerView !== 'overview';
         this.renderMemorySaveState();
         for (const tab of this.manager.querySelectorAll('[data-manager-view]')) {
             const active = tab.dataset.managerView === this.managerView;
@@ -1582,7 +1603,8 @@ export class CacheMemoryUI {
 
     renderMemorySaveState() {
         if (!this.manager) return;
-        const frozen = Object.values(this.store.current().summaries).filter(isUsableMemory).sort((a, b) => b.floor - a.floor)[0];
+        const current = this.store.current();
+        const frozen = Object.values(current.summaries).reduce((latest, item) => isUsableMemory(item) && (!latest || item.floor > latest.floor) ? item : latest, null);
         const freezeStatus = this.config?.querySelector('[data-freeze-status]');
         if (freezeStatus) { freezeStatus.hidden = !frozen || !this.config.querySelector('[data-cache-status]').hidden; freezeStatus.textContent = frozen ? `第 ${frozen.floor} 层摘要已冻结` : ''; }
         const status = this.persistence?.getState?.(this.store?.current?.().chatId) ?? { state: 'unknown', detail: '' };
@@ -1604,7 +1626,9 @@ export class CacheMemoryUI {
         const conflictActions = this.manager.querySelector('[data-memory-conflict-actions]');
         if (conflictActions) conflictActions.hidden = status.state !== 'conflict';
         const details = this.manager.querySelector('[data-conflict-details]');
-        if (details) {
+        const diagnosticState = JSON.stringify([current.chatId, status.state, status.at]);
+        if (details && this.conflictDetailState !== diagnosticState) {
+            this.conflictDetailState = diagnosticState;
             details.replaceChildren();
             const bundle = this.persistence?.conflictBundle?.(this.store.current().chatId);
             if (bundle && status.state === 'conflict') {
@@ -1612,7 +1636,7 @@ export class CacheMemoryUI {
                 for (const row of bundle.recordConflicts ?? []) if (!report.conflicts.some(item => item.type === row.type && item.id === row.id)) report.conflicts.push(row);
                 const root = this.element('details', 'cache-memory-card');
                 root.append(this.element('summary', '', `冲突差异 · ${report.conflicts.length} 个同 ID；无冲突记录可合并`));
-                root.append(this.element('p', '', '以本机/服务器为准只选择冲突 ID，保留双方其他记录。选择后重新核对服务器；原生 ST 接口无原子 CAS，无法保证严格跨设备事务。'));
+                root.append(this.element('p', '', '以本机为准会上传当前窗口的完整记忆，先备份服务器原数据；合并双方保留无冲突记录。普通 ST 接口无原子版本校验，同时写入仍有竞态风险。'));
                 for (const row of report.conflicts) {
                     const diff = this.element('details'); diff.append(this.element('summary', '', `${row.type} · ${row.id} · 来源 ${row.current?.floor || row.current?.sourceFloor || row.current?.startFloor || '?'} / ${row.incoming?.floor || row.incoming?.sourceFloor || row.incoming?.startFloor || '?'} 层`));
                     diff.append(this.element('pre', '', `本机：\n${JSON.stringify(row.current, null, 2)}\n服务器：\n${JSON.stringify(row.incoming, null, 2)}`)); root.append(diff);
@@ -1700,6 +1724,12 @@ export class CacheMemoryUI {
             const range = state.currentRange;
             quick.append(this.element('p', '', `${labels[state.status] ?? state.status} · ${state.phase ?? ''}${range ? ` 第 ${range.startFloor}–${range.endFloor} 层` : ''} · ${state.processed}/${state.total} · 已生成 ${state.created}${state.errors?.length ? `\n${state.errors.at(-1)}` : ''}`));
         }
+        const longPlan = this.summarizer.getMissingMemoryPlan?.({ onlyLong: true });
+        const longGenerate = this.element('button', 'menu_button', '生成缺失的 Long Memory');
+        longGenerate.dataset.fillLongMemories = '';
+        longGenerate.disabled = !longPlan?.longMemories.length || filling || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
+        quick.append(longGenerate);
+        if (longPlan?.longMemories.length) quick.append(this.element('p', '', `尚未生成长期记忆：${compactRanges(longPlan.longMemories.map(range => [range.startFloor, range.endFloor]))}`));
         root.append(quick, this.backfillPanel(), this.aggregationPanel());
         return root;
     }
@@ -2013,22 +2043,7 @@ export class CacheMemoryUI {
 
     renderLongMemoryPage() {
         const root = this.element('div', 'cache-memory-manager-page');
-        const overview = memoryOverviewStats(this.store.current(), getAssistantMessages(this.getChat()), this.getSettings());
-        const plan = this.summarizer.getMissingMemoryPlan({ onlyLong: true });
-        root.append(this.element('h4', '', '长期记忆 Long Memory'),
-            this.element('p', '', `已生成 / 应有：${overview.longMemories.actual} / ${overview.longMemories.expected}`),
-            this.element('p', 'cache-memory-help', `按当前分组规则，每满 ${Math.ceil(Math.max(this.getSettings().checkpointInterval, this.getSettings().longMemoryInterval) / this.getSettings().checkpointInterval) * this.getSettings().checkpointInterval} 层应有一段长期记忆。点击生成会先补齐所需的缺失摘要和阶段记忆，已有记忆保持冻结。`));
-        const actions = this.element('div', 'cache-memory-actions');
-        const generate = this.element('button', 'menu_button cache-memory-primary', '生成缺失的 Long Memory');
-        generate.dataset.fillLongMemories = '';
-        generate.disabled = !plan.longMemories.length || this.isMissingCheckpointBackfillActive() || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
-        const stop = this.element('button', 'menu_button', '安全停止');
-        stop.dataset.cancelMissingCheckpoints = ''; stop.disabled = !this.isMissingCheckpointBackfillActive();
-        actions.append(generate, stop); root.append(actions);
-        const state = this.missingCheckpointState;
-        if (state.kind === 'all') root.append(this.element('p', 'cache-memory-help', `${({ running: '正在生成', cancelling: '正在停止', completed: '本次补全完成', failed: '补全未完成', cancelled: '已停止' })[state.status] ?? ''} · ${state.phase ?? ''} · ${state.processed}/${state.total}${state.errors?.length ? `\n${state.errors.at(-1)}` : ''}`));
-        if (plan.longMemories.length) root.append(this.element('p', '', `尚未生成：${compactRanges(plan.longMemories.map(range => [range.startFloor, range.endFloor]))}`));
-        if (!this.store.current().longMemories.length) root.append(this.element('p', 'cache-memory-empty', overview.longMemories.expected ? '还没有生成 Long Memory，点击上方按钮即可补全。' : '当前楼层还未满一个长期记忆分组。'));
+        if (!this.store.current().longMemories.length) root.append(this.element('p', 'cache-memory-empty', '暂无长期记忆，可在概览补全。'));
         root.append(this.element('h4', '', '已保存的 Long Memory（点击展开查看全文）'));
         for (const memory of [...this.store.current().longMemories].sort((a, b) => b.startFloor - a.startFloor)) {
             root.append(this.foldCard({ key: `long:${memory.id}`, group: 'facts', type: 'long', id: memory.id,
@@ -2439,7 +2454,7 @@ export class CacheMemoryUI {
             downloadJson(`cache-memory-before-upload-${backup.revision}.json`, backup.store, this.doc);
             return;
         }
-        if (event.target.closest('[data-save-memory]')) {
+        if (event.target.closest('[data-save-memory]') || event.target.closest('[data-memory-conflict="local"]')) {
             if (this.uploadingMemory || this.restoringServerMemory || this.importingMemory) return;
             const chatId = this.store.current().chatId;
             const sources = () => getAssistantMessages(this.getChat()).map(({ messageId, floor, fingerprint }) => [messageId, floor, fingerprint]);
@@ -2583,7 +2598,10 @@ export class CacheMemoryUI {
             return;
         }
         const view = event.target.closest('[data-manager-view]');
-        if (view) { this.managerView = view.dataset.managerView; this.renderManager(); return; }
+        if (view) {
+            if (this.managerView === view.dataset.managerView) return;
+            this.managerView = view.dataset.managerView; this.queueManagerRender(); return;
+        }
         const filter = event.target.closest('[data-manager-filter]');
         if (filter) {
             this.managerState[filter.dataset.managerFilter] = filter.dataset.value;

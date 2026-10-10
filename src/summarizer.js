@@ -1,13 +1,13 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.2';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.2';
-import { generationPrompt } from './generation-prompts.js?v=1.24.2';
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.2';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.2';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.2';
-import { extractSummarySource } from './summary-source.js?v=1.24.2';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.2';
-import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.24.2';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.2';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.3';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.3';
+import { generationPrompt } from './generation-prompts.js?v=1.24.3';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.3';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.3';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.3';
+import { extractSummarySource } from './summary-source.js?v=1.24.3';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.3';
+import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.24.3';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.3';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -313,7 +313,10 @@ export class MemorySummarizer {
             const ranges = [];
             for (let startFloor = 1; startFloor + interval - 1 <= latestFloor; startFloor += interval) {
                 const endFloor = startFloor + interval - 1;
-                if (!items.some(item => item.startFloor === startFloor && item.endFloor === endFloor && isUsableMemory(item) && !item.sourceReplaced)) ranges.push({ startFloor, endFloor });
+                // A saved frozen aggregate is present even if a later Summary
+                // replacement marked its sources. Updating it is a separate,
+                // explicit action, not "generate missing".
+                if (!items.some(item => item.startFloor === startFloor && item.endFloor === endFloor && isUsableMemory(item))) ranges.push({ startFloor, endFloor });
             }
             return ranges;
         };

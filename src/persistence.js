@@ -1,4 +1,4 @@
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.2';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.3';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -45,7 +45,7 @@ function validateAuthoritativeRecord(record, chatId) {
 }
 
 export class MemoryPersistenceCoordinator {
-    constructor({ getChatId, getMetadata, readRemoteStore, saveMetadata, readAuthoritativeStore = null, commitAuthoritative = null, authoritativeAvailable = () => true, storage = null, onStatus = () => {}, timeoutMs = 45000 }) {
+    constructor({ getChatId, getMetadata, readRemoteStore, saveMetadata, readAuthoritativeStore = null, commitAuthoritative = null, authoritativeAvailable = () => true, storage = null, sessionStorage = null, locks = null, createJournalChannel = null, onStatus = () => {}, timeoutMs = 45000 }) {
         this.getChatId = getChatId;
         this.getMetadata = getMetadata;
         this.readRemoteStore = readRemoteStore;
@@ -57,6 +57,16 @@ export class MemoryPersistenceCoordinator {
         this.onStatus = onStatus;
         this.writerId = writerId();
         this.storageKey = typeof storage?.key === 'function' ? `${STORAGE_KEY}:${this.writerId}` : STORAGE_KEY;
+        // A tab restores its own journal after refresh, never another live tab's
+        // unsaved branch. Other journals stay intact for their owning windows.
+        this.sessionStorage = sessionStorage;
+        this.createJournalChannel = createJournalChannel;
+        if (sessionStorage) {
+            try {
+                this.storageKey = sessionStorage.getItem(STORAGE_KEY) || `${STORAGE_KEY}:${this.writerId}`;
+                sessionStorage.setItem(STORAGE_KEY, this.storageKey);
+            } catch { this.sessionStorage = null; }
+        }
         this.restoredJournals = new Map();
         this.sequence = 0;
         this.timeoutMs = timeoutMs;
@@ -72,16 +82,69 @@ export class MemoryPersistenceCoordinator {
         this.pausedSaves = new Map();
         this.replacementStores = new Map();
         this.replacementRuns = new Map();
-        this.restorePending();
+        this.journalReady = false;
+        this.ready = this.claimJournal(locks);
+    }
+
+    claimJournal(locks) {
+        this.journalReady = false;
+        const restore = () => { this.restorePending(); this.journalReady = true; };
+        if (this.sessionStorage && !locks?.request && this.createJournalChannel) return this.claimJournalByChannel();
+        if (!this.sessionStorage || !locks?.request) { restore(); return Promise.resolve(); }
+        return new Promise(resolve => {
+            // Duplicating a browser tab copies sessionStorage. A browser-local
+            // lock prevents the duplicate from inheriting the live owner's edits.
+            // This is journal ownership only, never a claim of server-side CAS.
+            locks.request(`cache-memory-journal:${this.storageKey}`, { ifAvailable: true }, async lock => {
+                if (!lock) {
+                    this.storageKey = `${STORAGE_KEY}:${this.writerId}`;
+                    try { this.sessionStorage.setItem(STORAGE_KEY, this.storageKey); } catch { /* Keep this window isolated. */ }
+                    await this.claimJournal(locks); resolve(); return;
+                }
+                restore(); resolve();
+                await new Promise(release => {
+                    this.releaseJournal = () => { this.journalLockReleased = true; release(); };
+                    this.journalLockReleased = false;
+                });
+            }).catch(() => { restore(); resolve(); });
+        });
+    }
+
+    async claimJournalByChannel() {
+        // Web Locks requires HTTPS/localhost. BroadcastChannel also works on
+        // ordinary LAN HTTP installations and detects a copied live session.
+        let channel;
+        try { channel = this.createJournalChannel('cache-memory-journal-owner-v1'); }
+        catch { this.restorePending(); this.journalReady = true; return; }
+        this.journalReady = false;
+        this.journalLockReleased = false;
+        const key = this.storageKey;
+        let occupied = false;
+        channel.onmessage = ({ data }) => {
+            if (!data || data.key !== key || data.writer === this.writerId) return;
+            if (data.type === 'probe' && (this.journalReady || this.writerId < data.writer)) {
+                channel.postMessage({ type: 'owner', key, writer: this.writerId, target: data.writer });
+            } else if (data.type === 'owner' && data.target === this.writerId) occupied = true;
+        };
+        this.releaseJournal = () => { this.journalLockReleased = true; channel.close(); };
+        channel.postMessage({ type: 'probe', key, writer: this.writerId });
+        await new Promise(resolve => setTimeout(resolve, 80));
+        if (occupied) {
+            channel.close();
+            this.storageKey = `${STORAGE_KEY}:${this.writerId}`;
+            try { this.sessionStorage.setItem(STORAGE_KEY, this.storageKey); } catch { /* Keep this window isolated. */ }
+            return this.claimJournalByChannel();
+        }
+        this.restorePending(); this.journalReady = true;
     }
 
     restorePending() {
         if (!this.storage) return;
-        const keys = new Set([STORAGE_KEY]);
+        const keys = new Set(this.sessionStorage ? [this.storageKey] : [STORAGE_KEY]);
         try {
             for (let i = 0; i < (this.storage.length ?? 0); i++) {
                 const key = this.storage.key(i);
-                if (key?.startsWith(`${STORAGE_KEY}:`)) keys.add(key);
+                if (!this.sessionStorage && key?.startsWith(`${STORAGE_KEY}:`)) keys.add(key);
             }
             const obsolete = [];
             for (let i = 0; i < (this.storage.length ?? 0); i++) {
@@ -176,6 +239,15 @@ export class MemoryPersistenceCoordinator {
         return this.readController.signal;
     }
 
+    noteReadOnlySnapshot(value) {
+        const id = String(value?.chatId ?? '');
+        if (!id || this.pending.has(id) || this.conflicts.has(id)) return;
+        const baseline = this.baselines.get(id);
+        // Keep the actual server comparison base. Source bookkeeping may change
+        // local bytes, but must not make unchanged server records look edited.
+        if (baseline) this.baselines.set(id, { ...baseline, readDigest: memoryContentDigest(value) });
+    }
+
     activate(chatId, loadedValue) {
         const id = String(chatId ?? '');
         if (!id) return null;
@@ -208,6 +280,7 @@ export class MemoryPersistenceCoordinator {
     }
 
     async sync(chatId = this.getChatId(), loadedValue = this.getMetadata().cache_memory) {
+        if (!this.journalReady) await this.ready;
         const id = String(chatId ?? '');
         if (this.conflicts.has(id)) return this.getMetadata().cache_memory;
         if (!id || !this.readAuthoritativeStore || !this.authoritativeAvailable() || String(this.getChatId() ?? '') !== id) return loadedValue;
@@ -221,8 +294,9 @@ export class MemoryPersistenceCoordinator {
             if (String(this.getChatId()) !== id || epoch !== this.epoch || readSequence !== this.readSequence) return loadedValue;
             if (this.pending.has(id) || memoryContentDigest(this.getMetadata().cache_memory) !== initialDigest) return this.getMetadata().cache_memory;
             if (!record?.store) {
-                this.baselines.set(id, { digest: memoryContentDigest(normalizeStore(loadedValue, id)), revision: 0, snapshot: clone(normalizeStore(loadedValue, id)) });
-                if (loadedValue) { this.enqueue(loadedValue, 'initial authoritative migration'); await this.flush(id); }
+                // Bootstrap the optional store from native server data, never
+                // from a possibly stale page cache.
+                await this.loadLatest(id);
                 return String(this.getChatId()) === id ? this.getMetadata().cache_memory : loadedValue;
             }
             const remote = normalizeStore(clone(record.store), id);
@@ -251,6 +325,14 @@ export class MemoryPersistenceCoordinator {
     }
 
     reconcileRead(chatId, local, remote, useBaseline = true, authoritative = false) {
+        // A loaded cache is a read baseline, not an independent edit. In
+        // particular, absent records are not additions to a newer server copy.
+        const known = this.baselines.get(chatId);
+        if (!this.pending.has(chatId) && memoryContentDigest(local) === (known?.readDigest ?? known?.digest)) {
+            this.getMetadata().cache_memory = clone(remote);
+            this.baselines.set(chatId, { digest: memoryContentDigest(remote), revision: remote.sync.revision, snapshot: clone(remote), authoritative });
+            return this.setState(chatId, MEMORY_SAVE_STATES.CONFIRMED, '已采用服务器最新记忆');
+        }
         const baseline = useBaseline ? this.baselines.get(chatId)?.snapshot : null;
         const result = mergeMemoryStoresSafely(baseline, local, remote, chatId);
         if (result.conflicts.length) return this.holdConflict(chatId, local, remote, result.conflicts);
@@ -271,6 +353,7 @@ export class MemoryPersistenceCoordinator {
     }
 
     async verify(chatId = this.getChatId()) {
+        if (!this.journalReady) await this.ready;
         const id = String(chatId ?? '');
         if (!id || this.conflicts.has(id)) return this.getState(id);
         if (this.readAuthoritativeStore && this.authoritativeAvailable()) return this.sync(id, this.getMetadata().cache_memory).then(() => this.getState(id));
@@ -341,7 +424,12 @@ export class MemoryPersistenceCoordinator {
     }
 
     async loadLatest(chatId = this.getChatId()) {
+        if (!this.journalReady) await this.ready;
         const id = String(chatId ?? ''), epoch = this.epoch;
+        // Loading is not an explicit server-over-local decision. Preserve real
+        // pending edits and reconcile them through the normal save queue.
+        if (this.conflicts.has(id)) return this.getState(id);
+        if (this.pending.has(id)) return this.flush(id);
         const resume = this.pauseSaves(id);
         let migrate = false;
         try {
@@ -384,6 +472,7 @@ export class MemoryPersistenceCoordinator {
     }
 
     enqueue(value, reason = 'memory changed') {
+        if (!this.journalReady) return this.ready.then(() => this.enqueue(value, reason));
         let snapshot = normalizeStore(clone(value), value?.chatId || this.getChatId());
         const chatId = String(snapshot.chatId ?? '');
         if (!chatId) return Promise.resolve({ state: MEMORY_SAVE_STATES.UNKNOWN });
@@ -402,8 +491,8 @@ export class MemoryPersistenceCoordinator {
         const explicit = ['manual save', 'memory import', 'store migration', 'initial authoritative migration'].includes(reason);
         // Rendering/reloading the same snapshot must not restart a failed save.
         // An explicit upload remains available even when the content is unchanged.
-        if (!explicit && (previous?.digest === digest || !previous && this.getState(chatId).state === MEMORY_SAVE_STATES.CONFIRMED
-            && this.baselines.get(chatId)?.digest === digest)) return Promise.resolve(this.getState(chatId));
+        if (!explicit && (previous?.digest === digest || !previous
+            && (this.baselines.get(chatId)?.readDigest ?? this.baselines.get(chatId)?.digest) === digest)) return Promise.resolve(this.getState(chatId));
         if (this.conflicts.has(chatId)) {
             const conflict = this.conflicts.get(chatId);
             // Preserve new edits as the recoverable local branch of the conflict.
@@ -437,6 +526,7 @@ export class MemoryPersistenceCoordinator {
     }
 
     uploadCurrentChat(chatId = this.getChatId(), { assertActive = () => {} } = {}) {
+        if (!this.journalReady) return this.ready.then(() => this.uploadCurrentChat(chatId, { assertActive }));
         const id = String(chatId ?? ''), epoch = this.epoch;
         if (!id || String(this.getChatId()) !== id) return Promise.resolve({ state: MEMORY_SAVE_STATES.FAILED, detail: '聊天身份已变化，未上传' });
         if (this.pausedSaves.has(id) || this.replacementRuns.has(id)) return Promise.resolve({ state: MEMORY_SAVE_STATES.PENDING, detail: '当前聊天仍在保存或恢复，请完成后再上传' });
@@ -495,29 +585,32 @@ export class MemoryPersistenceCoordinator {
                 this.baselines.set(id, { digest, revision: remote.sync.revision, snapshot: clone(remote), authoritative: authority });
                 return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已同步：服务器读回与本机一致');
             }
-            if (!authority) return stop('当前 SillyTavern 保存接口不支持原子版本校验，无法安全覆盖；双方记忆已保留。需启用支持版本校验的记忆服务端插件');
             if (!this.persistPending()) throw new Error('本机待保存副本写入失败，未覆盖服务器');
-            const backup = { chatId: id, revision: record.revision, savedAt: new Date().toISOString(), store: clone(record.store) };
+            const backup = { chatId: id, revision: remote.sync.revision, savedAt: new Date().toISOString(), store: clone(authority ? record.store : record) };
             const key = `${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(id)}`, serialized = JSON.stringify(backup);
             if (!this.storage?.setItem || !this.storage?.getItem) throw new Error('浏览器备份存储不可用，未覆盖服务器');
             this.storage.setItem(key, serialized);
             if (this.storage.getItem(key) !== serialized) throw new Error('服务器原数据备份未通过读回校验，未覆盖服务器');
             check();
-            // Recheck the exact version immediately before the atomic commit.
-            const fresh = validateAuthoritativeRecord(await withDeadline(() => this.readAuthoritativeStore(id), this.timeoutMs), id);
-            const freshStore = normalizeRemote(clone(fresh.store), id);
-            freshStore.sync.revision = fresh.revision;
+            // Native ST has no CAS. This narrows the race window but cannot
+            // prevent another device writing between this read and the save.
+            const fresh = await withDeadline(() => authority ? this.readAuthoritativeStore(id) : this.readRemoteStore(id), this.timeoutMs);
+            if (authority) validateAuthoritativeRecord(fresh, id);
+            const freshStore = normalizeRemote(clone(authority ? fresh.store : fresh), id);
+            if (authority) freshStore.sync.revision = fresh.revision;
             check();
-            if (fresh.revision !== record.revision || memoryContentDigest(freshStore) !== memoryContentDigest(remote)) {
+            if (freshStore.sync.revision !== remote.sync.revision || memoryContentDigest(freshStore) !== memoryContentDigest(remote)) {
                 remote = freshStore;
                 return stop('上传期间服务器已被其他设备修改，已停止覆盖；双方记忆及上传前备份均已保留');
             }
             const desired = normalizeStore(clone(local), id);
-            desired.sync = { revision: record.revision + 1, writerId: this.writerId, writeId: `${this.writerId}:manual:${Date.now()}`, savedAt: new Date().toISOString() };
+            desired.sync = { revision: remote.sync.revision + 1, writerId: this.writerId, writeId: `${this.writerId}:manual:${Date.now()}`, savedAt: new Date().toISOString() };
             check();
             const write = Promise.resolve().then(() => {
                 check();
-                return this.commitAuthoritative(id, { snapshot: desired, baseSnapshot: clone(record.store), baseRevision: record.revision, writerId: this.writerId });
+                if (authority) return this.commitAuthoritative(id, { snapshot: desired, baseSnapshot: clone(record.store), baseRevision: record.revision, writerId: this.writerId });
+                this.getMetadata().cache_memory = clone(desired);
+                return this.saveMetadata(id);
             });
             this.uncertainWrites.set(id, write);
             const settled = () => { if (this.uncertainWrites.get(id) === write) this.uncertainWrites.delete(id); };
@@ -535,16 +628,18 @@ export class MemoryPersistenceCoordinator {
                 throw error;
             }
             check();
-            const committed = validateAuthoritativeRecord(result?.record, id);
-            if (!committed.store || committed.revision !== record.revision + 1 || memoryContentDigest(committed.store) !== digest) throw new Error('服务器提交结果与本机快照不一致，未确认同步');
-            const readback = validateAuthoritativeRecord(await withDeadline(() => this.readAuthoritativeStore(id), this.timeoutMs), id);
-            remote = normalizeRemote(clone(readback.store), id); remote.sync.revision = readback.revision;
+            const committed = authority ? validateAuthoritativeRecord(result?.record, id) : { revision: desired.sync.revision };
+            if (authority && (!committed.store || committed.revision !== record.revision + 1 || memoryContentDigest(committed.store) !== digest)) throw new Error('服务器提交结果与本机快照不一致，未确认同步');
+            const readback = await withDeadline(() => authority ? this.readAuthoritativeStore(id) : this.readRemoteStore(id), this.timeoutMs);
+            if (authority) validateAuthoritativeRecord(readback, id);
+            remote = normalizeRemote(clone(authority ? readback.store : readback), id);
+            if (authority) remote.sync.revision = readback.revision;
             check();
-            if (!readback.store || readback.revision !== committed.revision || memoryContentDigest(remote) !== digest) return stop('上传后服务器读回版本或内容不一致；双方记忆及上传前备份均已保留，未确认同步');
+            if ((!authority && remote.sync.writeId !== desired.sync.writeId) || remote.sync.revision !== committed.revision || memoryContentDigest(remote) !== digest) return stop('上传后服务器读回版本或内容不一致；双方记忆及上传前备份均已保留，未确认同步');
             this.getMetadata().cache_memory = clone(remote);
-            this.baselines.set(id, { digest, revision: readback.revision, snapshot: clone(remote), authoritative: true });
+            this.baselines.set(id, { digest, revision: remote.sync.revision, snapshot: clone(remote), authoritative: authority });
             this.conflicts.delete(id); this.pending.delete(id); this.persistPending();
-            return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已同步：本机记忆已上传服务器并读回确认；上传前备份可在保存与诊断中下载');
+            return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, `已同步：本机记忆已上传服务器并读回确认；上传前备份可在保存与诊断中下载${authority ? '' : '。普通接口无原子版本校验，同时写入仍有竞态风险'}`);
         } catch (error) { return stop(`上传尚未确认：${error.message}；本机副本已保留`); }
     }
 
@@ -818,6 +913,7 @@ export class MemoryPersistenceCoordinator {
     }
 
     async reread(chatId = this.getChatId()) {
+        if (!this.journalReady) await this.ready;
         const id = String(chatId ?? ''), epoch = this.epoch, sequence = ++this.readSequence;
         if (String(this.getChatId()) !== id || this.conflicts.has(id)) return this.getState(id);
         if (this.pending.has(id)) return this.flush(id);

@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.24.2';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.2';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.2';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.2';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.2';
-import { getAssistantMessages } from './src/utils.js?v=1.24.2';
-import { MemoryStore } from './src/memory-store.js?v=1.24.2';
-import { MemorySummarizer } from './src/summarizer.js?v=1.24.2';
-import { CacheMemoryUI } from './src/ui.js?v=1.24.2';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.2';
-import { MemoryServerClient } from './src/memory-server.js?v=1.24.2';
+import { SummaryApiClient } from './src/api-client.js?v=1.24.3';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.3';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.3';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.3';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.3';
+import { getAssistantMessages } from './src/utils.js?v=1.24.3';
+import { MemoryStore } from './src/memory-store.js?v=1.24.3';
+import { MemorySummarizer } from './src/summarizer.js?v=1.24.3';
+import { CacheMemoryUI } from './src/ui.js?v=1.24.3';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.3';
+import { MemoryServerClient } from './src/memory-server.js?v=1.24.3';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -38,6 +38,7 @@ const diagnostics = new CacheDiagnostics();
 let activeChatId = null;
 let onlineHandler = null;
 let refreshRevision = 0;
+let publishedMemoryValue = null;
 
 // ST chat filenames are only unique inside a character/group, not globally.
 function memoryChatId() {
@@ -121,6 +122,9 @@ const persistence = new MemoryPersistenceCoordinator({
     getChatId: memoryChatId,
     getMetadata: () => chat_metadata,
     storage: window.localStorage,
+    sessionStorage: window.sessionStorage,
+    locks: window.navigator.locks,
+    createJournalChannel: window.BroadcastChannel ? name => new window.BroadcastChannel(name) : null,
     readRemoteStore: (chatId, options) => {
         if (memoryChatId() !== chatId) throw new Error('聊天身份已变化');
         return readSillyTavernRemoteStore(getContext, getCurrentChatId(), window.fetch.bind(window), options);
@@ -139,6 +143,7 @@ const persistence = new MemoryPersistenceCoordinator({
             if (memoryChatId() !== chatId) return;
             ui?.renderMemorySaveState();
             if (status.state === 'confirmed' || status.state === 'conflict') {
+                if (status.state === 'confirmed' && store.current().injectionSnapshot?.value !== publishedMemoryValue) updateInjection('chat changed');
                 ui?.refreshSummaryMode();
                 ui?.queueManagerRender();
                 ui?.queueMessageRender();
@@ -150,7 +155,14 @@ const persistence = new MemoryPersistenceCoordinator({
 const store = new MemoryStore({
     getMetadata: () => chat_metadata,
     getChatId: memoryChatId,
-    saveMetadata: (snapshot, reason) => persistence.enqueue(snapshot, reason),
+    saveMetadata: (snapshot, reason) => {
+        // Source bookkeeping during loading/rendering is not a user memory edit.
+        // The next real mutation includes these updated links in its snapshot.
+        if (reason === 'history metadata changed' || reason === 'store migration' && !persistence.pending.has(snapshot.chatId)) {
+            persistence.noteReadOnlySnapshot(snapshot); return;
+        }
+        return persistence.enqueue(snapshot, reason);
+    },
     onChange: (changedStore, reason) => {
         queueMicrotask(() => {
             ui?.queueMessageRender();
@@ -187,13 +199,17 @@ function updateInjection(reason = 'manual edit') {
     const current = store.current();
     const sourceStore = { ...current, summaries: Object.fromEntries(store.currentSummaries(chat).map(item => [item.messageId, item])) };
     const result = refreshSnapshot(current, settings, reason, sourceStore);
-    if (!result.skipped) store.persist('injection snapshot', { notify: false });
+    const readOnly = ['chat changed', 'history metadata changed', 'store migration'].includes(reason);
+    if (readOnly) persistence.noteReadOnlySnapshot(current);
+    if (result.changed && !readOnly) store.persist('injection snapshot', { notify: false });
     const placement = injectionPublisher.publish(result.value, { forceRelocate: reason === 'manual reinject' });
+    publishedMemoryValue = result.value;
     return { ...result, placement };
 }
 
 async function refreshChatState({ serverLoaded = false } = {}) {
     if (!settings) return;
+    await persistence.ready;
     const revision = ++refreshRevision;
     let current = store.current();
     const chatId = current.chatId;
@@ -204,13 +220,8 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     store.persistMigration();
     store.syncMessages(chat);
-    if (store.hasSupersededRecords(chat)) {
-        try { await persistence.commitReplacement(store, () => store.cleanupSuperseded(chat), () => {
-            if (revision !== refreshRevision || memoryChatId() !== chatId) throw Object.assign(new Error('聊天加载已改变，取消本次清理'), { code: 'CHAT_CHANGED' });
-        }); }
-        catch (error) { console.warn(LOG_PREFIX, '旧版本清理未确认，原记忆保留', error.message); }
-        if (revision !== refreshRevision || memoryChatId() !== chatId) return;
-    }
+    // Opening/reading a chat must not clean up or replace stored history.
+    // Explicit replacement operations own their existing cleanup transaction.
     const switched = chatId !== activeChatId;
     if (switched) {
         summarizer.invalidateContext();
@@ -291,6 +302,7 @@ function initialize() {
     if (initialized) return;
     if (runtimeController.signal.aborted) runtimeController = new AbortController();
     initialized = true;
+    if (persistence.journalLockReleased) persistence.ready = persistence.claimJournal(window.navigator.locks);
     loadSettings();
     ui = new CacheMemoryUI({
         getSettings: () => settings,
@@ -323,11 +335,20 @@ function initialize() {
         reconnecting = true;
         try {
             await memoryServer.probe();
-            if (activeChatId && memoryChatId() === activeChatId && persistence.pending.has(activeChatId)) await persistence.flush(activeChatId);
+            if (activeChatId && memoryChatId() === activeChatId) await persistence.verify(activeChatId);
         } catch (error) { console.warn(LOG_PREFIX, error); }
         finally { reconnecting = false; }
     };
     window.addEventListener('online', onlineHandler, { signal: runtimeController.signal });
+    let checkingMemory = false;
+    const checkMemory = async () => {
+        if (checkingMemory || document.visibilityState === 'hidden' || !memoryChatId()) return;
+        checkingMemory = true;
+        try { await persistence.verify(); }
+        finally { checkingMemory = false; }
+    };
+    window.addEventListener('focus', checkMemory, { signal: runtimeController.signal });
+    document.addEventListener('visibilitychange', checkMemory, { signal: runtimeController.signal });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') persistence.persistPending();
     }, { signal: runtimeController.signal });
@@ -347,6 +368,8 @@ export function onActivate() {
 
 export function onHotUnload() {
     runtimeController.abort();
+    persistence.persistPending();
+    persistence.releaseJournal?.();
     if (onlineHandler) window.removeEventListener('online', onlineHandler);
     onlineHandler = null;
     apiCacheAdapter.uninstall();
@@ -365,6 +388,7 @@ export function onHotUnload() {
     ui?.destroy();
     diagnostics.reset();
     activeChatId = null;
+    publishedMemoryValue = null;
     ui = undefined;
     pendingSwipeIndex = null;
     injectionPublisher.dispose();

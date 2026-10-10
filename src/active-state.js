@@ -1,4 +1,4 @@
-import { fnv1a } from './utils.js?v=1.24.2';
+import { fnv1a } from './utils.js?v=1.24.3';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
@@ -165,10 +165,15 @@ export function deduplicateCheckpoint(content) {
     // Remove only exact repeated entries within a section. Similar prose may
     // encode different observers or historical facts and must remain intact.
     const seen = new Set();
-    return String(content).split('\n').filter(line => {
+    const lines = String(content).split('\n');
+    return lines.filter((line, index) => {
         if (/^\s*\[[^\]\n]+\]\s*$/.test(line)) { seen.clear(); return true; }
         const key = line.replace(/^\s*(?:[-*•]|\d+[.)、])\s*/, '').replace(/\s+/g, ' ').trim();
         if (!key) return true;
+        // Identical fields under two different NPC headings are not duplicates.
+        // Keep multiline entries with their continuation/context intact too.
+        if (/^[^：:]+[：:]$/.test(key)) { seen.clear(); return true; }
+        if (lines[index + 1]?.trim() && /^\s+\S/.test(lines[index + 1]) && !/^\s*[-*•]/.test(lines[index + 1])) return true;
         if (seen.has(key)) return false;
         seen.add(key); return true;
     }).join('\n');
