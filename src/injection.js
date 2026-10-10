@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.22.8';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.22.8';
-import { stripStructuredSections } from './summary-format.js?v=1.22.8';
-import { reconcileTrackedCheckpoint } from './active-state.js?v=1.22.8';
+import { INJECTION_MODES } from './defaults.js?v=1.22.9';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.22.9';
+import { stripStructuredSections } from './summary-format.js?v=1.22.9';
+import { reconcileTrackedCheckpoint } from './active-state.js?v=1.22.9';
 function fullInjection(blocks) {
     return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
 }
