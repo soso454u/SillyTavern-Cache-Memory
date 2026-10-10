@@ -1,4 +1,4 @@
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.23.0';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.23.1';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -11,6 +11,7 @@ export const MEMORY_SAVE_STATES = Object.freeze({
 
 const STORAGE_KEY = 'cache_memory_pending_saves_v1';
 const MIGRATION_BACKUP_PREFIX = 'cache_memory_migration_backup_v1:';
+const UPLOAD_BACKUP_PREFIX = 'cache_memory_upload_backup_v1:';
 
 export function withDeadline(operation, timeoutMs = 45000) {
     let timer;
@@ -426,6 +427,125 @@ export class MemoryPersistenceCoordinator {
         this.setState(chatId, this.conflicts.has(chatId) ? MEMORY_SAVE_STATES.CONFLICT : MEMORY_SAVE_STATES.PENDING, locallyRetained ? '记忆已进入当前聊天的保存队列' : '记忆已排队，但浏览器本地待保存副本写入失败；请立即导出 JSON');
         queueMicrotask(() => this.flush(chatId));
         return Promise.resolve(this.getState(chatId));
+    }
+
+    uploadBackup(chatId = this.getChatId()) {
+        try {
+            const backup = JSON.parse(this.storage?.getItem(`${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(chatId)}`) || 'null');
+            return backup?.chatId === String(chatId) && backup.store ? backup : null;
+        } catch { return null; }
+    }
+
+    uploadCurrentChat(chatId = this.getChatId(), { assertActive = () => {} } = {}) {
+        const id = String(chatId ?? ''), epoch = this.epoch;
+        if (!id || String(this.getChatId()) !== id) return Promise.resolve({ state: MEMORY_SAVE_STATES.FAILED, detail: '聊天身份已变化，未上传' });
+        if (this.pausedSaves.has(id) || this.replacementRuns.has(id)) return Promise.resolve({ state: MEMORY_SAVE_STATES.PENDING, detail: '当前聊天仍在保存或恢复，请完成后再上传' });
+        const local = clone(this.getMetadata().cache_memory);
+        if (local?.chatId !== id) return Promise.resolve(this.setState(id, MEMORY_SAVE_STATES.FAILED, '本机记忆的聊天身份不匹配，未上传'));
+        const digest = memoryContentDigest(local);
+        const previous = this.running.get(id);
+        const resume = this.pauseSaves(id);
+        const task = Promise.resolve(previous).then(() => {
+            this.running.set(id, task);
+            return this.performManualUpload(id, epoch, local, digest, assertActive);
+        }).finally(() => {
+            if (this.running.get(id) === task) this.running.delete(id);
+            resume({ retryPending: false });
+        });
+        this.running.set(id, task);
+        return task;
+    }
+
+    async performManualUpload(id, epoch, local, digest, assertActive) {
+        let remote = null;
+        const current = () => String(this.getChatId()) === id && this.epoch === epoch;
+        const check = () => {
+            if (!current()) throw new Error('聊天已切换，已停止本次上传');
+            assertActive();
+            if (memoryContentDigest(this.getMetadata().cache_memory) !== digest) throw new Error('上传期间本机记忆发生变化，已停止本次上传');
+        };
+        const stop = detail => {
+            const retained = current() ? clone(this.getMetadata().cache_memory) : local;
+            const other = remote ?? this.conflicts.get(id)?.remote;
+            // Keep the latest local branch even if it changed during the read.
+            const entry = this.pending.get(id);
+            if (entry) { entry.snapshot = clone(retained); entry.digest = memoryContentDigest(retained); this.persistPending(); }
+            if (other) {
+                this.holdConflict(id, retained, other);
+                return this.setState(id, MEMORY_SAVE_STATES.CONFLICT, detail);
+            }
+            return this.setState(id, MEMORY_SAVE_STATES.FAILED, detail);
+        };
+        try {
+            check();
+            if (this.uncertainWrites.has(id)) throw new Error('前次保存请求尚未结束，未并发覆盖；请稍后核验');
+            // This queues a recoverable copy, but never gives automatic saves an
+            // overwrite flag. Only this one operation sends the explicit CAS.
+            await this.enqueue(local, 'manual save');
+            check();
+            this.setState(id, MEMORY_SAVE_STATES.SAVING, '正在核对聊天及服务器版本；本次上传以本机为准');
+            const authority = Boolean(this.readAuthoritativeStore && this.commitAuthoritative && this.authoritativeAvailable());
+            const record = await withDeadline(() => authority ? this.readAuthoritativeStore(id) : this.readRemoteStore(id), this.timeoutMs);
+            if (authority) validateAuthoritativeRecord(record, id);
+            remote = normalizeRemote(clone(authority ? record.store : record), id);
+            if (authority) remote.sync.revision = record.revision;
+            check();
+            if (memoryContentDigest(remote) === digest) {
+                this.conflicts.delete(id); this.pending.delete(id); this.persistPending();
+                this.baselines.set(id, { digest, revision: remote.sync.revision, snapshot: clone(remote), authoritative: authority });
+                return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已同步：服务器读回与本机一致');
+            }
+            if (!authority) return stop('当前 SillyTavern 保存接口不支持原子版本校验，无法安全覆盖；双方记忆已保留。需启用支持版本校验的记忆服务端插件');
+            if (!this.persistPending()) throw new Error('本机待保存副本写入失败，未覆盖服务器');
+            const backup = { chatId: id, revision: record.revision, savedAt: new Date().toISOString(), store: clone(record.store) };
+            const key = `${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(id)}`, serialized = JSON.stringify(backup);
+            if (!this.storage?.setItem || !this.storage?.getItem) throw new Error('浏览器备份存储不可用，未覆盖服务器');
+            this.storage.setItem(key, serialized);
+            if (this.storage.getItem(key) !== serialized) throw new Error('服务器原数据备份未通过读回校验，未覆盖服务器');
+            check();
+            // Recheck the exact version immediately before the atomic commit.
+            const fresh = validateAuthoritativeRecord(await withDeadline(() => this.readAuthoritativeStore(id), this.timeoutMs), id);
+            const freshStore = normalizeRemote(clone(fresh.store), id);
+            freshStore.sync.revision = fresh.revision;
+            check();
+            if (fresh.revision !== record.revision || memoryContentDigest(freshStore) !== memoryContentDigest(remote)) {
+                remote = freshStore;
+                return stop('上传期间服务器已被其他设备修改，已停止覆盖；双方记忆及上传前备份均已保留');
+            }
+            const desired = normalizeStore(clone(local), id);
+            desired.sync = { revision: record.revision + 1, writerId: this.writerId, writeId: `${this.writerId}:manual:${Date.now()}`, savedAt: new Date().toISOString() };
+            check();
+            const write = Promise.resolve().then(() => {
+                check();
+                return this.commitAuthoritative(id, { snapshot: desired, baseSnapshot: clone(record.store), baseRevision: record.revision, writerId: this.writerId });
+            });
+            this.uncertainWrites.set(id, write);
+            const settled = () => { if (this.uncertainWrites.get(id) === write) this.uncertainWrites.delete(id); };
+            write.then(settled, settled);
+            let result;
+            try { result = await withDeadline(() => write, this.timeoutMs); }
+            catch (error) {
+                if (error.status === 409) {
+                    if (error.data?.record) {
+                        const changed = validateAuthoritativeRecord(error.data.record, id);
+                        remote = normalizeRemote(clone(changed.store), id); remote.sync.revision = changed.revision;
+                    }
+                    return stop('服务器版本在提交前发生变化，已停止覆盖；双方记忆及上传前备份均已保留');
+                }
+                throw error;
+            }
+            check();
+            const committed = validateAuthoritativeRecord(result?.record, id);
+            if (!committed.store || committed.revision !== record.revision + 1 || memoryContentDigest(committed.store) !== digest) throw new Error('服务器提交结果与本机快照不一致，未确认同步');
+            const readback = validateAuthoritativeRecord(await withDeadline(() => this.readAuthoritativeStore(id), this.timeoutMs), id);
+            remote = normalizeRemote(clone(readback.store), id); remote.sync.revision = readback.revision;
+            check();
+            if (!readback.store || readback.revision !== committed.revision || memoryContentDigest(remote) !== digest) return stop('上传后服务器读回版本或内容不一致；双方记忆及上传前备份均已保留，未确认同步');
+            this.getMetadata().cache_memory = clone(remote);
+            this.baselines.set(id, { digest, revision: readback.revision, snapshot: clone(remote), authoritative: true });
+            this.conflicts.delete(id); this.pending.delete(id); this.persistPending();
+            return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已同步：本机记忆已上传服务器并读回确认；上传前备份可在保存与诊断中下载');
+        } catch (error) { return stop(`上传尚未确认：${error.message}；本机副本已保留`); }
     }
 
     async flush(chatId = this.getChatId()) {

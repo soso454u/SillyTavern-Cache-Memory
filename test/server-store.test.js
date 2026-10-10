@@ -64,6 +64,19 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         assert.equal(diskReadback.store.summaries.a, undefined); assert.equal(diskReadback.store.summaries.b, undefined);
         assert.ok(diskReadback.store.tombstones['Summary:a']);
         assert.equal(memoryContentDigest(diskReadback.store), memoryContentDigest(metadata.cache_memory));
+        // Exercise the actual route and on-disk CAS for one-click local priority.
+        const backups = new Map();
+        coordinator.storage = { setItem: (key, value) => backups.set(key, value), getItem: key => backups.get(key) ?? null, removeItem: key => backups.delete(key) };
+        metadata.cache_memory.summaries = { local: { messageId: 'local', floor: 1, event: 'manual local replacement', status: 'frozen' } };
+        const wanted = memoryContentDigest(metadata.cache_memory);
+        coordinator.holdConflict('synthetic-chat', metadata.cache_memory, diskReadback.store);
+        assert.equal((await coordinator.uploadCurrentChat()).state, 'confirmed');
+        const uploaded = (await request('GET')).data;
+        assert.equal(uploaded.revision, 5); assert.equal(uploaded.store.summaries.restored, undefined);
+        assert.equal(memoryContentDigest(uploaded.store), wanted);
+        assert.deepEqual(coordinator.uploadBackup().store, diskReadback.store);
+        const finalDisk = JSON.parse(await fs.readFile(path.join(directory, 'cache-memory', files[0]), 'utf8'));
+        assert.equal(memoryContentDigest(finalDisk.store), wanted);
     } finally {
         if (previous === undefined) delete process.env.SILLYTAVERN_DATA_DIR; else process.env.SILLYTAVERN_DATA_DIR = previous;
         await fs.rm(directory, { recursive: true, force: true });

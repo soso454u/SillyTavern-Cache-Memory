@@ -1,17 +1,17 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.23.0';
-import { effectiveInjectionMode } from './cache-control.js?v=1.23.0';
-import { API_PROVIDERS, DEFAULT_PROMPTS, globalPromptText, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.23.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.23.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.23.0';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.23.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.23.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.23.0';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.23.0';
-import { parseFloorSummary } from './summarizer.js?v=1.23.0';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.23.0';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.23.1';
+import { effectiveInjectionMode } from './cache-control.js?v=1.23.1';
+import { API_PROVIDERS, DEFAULT_PROMPTS, globalPromptText, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.23.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.23.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.23.1';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.23.1';
+import { buildStructuredSummary } from './summary-format.js?v=1.23.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.23.1';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.23.1';
+import { parseFloorSummary } from './summarizer.js?v=1.23.1';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.23.1';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.23.0';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.23.0';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.23.1';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.23.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -284,7 +284,7 @@ function managerPanelTemplate() {
                 <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="long">长期记忆 Long Memory</button>
             </nav>
             <div class="cache-memory-manager-toolbar">
-                <button type="button" class="menu_button" data-save-memory>上传记忆到服务器</button>
+                <button type="button" class="menu_button" data-save-memory title="以当前本机记忆为准上传，覆盖前备份服务器原数据">上传记忆到服务器</button>
                 <button type="button" class="menu_button" data-read-server>从服务器恢复记忆</button>
                 <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 下载记忆 JSON</button>
                 <button type="button" class="menu_button" data-import-merge><i class="fa-solid fa-upload"></i> 导入记忆 JSON</button>
@@ -293,6 +293,7 @@ function managerPanelTemplate() {
             <details class="cache-memory-backup"><summary>保存与诊断</summary>
             <div class="cache-memory-actions cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-validate-memory>检查记忆状态</button>
+                <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
                 <button type="button" class="menu_button" data-reinject>重新注入</button>
                 <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
             </div><p data-memory-diagnostics></p>
@@ -507,7 +508,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.23.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.23.1', import.meta.url).href;
         this.doc.head.append(this.style);
         this.root.addEventListener('resize', () => {
             for (const input of this.doc.querySelectorAll('.cache-memory-inline-editor textarea, .cache-memory-modal-panel textarea, .cache-memory-tracked-form textarea, #cache-memory-config textarea')) resizeMemoryTextarea(input);
@@ -1510,6 +1511,10 @@ export class CacheMemoryUI {
             output.textContent = `${labels[status.state] ?? '状态未知'}${status.detail ? ` · ${status.detail}` : ''}`;
             output.title = status.at ? `最后更新：${formatDate(status.at)}` : '';
         }
+        const upload = this.manager.querySelector('[data-save-memory]');
+        if (upload) upload.disabled = Boolean(this.uploadingMemory || this.restoringServerMemory || this.importingMemory);
+        const backup = this.manager.querySelector('[data-upload-backup]');
+        if (backup) backup.hidden = !this.persistence?.uploadBackup?.(this.store.current().chatId);
         const conflictActions = this.manager.querySelector('[data-memory-conflict-actions]');
         if (conflictActions) conflictActions.hidden = status.state !== 'conflict';
         const details = this.manager.querySelector('[data-conflict-details]');
@@ -2288,7 +2293,7 @@ export class CacheMemoryUI {
         if (event.target.closest('[data-fill-long-memories]')) return this.startMissingMemoryBackfill({ onlyLong: true });
         if (event.target.closest('[data-fill-all-memories]')) return this.startMissingMemoryBackfill();
         if (event.target.closest('[data-read-server]')) {
-            if (this.restoringServerMemory) return;
+            if (this.restoringServerMemory || this.uploadingMemory) return;
             if (this.importingMemory || this.isMissingCheckpointBackfillActive() || this.backfill?.active
                 || this.summarizer.inFlight?.size || this.summarizer.pendingSummaries?.size) throw new Error('请先停止正在进行的记忆生成或导入，再从服务器恢复');
             const id = this.store.current().chatId, epoch = this.persistence.epoch;
@@ -2342,15 +2347,36 @@ export class CacheMemoryUI {
             this.renderManager();
             return;
         }
+        if (event.target.closest('[data-upload-backup]')) {
+            const backup = this.persistence?.uploadBackup?.(this.store.current().chatId);
+            if (!backup) throw new Error('当前浏览器没有此聊天的上传前备份');
+            downloadJson(`cache-memory-before-upload-${backup.revision}.json`, backup.store, this.doc);
+            return;
+        }
         if (event.target.closest('[data-save-memory]')) {
-            if (this.restoringServerMemory) return;
+            if (this.uploadingMemory || this.restoringServerMemory || this.importingMemory) return;
             const chatId = this.store.current().chatId;
-            this.persistence?.enqueue(this.store.current(), 'manual save');
-            const status = await this.persistence?.flush(chatId);
+            const sources = () => getAssistantMessages(this.getChat()).map(({ messageId, floor, fingerprint }) => [messageId, floor, fingerprint]);
+            const expected = JSON.stringify(sources());
+            const assertActive = () => {
+                if (!chatId || this.store.current().chatId !== chatId) throw new Error('聊天身份已变化，未上传');
+                if (!sources().length || JSON.stringify(sources()) !== expected) throw new Error('当前聊天有效消息尚未加载或已发生变化，未上传');
+                for (const entry of getAssistantMessages(this.getChat())) {
+                    const record = this.store.getSummaryForEntry(entry);
+                    if (record && currentSummaryHealth(record, entry).code === 'body-mismatch') throw new Error(`第 ${entry.floor} 层记忆与当前正文不匹配，未上传`);
+                }
+            };
+            assertActive();
+            this.uploadingMemory = true;
             this.renderMemorySaveState();
-            notify(status?.state === 'confirmed' ? 'success' : 'warning', status?.state === 'confirmed'
-                ? '记忆已上传服务器并读回确认'
-                : `上传尚未确认：${status?.detail || '状态未知'}`);
+            try {
+                const status = await this.persistence.uploadCurrentChat(chatId, { assertActive });
+                if (this.store.current().chatId !== chatId) return;
+                this.renderManager(); this.renderMessageMemories();
+                notify(status.state === 'confirmed' ? 'success' : 'warning', status.state === 'confirmed'
+                    ? '已同步：记忆已上传服务器并读回确认'
+                    : (status.detail || '上传尚未确认：状态未知'));
+            } finally { this.uploadingMemory = false; this.renderMemorySaveState(); }
             return;
         }
         if (event.target.closest('[data-import-merge]')) {
@@ -2720,7 +2746,7 @@ export class CacheMemoryUI {
 
     async importMergeFile(event) {
         const file = event.target.files?.[0]; event.target.value = '';
-        if (!file || this.importingMemory || this.restoringServerMemory) return;
+        if (!file || this.importingMemory || this.restoringServerMemory || this.uploadingMemory) return;
         this.importingMemory = true;
         const chatId = this.store.current().chatId, epoch = this.persistence?.epoch;
         const active = () => this.store.current().chatId === chatId && this.persistence?.epoch === epoch;

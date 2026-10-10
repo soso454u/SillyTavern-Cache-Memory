@@ -121,7 +121,7 @@ test('the ordinary toolbar exposes download and import without any recovery-copy
     const recovery = html.indexOf('<details class="cache-memory-backup"', start);
     const ordinary = html.slice(start, recovery);
     assert.match(ordinary, /下载记忆 JSON/); assert.match(ordinary, /导入记忆 JSON/);
-    assert.match(ordinary, /data-save-memory>上传记忆到服务器/);
+    assert.match(ordinary, /data-save-memory[^>]*>上传记忆到服务器/);
     assert.match(ordinary, /data-read-server>从服务器恢复记忆/);
     assert.doesNotMatch(ordinary, /data-export-recovery|data-memory-conflict/);
     assert.doesNotMatch(html, /恢复副本|data-export-recovery/);

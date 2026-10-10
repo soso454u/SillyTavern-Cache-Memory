@@ -1,5 +1,5 @@
-import { parseStructuredSummary } from './summary-format.js?v=1.23.0';
-import { readSection } from './continuity.js?v=1.23.0';
+import { parseStructuredSummary } from './summary-format.js?v=1.23.1';
+import { readSection } from './continuity.js?v=1.23.1';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
 const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
