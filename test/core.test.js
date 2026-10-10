@@ -469,7 +469,7 @@ test('model listing uses the SillyTavern proxy first without a browser cross-ori
     }
 });
 
-test('connection test switches to max_completion_tokens when max_tokens is explicitly rejected', async () => {
+test('normal generation switches to max_completion_tokens when max_tokens is explicitly rejected', async () => {
     const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
     const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x' });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
@@ -487,13 +487,13 @@ test('connection test switches to max_completion_tokens when max_tokens is expli
     };
     globalThis.fetch = async () => assert.fail('browser must not request a third-party API');
     try {
-        const result = await client.test();
-        assert.equal(result.ok, true);
+        const result = await client.complete({ userContent: 'OK', maxTokens: settings.summaryMaxTokens });
+        assert.equal(result.content, 'OK');
         assert.equal(requests[0].url, '/api/backends/chat-completions/generate');
-        assert.equal(requests[0].payload.max_tokens, 16);
+        assert.equal(requests[0].payload.max_tokens, settings.summaryMaxTokens);
         assert.equal(requests[0].payload.messages.at(-1).content, 'OK');
         assert.equal(requests[0].payload.stream, true);
-        assert.equal(requests[1].payload.max_completion_tokens, 16);
+        assert.equal(requests[1].payload.max_completion_tokens, settings.summaryMaxTokens);
         assert.equal('max_tokens' in requests[1].payload, false);
         assert.equal(requests[1].payload.temperature, settings.temperature);
     } finally {

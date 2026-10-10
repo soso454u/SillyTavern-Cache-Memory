@@ -33,7 +33,14 @@ try {
     widget().querySelector('summary').click(); await settle();
     widget().querySelector('[data-memory-action=edit]').click();
     assert('楼层下直接编辑九个字段，无管理窗口', widget().querySelectorAll('[data-edit-field]').length === 9 && ui.config.hidden);
+    await settle();
+    assert('标题日期地点保持单行输入，短内容编辑框紧凑', ['title', 'storyTime', 'location'].every(key => widget().querySelector(`[data-edit-field=${key}]`).tagName === 'INPUT') && widget().querySelector('[data-edit-field=characters]').getBoundingClientRect().height <= 48);
     let field = widget().querySelector('[data-edit-field=event]');
+    const longDraft = '逐行完整内容，不截断。\n'.repeat(100);
+    field.value = longDraft; field.dispatchEvent(new Event('input', { bubbles: true })); await settle();
+    assert('长内容有界滚动，完整草稿保留', field.getBoundingClientRect().height <= Math.min(240, innerHeight * 0.35) + 1 && field.scrollHeight > field.clientHeight && field.value === longDraft);
+    field.value = '短内容'; field.dispatchEvent(new Event('input', { bubbles: true })); await settle();
+    assert('删除长内容后恢复紧凑高度', field.getBoundingClientRect().height <= 48);
     field.value = '重绘后保留的合成草稿'; field.dispatchEvent(new Event('input', { bubbles: true })); field.focus();
     ui.renderMessageMemories();
     assert('普通刷新保留输入节点、焦点和草稿', widget().querySelector('[data-edit-field=event]') === field && document.activeElement === field);

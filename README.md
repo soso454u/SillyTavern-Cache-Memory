@@ -2,7 +2,7 @@
 
 面向长篇 RP 的追加式剧情记忆扩展。正常 assistant 回复完成后，通过独立 OpenAI-compatible 接口生成楼层摘要，并维护 Checkpoint、Long Memory 和 KEEP。历史记录保留为冻结快照。
 
-当前版本 **v1.22.12**。连接测试沿用正常生成的 Temperature / Thinking 设置；API Key 输入结束自动保存在当前浏览器，接口地址之间分别保存 Key 和模型。填好地址与 Key 自动读取模型列表，仍可手动刷新或填写。提示词顶部新增可折叠的全局提示词，支持空白、用户指定的默认破限、自定义，统一用于三种记忆整理请求。长期记忆的已有栏目分别用中文卡片显示和编辑。每层记忆入口居中、无箭头、跟随酒馆主题，可点击展开/收起；摘要直接在消息下方编辑，宿主重绘后恢复入口、展开状态和草稿。原存储、注入位置、Token 预算、Strict Cache 和 Claude 缓存机制保留。
+当前版本 **v1.22.13**。本次修复连接测试的 SSE / JSON 自动识别、思考输出截断提示，并移除模型请求的插件超时限制和超时设置；各处编辑框改为紧凑自适应高度，长内容可滚动。连接测试沿用正常生成的 Temperature / Thinking 设置；API Key 输入结束自动保存在当前浏览器，接口地址之间分别保存 Key 和模型。填好地址与 Key 自动读取模型列表，仍可手动刷新或填写。提示词顶部新增可折叠的全局提示词，支持空白、用户指定的默认破限、自定义，统一用于三种记忆整理请求。长期记忆的已有栏目分别用中文卡片显示和编辑。每层记忆入口居中、无箭头、跟随酒馆主题，可点击展开/收起；摘要直接在消息下方编辑，宿主重绘后恢复入口、展开状态和草稿。原存储、注入位置、Token 预算、Strict Cache 和 Claude 缓存机制保留。
 
 v1.22.10：修复“新手任务：名称”与裸任务名、属性名与其“/红字数值”显示别名未归并导致的旧状态回流；已完成、失败、取消事项不因后续自动进度恢复活跃。只读投影可继承冻结 Long Memory 中原格式明确的已结束事项，补足旧 Summary 无法验证时的结算依据；保留手动纠正与更直接的 Summary 结算结果。重新注入应用同一投影，不重生成或改写历史记录。KEEP 仅精确去重，含独有因果或人物认知差的相似条目保留。
 
@@ -117,13 +117,13 @@ v1.19.0 增加独立的服务端权威记忆库。每个已认证 ST 用户和�
 
 Summary、Checkpoint 与 Long Memory 统一通过 SillyTavern 同源后端的 `POST /api/backends/chat-completions/generate` 调用 OpenAI-compatible 接口。v1.7.0 新增“自动／流式／非流式”三种生成传输模式；默认自动模式优先 `stream:true`，Ark Coding Plan 地址 `https://ark.cn-beijing.volces.com/api/coding/v3` 保持原样并优先流式。
 
-SSE 响应按 `text/event-stream` 读取，通过 `ReadableStream.getReader()` 与 `TextDecoder` 逐块解析 `data:` 事件，直到 `[DONE]`。普通正文从 `choices[0].delta.content` 拼接；`reasoning_content`、`reasoning` 与 `thinking` 可单独累计但不会代替摘要正文。传输结束后才把完整正文交给现有 Summary／Checkpoint／Long Memory 解析器，界面不会逐字刷新。
+响应根据正文自动识别 SSE 或 JSON，不只依赖 `Content-Type`；SSE 通过 `ReadableStream.getReader()` 与 `TextDecoder` 逐块解析 `data:` 事件，直到 `[DONE]`。普通正文从 `choices[0].delta.content` 拼接；`reasoning_content`、`reasoning` 与 `thinking` 可单独累计但不会代替摘要正文。传输结束后才把完整正文交给现有 Summary／Checkpoint／Long Memory 解析器，界面不会逐字刷新。
 
 自动模式仅在 400／404／405／406／415／422 响应明确说明 stream 不受支持时，额外尝试一次 `stream:false`。504、请求超时或含义不明确的 4xx 不会降级为非流式。模型列表仍使用普通 JSON 请求。
 
 控制台的脱敏传输诊断记录：ST 后端传输、stream 值、模型、输出上限参数、temperature、消息数、系统／用户文本字符数、HTTP Content-Type、TTFB、TTFC 和总耗时。日志不记录 prompt 正文、API Key、CSRF 值或请求头值。
 
-模型接口页提供“极速流式测试”和“非流式诊断测试”。两者都要求模型严格回复 `OK`，输出上限为 16 tokens，并展示 HTTP、响应类型、首包时间、首有效 SSE chunk、总耗时和最终文本，便于在同一部署环境中做真实对照。
+模型接口页提供“极速流式测试”和“非流式诊断测试”。两者都要求模型严格回复 `OK`，使用现有的小总结 token 上限，沿用 Temperature / Thinking 设置；每次点击只请求一次，思考输出被截断时显示连接成功及警告，并展示 HTTP、响应类型、首包时间、首有效 SSE chunk、总耗时和最终文本，便于在同一部署环境中做真实对照。
 
 ## 手动总结与历史补齐
 
@@ -137,7 +137,7 @@ SSE 响应按 `text/event-stream` 读取，通过 `ReadableStream.getReader()` �
 - 批次结束或取消后，对已成功补齐的摘要统一检查一次 Checkpoint／Long Memory。切换聊天或卸载时取消批次，迟到的成功与失败响应都不会写入新聊天。
 - 补齐只写插件元数据，聊天正文和消息顺序保持不变。严格缓存模式下，批量补齐或强制替换单层摘要不刷新主 Prompt；新的 Checkpoint／Long Memory 边界成功提交时才更新注入。强制补齐不会自动重写已经冻结的阶段记忆。
 
-默认增量 Summary／Checkpoint／Long Memory 提示词已更新，保留事实因果、人物认知差、稳定 KEEP／fact ID 和逐字证据规则。旧默认模板会迁移；自定义模板保留，也可在提示词页点击“恢复默认”。三类任务的默认输出上限分别为 1024／3072／4096 tokens，连接测试固定 16 tokens；默认软长度为 350／1000／2200 字。已有自定义值保留。默认超时为 180000 毫秒；已有 60000 毫秒配置需在“模型接口”手动调高，若仍约 60 秒收到 504，需要检查 ST 后端及服务器网关的超时。
+默认增量 Summary／Checkpoint／Long Memory 提示词已更新，保留事实因果、人物认知差、稳定 KEEP／fact ID 和逐字证据规则。旧默认模板会迁移；自定义模板保留，也可在提示词页点击“恢复默认”。三类任务的默认输出上限分别为 1024／3072／4096 tokens，连接测试使用现有的小总结 token 上限，每次点击仅发送一次请求；思考输出耗尽上限但未生成正文时提示连接成功及截断警告，不自动重试；默认软长度为 350／1000／2200 字。已有自定义值保留。模型请求不再设置插件主动超时，旧 timeoutMs 配置会忽略；手动停止与聊天切换取消仍生效，上游或 ST 代理断开时正常报错。
 
 ## 兼容基线
 

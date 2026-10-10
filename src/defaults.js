@@ -1,7 +1,7 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.12';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.22.12';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.13';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.22.13';
 
-export const PLUGIN_VERSION = '1.22.12';
+export const PLUGIN_VERSION = '1.22.13';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1452,14 +1452,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
     thinkingMode: THINKING_MODES.DISABLED,
     summaryFilterMode: SUMMARY_FILTER_MODES.DEFAULT,
     summaryFilterTags: 'content, context',
-    timeoutMs: 180000,
     globalPromptMode: 'default',
     globalPromptCustom: '',
     prompts: DEFAULT_PROMPTS,
 });
 
 export function normalizeSettings(saved = {}) {
-    const { injectionMaxTokens: _removedInjectionBudget, ...source } = saved && typeof saved === 'object' ? saved : {};
+    const { injectionMaxTokens: _removedInjectionBudget, timeoutMs: _removedRequestTimeout, ...source } = saved && typeof saved === 'object' ? saved : {};
     const memoryStrategy = source.memoryStrategy === 'legacy' ? 'legacy' : 'incremental';
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
@@ -1538,7 +1537,6 @@ export function normalizeSettings(saved = {}) {
         checkpointMaxTokens,
         longMemoryMaxTokens,
         maxTokens: longMemoryMaxTokens,
-        timeoutMs: Math.round(number(source.timeoutMs, DEFAULT_SETTINGS.timeoutMs, 1000, 300000)),
         provider,
         injectionMode,
         prompts,

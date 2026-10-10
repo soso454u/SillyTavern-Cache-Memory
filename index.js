@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.22.12';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.12';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.12';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.12';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.12';
-import { getAssistantMessages } from './src/utils.js?v=1.22.12';
-import { MemoryStore } from './src/memory-store.js?v=1.22.12';
-import { MemorySummarizer } from './src/summarizer.js?v=1.22.12';
-import { CacheMemoryUI } from './src/ui.js?v=1.22.12';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.12';
-import { MemoryServerClient } from './src/memory-server.js?v=1.22.12';
+import { SummaryApiClient } from './src/api-client.js?v=1.22.13';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.22.13';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.22.13';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.22.13';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.22.13';
+import { getAssistantMessages } from './src/utils.js?v=1.22.13';
+import { MemoryStore } from './src/memory-store.js?v=1.22.13';
+import { MemorySummarizer } from './src/summarizer.js?v=1.22.13';
+import { CacheMemoryUI } from './src/ui.js?v=1.22.13';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.22.13';
+import { MemoryServerClient } from './src/memory-server.js?v=1.22.13';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;

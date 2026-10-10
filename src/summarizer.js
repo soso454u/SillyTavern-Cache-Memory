@@ -1,11 +1,11 @@
-import { withGlobalPrompt } from './defaults.js?v=1.22.12';
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.12';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.12';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.12';
-import { extractSummarySource } from './summary-source.js?v=1.22.12';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.12';
-import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.22.12';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.12';
+import { withGlobalPrompt } from './defaults.js?v=1.22.13';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.13';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.13';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.13';
+import { extractSummarySource } from './summary-source.js?v=1.22.13';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.13';
+import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.22.13';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.13';
 
 function pad(value) {
     return String(value).padStart(3, '0');

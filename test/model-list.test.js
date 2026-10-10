@@ -96,16 +96,15 @@ test('invalid proxy response bodies show parsing or model-array errors', async t
     assert.match(formatModelListFailure(await client.listModels()), /错误: 响应中没有可识别的模型数组/);
 });
 
-test('model-list timeout and cancellation retain diagnostics and error codes', async t => {
+test('model-list upstream disconnect and manual cancellation keep distinct diagnostics', async t => {
     const { client, root } = fixture(t);
+    root.fetch = async () => { throw new DOMException('Upstream disconnected', 'AbortError'); };
+    const result = await client.listModels();
+    assert.equal(result.source, 'unavailable');
+    assert.match(result.error, /连接已中断/);
+    assert.match(formatModelListFailure(result), /状态: 未收到 HTTP 响应/);
     root.fetch = async (_url, options) => new Promise((_resolve, reject) => {
         options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
-    });
-    await assert.rejects(client.listModels(), error => {
-        assert.equal(error.code, 'REQUEST_TIMEOUT');
-        assert.match(formatModelListFailure({ diagnostics: error.diagnostics, error: error.message }), /状态: 未收到 HTTP 响应/);
-        assert.match(error.message, /请求超时/);
-        return true;
     });
     const pending = client.listModels();
     client.abortAll();

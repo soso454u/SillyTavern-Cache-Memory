@@ -1,17 +1,17 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.12';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.12';
-import { API_PROVIDERS, DEFAULT_PROMPTS, globalPromptText, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.12';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.12';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.12';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.12';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.12';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.12';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.12';
-import { parseFloorSummary } from './summarizer.js?v=1.22.12';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.12';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.13';
+import { effectiveInjectionMode } from './cache-control.js?v=1.22.13';
+import { API_PROVIDERS, DEFAULT_PROMPTS, globalPromptText, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.13';
+import { HistoryBackfill } from './history-backfill.js?v=1.22.13';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.13';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.13';
+import { buildStructuredSummary } from './summary-format.js?v=1.22.13';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.13';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.13';
+import { parseFloorSummary } from './summarizer.js?v=1.22.13';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.13';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.12';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.12';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.13';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.13';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -220,9 +220,9 @@ export function formatConnectionFailure(error) {
     const categoryLabels = {
         authentication_error: 'API Key / 鉴权错误', permission_error: '权限错误', endpoint_error: 'Endpoint / 路径错误',
         rate_limit_error: '限流', upstream_error: '上游服务异常', timeout: '请求超时',
-        proxy_error: 'SillyTavern 后端代理错误', network_error: '服务端网络错误', cancelled: '请求已取消',
+        proxy_error: 'SillyTavern 后端代理错误', network_error: '服务端网络错误', cancelled: '请求已取消', invalid_response: '响应无可用内容',
     };
-    return ['连接失败', `URL: ${d.endpoint || '未知'}`, `代理状态：${d.proxy || '未请求'}`,
+    return [error.category === 'invalid_response' ? '测试未获得有效输出' : error.category === 'cancelled' ? '测试已取消' : '连接失败', `URL: ${d.endpoint || '未知'}`, `代理状态：${d.proxy || '未请求'}`,
         `上游 HTTP：${upstream}`, `错误类型：${categoryLabels[error.category] || '未知错误'}`,
         `响应前 500 字：${d.proxyBody || '无可读取响应'}`, `错误：${error.message}`].join('\n');
 }
@@ -236,6 +236,17 @@ export function formatSummaryFailure(record) {
         : record.errorCategory === 'proxy_error' ? 'SillyTavern 后端或其网关失败'
         : upstream ? `上游 HTTP ${upstream}` : 'SillyTavern 后端返回失败（上游状态未提供）';
     return `${category}\n${record.error || '未知错误'}\n代理状态：${d.proxy || '未知'}\n上游状态：${d.upstream || '未提供'}`;
+}
+
+// Measure after mounting: one line for short content, a bounded scroll area for long text.
+export function resizeMemoryTextarea(input) {
+    const view = input.ownerDocument?.defaultView;
+    if (!view || !input.getClientRects().length) return;
+    const style = view.getComputedStyle(input);
+    const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    const limit = Math.min(240, view.innerHeight * 0.35);
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(limit, input.scrollHeight + border)}px`;
 }
 
 function settingsHost(doc) {
@@ -340,7 +351,7 @@ export function configTemplate() {
                         <div class="cache-memory-grid">
                             <label>记忆策略<select data-setting="memoryStrategy"><option value="incremental">增量状态 + 长期事实 + KEEP</option><option value="legacy">兼容旧版分段摘要</option></select></label>
                             <label>过滤策略<select data-setting="summaryFilterMode"><option value="${SUMMARY_FILTER_MODES.DEFAULT}">默认（推荐）</option><option value="${SUMMARY_FILTER_MODES.CUSTOM}">自定义标签</option><option value="${SUMMARY_FILTER_MODES.FULL}">不过滤（完整正文）</option></select></label>
-                            <label data-custom-filter>正文标签（按优先级，用逗号或换行分隔）<textarea rows="3" data-setting="summaryFilterTags" placeholder="content, context, story"></textarea></label>
+                            <label data-custom-filter>正文标签（按优先级，用逗号或换行分隔）<textarea rows="1" data-setting="summaryFilterTags" placeholder="content, context, story"></textarea></label>
                             <label>阶段记忆间隔（层）<input type="number" min="1" max="1000" data-setting="checkpointInterval"></label>
                             <label>长期记忆间隔（层）<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
                             <label>小总结目标长度<input type="number" min="50" data-setting="summaryMaxLength"></label>
@@ -366,7 +377,6 @@ export function configTemplate() {
                             <label>Checkpoint max tokens<input type="number" min="32" data-setting="checkpointMaxTokens"></label>
                             <label>Long Memory max tokens<input type="number" min="32" data-setting="longMemoryMaxTokens"></label>
                             <label>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
-                            <label>超时时间（毫秒）<input type="number" min="1000" step="1000" data-setting="timeoutMs"></label>
                             <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
                             <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
                         </div>
@@ -379,7 +389,7 @@ export function configTemplate() {
                         <small class="cache-memory-key-state" data-api-key-state></small>
                         <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。所有第三方模型请求均由 SillyTavern 同源后端转发，浏览器不会跨域直连。</small>
                         <small class="cache-memory-help">模型输入框支持手动填写和下拉选择；获取列表失败时不会影响手动填写与测试连接。</small>
-                        <small class="cache-memory-help">新配置默认超时 180000 毫秒。已有超时设置保留；若已调高但仍约 60 秒返回 504，请检查服务器前的网关超时设置。</small>
+                        <small class="cache-memory-help">模型请求由插件持续等待，支持手动停止；上游或 SillyTavern 代理断开时会报错。</small>
                         <section class="cache-memory-api-adapter">
                             <div class="cache-memory-section-heading"><div><h4>API 缓存适配器（可选）</h4><p>控制主模型请求的缓存断点；实际结构改写只在 SillyTavern 服务端完成。</p></div></div>
                             <label class="cache-memory-toggle"><span><strong>启用服务端缓存适配器</strong><small>服务端插件缺失或接口不兼容时保持原请求</small></span><input type="checkbox" data-setting="apiCacheAdapterEnabled"></label>
@@ -416,10 +426,10 @@ export function configTemplate() {
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
                         <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>分别编辑每一种记忆层使用的系统提示词；不熟悉时保持默认即可。</p></div></div>
-                        <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="12" data-global-prompt aria-label="全局提示词内容"></textarea></details>
-                        <details><summary>小总结提示词</summary><textarea rows="12" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
-                        <details><summary>阶段记忆提示词</summary><textarea rows="12" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
-                        <details><summary>长期记忆提示词</summary><textarea rows="10" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
+                        <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
+                        <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
+                        <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
+                        <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button></details>
                     </section>
                 </div>
                 <footer class="cache-memory-settings-save">
@@ -490,8 +500,11 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.12', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.22.13', import.meta.url).href;
         this.doc.head.append(this.style);
+        this.root.addEventListener('resize', () => {
+            for (const input of this.doc.querySelectorAll('.cache-memory-inline-editor textarea, .cache-memory-modal-panel textarea, .cache-memory-tracked-form textarea, #cache-memory-config textarea')) resizeMemoryTextarea(input);
+        }, { signal: this.controller.signal });
     }
 
     mountSettings() {
@@ -624,6 +637,10 @@ export class CacheMemoryUI {
         return [this.doc.getElementById(ROOT_ID), this.config].filter(Boolean);
     }
 
+    resizeTextareas(root) {
+        for (const input of root?.querySelectorAll?.('textarea') ?? []) resizeMemoryTextarea(input);
+    }
+
     populateSettings(root) {
         const settings = this.getSettings();
         const scopes = root ? [root] : this.settingsScopes();
@@ -661,6 +678,7 @@ export class CacheMemoryUI {
                 else element.value = value ?? '';
             }
         }
+        for (const scope of scopes) this.resizeTextareas(scope);
         if (this.apiCacheAdapter?.status) this.setApiCacheAdapterStatus(this.apiCacheAdapter.status);
         this.renderSettingsSaveState();
     }
@@ -778,6 +796,7 @@ export class CacheMemoryUI {
     bindSettings(root) {
         if (!root || root.dataset.cacheMemoryBound === 'true') return;
         root.dataset.cacheMemoryBound = 'true';
+        root.addEventListener('toggle', () => this.resizeTextareas(root), { capture: true, signal: this.controller.signal });
         root.addEventListener('focusout', event => {
             if (event.target.closest('[data-api-key]')) void this.saveInputApiKey(root);
         }, { signal: this.controller.signal });
@@ -807,7 +826,7 @@ export class CacheMemoryUI {
             const element = event.target.closest('[data-setting]');
             if (!element) return;
             const key = element.dataset.setting;
-            const numeric = ['checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'timeoutMs'];
+            const numeric = ['checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens'];
             const value = element.type === 'checkbox' ? element.checked : numeric.includes(key) ? Number(element.value) : element.value;
             const previousApiBaseUrl = this.getSettings().apiBaseUrl;
             if (key === 'apiBaseUrl') {
@@ -831,6 +850,7 @@ export class CacheMemoryUI {
             this.renderMessageMemories();
         }, { signal: this.controller.signal });
         root.addEventListener('input', event => {
+            if (event.target.tagName === 'TEXTAREA') resizeMemoryTextarea(event.target);
             if (event.target.closest('[data-api-key]')) {
                 this.apiFormRevision++;
                 clearTimeout(this.apiKeySaveTimer);
@@ -923,7 +943,7 @@ export class CacheMemoryUI {
                     await this.saveInputApiKey(root);
                     const result = await this.apiClient.test({ stream });
                     const firstChunk = result.ttfcMs == null ? '不适用' : `${result.ttfcMs} ms`;
-                    this.setStatus('success', `${stream ? '极速流式' : '非流式诊断'}测试成功\n模型：${result.model}\nHTTP：${result.status}\n响应类型：${result.contentType || '未提供'}\n首包时间：${result.ttfbMs} ms\n首 chunk：${firstChunk}\n总耗时：${result.totalMs} ms\n最终文本：${result.content}`);
+                    this.setStatus(result.warning ? 'warning' : 'success', `${stream ? '极速流式' : '非流式诊断'}${result.warning ? '：' + result.warning : '测试成功'}\n模型：${result.model}\nHTTP：${result.status}\n响应类型：${result.contentType || '未提供'}\n首包时间：${result.ttfbMs} ms\n首 chunk：${firstChunk}\n总耗时：${result.totalMs} ms\n最终文本：${result.content}`);
                 } catch (error) {
                     this.setStatus('error', formatConnectionFailure(error));
                 } finally {
@@ -959,6 +979,7 @@ export class CacheMemoryUI {
         this.populateSettings();
         this.renderModelOptions(this.modelOptions);
         this.config.hidden = false;
+        this.resizeTextareas(this.config);
         if (this.debugSnapshot) this.setCacheDebug(this.debugSnapshot);
         this.doc.body.classList.add('cache-memory-config-open');
         this.config.querySelector('[data-settings-close]')?.focus();
@@ -988,6 +1009,7 @@ export class CacheMemoryUI {
         const managerActive = name === 'manager';
         this.config.querySelector('.cache-memory-config-content')?.classList.toggle('is-manager-view', managerActive);
         this.config.querySelector('.cache-memory-config-panel')?.classList.toggle('is-manager-view', managerActive);
+        this.resizeTextareas(this.config);
         if (managerActive) this.renderManager();
         if (name === 'api') this.scheduleModelList();
     }
@@ -1235,7 +1257,7 @@ export class CacheMemoryUI {
                 const input = this.element(field.options ? 'select' : field.multiline ? 'textarea' : 'input');
                 if (field.options) for (const [value, text] of field.options) { const option = this.element('option', '', text); option.value = value; input.append(option); }
                 else if (!field.multiline) input.type = 'text';
-                else input.rows = field.rows ?? 4;
+                else input.rows = 1;
                 input.name = field.key;
                 input.value = String(field.value ?? '');
                 label.append(input);
@@ -1392,6 +1414,13 @@ export class CacheMemoryUI {
         const element = this.doc.createElement(tag);
         if (className) element.className = className;
         if (text !== '') element.textContent = text;
+        if (tag === 'textarea') {
+            element.rows = 1;
+            element.addEventListener('input', () => resizeMemoryTextarea(element), { signal: this.controller.signal });
+            this.doc.defaultView?.requestAnimationFrame(() => {
+                if (!this.controller.signal.aborted) resizeMemoryTextarea(element);
+            });
+        }
         return element;
     }
 
@@ -1898,7 +1927,7 @@ export class CacheMemoryUI {
                 }
             } else if (field.multiline) {
                 input = this.element('textarea');
-                input.rows = field.rows ?? 4;
+                input.rows = 1;
             } else {
                 input = this.element('input');
                 input.type = 'text';

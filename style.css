@@ -119,7 +119,7 @@
 .cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) input:not([type="checkbox"]):not([type="file"]), .cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) select, .cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) textarea { width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid #bdcada; border-radius: 8px; outline: none; background: #fff; color: var(--cm-ink); box-sizing: border-box; font: inherit; font-weight: 500; opacity: 1; }
 .cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) input:focus, .cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) select:focus, .cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) textarea:focus { border-color: var(--cm-teal); box-shadow: 0 0 0 3px rgba(8, 127, 114, 0.13); }
 .cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) input::placeholder { color: #8995a7; opacity: 1; }
-.cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) textarea { margin: 9px 0; resize: vertical; line-height: 1.5; }
+.cache-memory-config-panel .cache-memory-tab-panel:not(.cache-memory-manager-panel) textarea { min-height: 0; max-height: min(240px, 35dvh); margin: 4px 0; padding: 6px 8px; resize: vertical; overflow-y: auto; line-height: 1.45; }
 .cache-memory-tab-panel[data-settings-panel="prompts"] > details { margin: 10px 0; padding: 12px 14px; border: 1px solid var(--cm-line); border-radius: 10px; background: #fff; }
 .cache-memory-tab-panel[data-settings-panel="prompts"] > details > summary { color: var(--cm-ink); cursor: pointer; font-size: 13px; font-weight: 700; }
 .cache-memory-help, .cache-memory-key-state, .cache-memory-warning { display: block; margin-top: 11px; color: var(--cm-muted); font-size: 11px; line-height: 1.55; }
@@ -149,12 +149,12 @@
 #chat .cache-memory-message > summary::-webkit-details-marker { display: none; }
 #chat .cache-memory-message > summary::before, #chat .cache-memory-message > summary::after { content: none; display: none; }
 #chat .cache-memory-message > summary:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; border-radius: 6px; }
-#chat .cache-memory-message-body { min-width: 0; padding: 8px 12px; color: inherit; text-align: start; overflow-wrap: anywhere; }
+#chat .cache-memory-message-body { min-width: 0; padding: 4px 8px; color: inherit; text-align: start; overflow-wrap: anywhere; }
 #chat .cache-memory-message-body p { margin: 4px 0; white-space: pre-wrap; }
-#chat .cache-memory-message .cache-memory-inline-field { display: grid; gap: 6px; margin: 0; color: inherit; }
+#chat .cache-memory-message .cache-memory-inline-field { display: grid; gap: 4px; margin: 0; color: inherit; }
 #chat .cache-memory-message .cache-memory-inline-field > span { color: inherit; font: inherit; font-weight: 600; }
-#chat .cache-memory-message .cache-memory-inline-field input, #chat .cache-memory-message .cache-memory-inline-field textarea { display: block; width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--SmartThemeBorderColor, currentColor); border-radius: 6px; background: var(--SmartThemeBlurTintColor, transparent); color: var(--SmartThemeBodyColor, inherit); font: inherit; }
-#chat .cache-memory-message .cache-memory-inline-field textarea { resize: vertical; }
+#chat .cache-memory-message .cache-memory-inline-field input, #chat .cache-memory-message .cache-memory-inline-field textarea { display: block; width: 100%; min-width: 0; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--SmartThemeBorderColor, currentColor); border-radius: 6px; background: var(--SmartThemeBlurTintColor, transparent); color: var(--SmartThemeBodyColor, inherit); font: inherit; }
+#chat .cache-memory-message .cache-memory-inline-field textarea { min-height: 0; max-height: min(240px, 35dvh); margin: 0; line-height: 1.45; resize: vertical; overflow-y: auto; }
 #chat .cache-memory-message .cache-memory-inline-field input:focus, #chat .cache-memory-message .cache-memory-inline-field textarea:focus { border-color: currentColor; outline: 1px solid currentColor; box-shadow: none; }
 #chat .cache-memory-message .cache-memory-inline-actions { position: static; background: transparent; }
 #chat .cache-memory-message .menu_button { width: auto; margin: 0; border-color: var(--SmartThemeBorderColor, currentColor); background: var(--SmartThemeBlurTintColor, transparent); color: var(--SmartThemeBodyColor, inherit); font: inherit; }
@@ -228,10 +228,10 @@
 .cache-memory-structured-section h5 { margin: 0 0 6px; color: var(--cm-teal-dark); font-size: 13px; }
 .cache-memory-structured-section p { margin: 0; line-height: 1.65; }
 .cache-memory-raw-content { margin-top: 12px; padding: 11px 13px; border: 1px solid var(--cm-line); border-radius: 9px; background: var(--cm-soft); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
-.cache-memory-inline-editor { display: grid; gap: 14px; padding-top: 14px; }
-.cache-memory-inline-field { display: grid; gap: 7px; color: #344258; font-size: 13px; font-weight: 750; }
-.cache-memory-inline-field input, .cache-memory-inline-field select, .cache-memory-inline-field textarea { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #b7c4d3; border-radius: 8px; outline: none; background: #fff; color: var(--cm-ink); box-sizing: border-box; font: inherit; font-weight: 500; line-height: 1.55; }
-.cache-memory-inline-field textarea { min-height: 92px; resize: vertical; }
+.cache-memory-inline-editor { display: grid; gap: 8px; padding-top: 6px; }
+.cache-memory-inline-field { display: grid; gap: 4px; color: #344258; font-size: 13px; font-weight: 750; }
+.cache-memory-inline-field input, .cache-memory-inline-field select, .cache-memory-inline-field textarea { width: 100%; min-width: 0; margin: 0; padding: 6px 8px; border: 1px solid #b7c4d3; border-radius: 8px; outline: none; background: #fff; color: var(--cm-ink); box-sizing: border-box; font: inherit; font-weight: 500; line-height: 1.55; }
+.cache-memory-inline-field textarea { min-height: 0; max-height: min(240px, 35dvh); resize: vertical; overflow-y: auto; line-height: 1.45; }
 .cache-memory-inline-field input:focus, .cache-memory-inline-field select:focus, .cache-memory-inline-field textarea:focus { border-color: var(--cm-teal); box-shadow: 0 0 0 3px rgba(8, 127, 114, 0.13); }
 .cache-memory-inline-actions { position: sticky; bottom: 0; justify-content: flex-end; margin-top: 2px; padding: 10px 0 2px; background: linear-gradient(transparent, #fff 22%); }
 .cache-memory-aggregation h4, .cache-memory-aggregation p { margin-top: 0; }
@@ -281,11 +281,11 @@ body.cache-memory-config-open { overflow: hidden; }
 }
 .cache-memory-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--cm-line); background: linear-gradient(115deg, #effbf8, #f5f8fc); }
 .cache-memory-modal-header h3 { min-width: 0; margin: 0; font-size: 18px; overflow-wrap: anywhere; }
-.cache-memory-modal-content { display: grid; gap: 13px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; padding: 18px; }
+.cache-memory-modal-content { display: grid; gap: 8px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; padding: 18px; }
 .cache-memory-modal-message { margin: 0; color: #344258; line-height: 1.65; white-space: pre-wrap; }
-.cache-memory-modal-field { display: grid; gap: 6px; color: #344258; font-size: 12px; font-weight: 700; }
+.cache-memory-modal-field { display: grid; gap: 4px; color: #344258; font-size: 12px; font-weight: 700; }
 .cache-memory-modal-field input, .cache-memory-modal-field textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid #bdcada; border-radius: 8px; outline: none; background: #fff; color: var(--cm-ink); box-sizing: border-box; font: inherit; font-weight: 500; line-height: 1.5; }
-.cache-memory-modal-field textarea { resize: vertical; }
+.cache-memory-modal-field textarea, .cache-memory-tracked-form textarea { min-height: 0; max-height: min(240px, 35dvh); margin: 0; padding: 6px 8px; resize: vertical; overflow-y: auto; line-height: 1.45; }
 .cache-memory-modal-field input:focus, .cache-memory-modal-field textarea:focus { border-color: var(--cm-teal); box-shadow: 0 0 0 3px rgba(8, 127, 114, 0.13); }
 .cache-memory-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 12px 18px 16px; border-top: 1px solid var(--cm-line); }
 .cache-memory-modal-actions button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
@@ -380,4 +380,4 @@ body.cache-memory-config-open { overflow: hidden; }
 }
 
 .cache-memory-global-prompt > .cache-memory-field { margin-top: 14px; }
-.cache-memory-config-panel .cache-memory-tab-panel[data-settings-panel="prompts"] > details > textarea { margin-top: 14px; }
+.cache-memory-config-panel .cache-memory-tab-panel[data-settings-panel="prompts"] > details > textarea { margin-top: 6px; }

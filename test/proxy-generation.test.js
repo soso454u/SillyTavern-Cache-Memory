@@ -163,7 +163,7 @@ test('a selected max_completion_tokens budget is forwarded by both actual genera
     await client.test();
     const bodies = requests.map(item => JSON.parse(item.options.body));
     assert.equal(bodies[0].max_completion_tokens, 64);
-    assert.equal(bodies[1].max_completion_tokens, 16);
+    assert.equal(bodies[1].max_completion_tokens, settings.summaryMaxTokens);
     assert.ok(bodies.every(body => !Object.hasOwn(body, 'max_tokens')));
 });
 
@@ -333,7 +333,7 @@ test('Summary, Checkpoint and Long Memory all consume SSE through the ST backend
         && JSON.parse(JSON.parse(item.options.body).custom_include_body).thinking.type === 'disabled'));
 });
 
-test('streaming and non-streaming connection tests use 16 tokens and expose timing plus final text', async t => {
+test('streaming and non-streaming connection tests use the configured Summary budget and expose timing plus final text', async t => {
     const { client, root, requests } = fixture(t);
     root.fetch = async (url, options) => {
         requests.push({ url, options });
@@ -350,7 +350,7 @@ test('streaming and non-streaming connection tests use 16 tokens and expose timi
     assert.equal(typeof streamed.ttfcMs, 'number');
     assert.equal(nonStreamed.ttfcMs, null);
     const bodies = requests.map(item => JSON.parse(item.options.body));
-    assert.ok(bodies.every(body => body.max_tokens === 16 && body.temperature === 0.2
+    assert.ok(bodies.every(body => body.max_tokens === 1024 && body.temperature === 0.2
         && body.thinking.type === 'disabled'
         && JSON.parse(body.custom_include_body).thinking.type === 'disabled'
         && body.messages[0].content === 'Reply with exactly OK.' && body.messages[1].content === 'OK'));

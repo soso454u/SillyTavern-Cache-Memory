@@ -43,7 +43,7 @@ test('connection tests preserve the same Thinking and temperature parameters as 
     for (const stream of [true, false]) await f.client.test({ stream });
     await f.client.complete({ systemPrompt: 'ordinary', userContent: 'synthetic', maxTokens: 32 });
     assert.ok(f.requests.every(({ body }) => body.temperature === 1 && body.thinking.type === 'enabled'));
-    assert.ok(f.requests.slice(0, 2).every(({ body }) => body.max_tokens === 16 && !body.messages[0].content.includes('ENTITY_OVERFLOW')));
+    assert.ok(f.requests.slice(0, 2).every(({ body }) => body.max_tokens === f.settings.summaryMaxTokens && !body.messages[0].content.includes('ENTITY_OVERFLOW')));
     assert.equal(f.settings.temperature, 1);
     f.settings.temperature = 0.65;
     f.settings.thinkingMode = 'disabled';
@@ -208,4 +208,21 @@ test('typing a key before the first address retains it and saves it to that addr
     assert.equal(f.client.hasApiKey(), true);
     await f.client.listModels();
     assert.equal(JSON.parse(f.requests.at(-1).body.custom_include_headers).Authorization, 'Bearer synthetic-key-first');
+});
+
+
+test('connection-test buttons show thinking truncation as warning and always re-enable', async t => {
+    const f = fixture(t);
+    const button = { dataset: { testApi: 'stream' }, disabled: false };
+    const event = { target: { closest: selector => selector === '[data-test-api]' ? button : null } };
+    f.client.test = async () => ({ ok: true, warning: '连接成功，但思考输出达到 token 上限', model: 'synthetic', status: 200, content: '', ttfcMs: 1, ttfbMs: 1, totalMs: 2 });
+    await f.handlers.click(event);
+    assert.equal(f.status.at(-1).state, 'warning');
+    assert.match(f.status.at(-1).message, /连接成功.*思考输出达到 token 上限/);
+    assert.equal(button.disabled, false);
+    f.client.test = async () => { throw Object.assign(new Error('没有正文或思考内容'), { category: 'invalid_response' }); };
+    await f.handlers.click(event);
+    assert.equal(f.status.at(-1).state, 'error');
+    assert.match(f.status.at(-1).message, /^测试未获得有效输出/);
+    assert.equal(button.disabled, false);
 });

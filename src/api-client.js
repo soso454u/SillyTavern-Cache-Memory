@@ -45,7 +45,7 @@ function isExplicitStreamUnsupported(error) {
         && /(?:stream(?:ing)?[^\n]{0,40}(?:unsupported|not supported|invalid|unknown|unavailable|not allowed)|(?:unsupported|not supported|invalid|unknown)[^\n]{0,40}stream)/i.test(error?.message ?? '');
 }
 
-export async function readOpenAISse(response, { signal, onFirstChunk = () => {} } = {}) {
+export async function readOpenAISse(response, { signal, onFirstChunk = () => {}, allowJson = false } = {}) {
     if (!response?.body?.getReader) throw new Error('流式响应没有可读取的 body');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -54,54 +54,73 @@ export async function readOpenAISse(response, { signal, onFirstChunk = () => {} 
     let reasoning = '';
     let finishReason;
     let eventCount = 0;
-    let firstChunkSeen = false;
     let streamDone = false;
-    const consumeLine = line => {
-        const trimmed = line.trimEnd();
-        if (!trimmed.startsWith('data:')) return false;
-        const value = trimmed.slice(5).trimStart();
-        if (!value || value === '[DONE]') return value === '[DONE]';
+    let mode = allowJson ? '' : 'sse';
+    let dataLines = [];
+    const consumeEvent = () => {
+        const value = dataLines.join('\n').trim();
+        dataLines = [];
+        if (!value) return;
+        if (value === '[DONE]') { streamDone = true; return; }
         const data = parseJson(value);
-        if (!data) return false;
+        if (!data) throw new Error('流式响应不是有效 JSON');
         if (data.error) {
             const error = new Error(errorDetail(data, '流式接口返回错误'));
             error.status = Number(data.error?.status ?? data.error?.status_code ?? data.status) || undefined;
-            error.streamPayload = data;
             throw error;
         }
-        eventCount++;
-        if (!firstChunkSeen) { firstChunkSeen = true; onFirstChunk(); }
+        if (!eventCount++) onFirstChunk();
         const parts = chunkParts(data);
         content += parts.content;
         reasoning += parts.reasoning;
-        finishReason ??= parts.finishReason;
-        return false;
+        if (parts.finishReason != null) finishReason = parts.finishReason;
     };
+    const consumeBuffer = (final = false) => {
+        if (!mode) {
+            const start = buffer.trimStart();
+            if (/^(?:data:|event:|id:|retry:|:)/.test(start)) mode = 'sse';
+            else if (start && (final || !['data:', 'event:', 'id:', 'retry:'].some(prefix => prefix.startsWith(start)))) mode = 'json';
+        }
+        if (mode !== 'sse') return;
+        let match;
+        while (!streamDone && (match = /\r\n|\r|\n/.exec(buffer))) {
+            // Keep a trailing CR until the next chunk so split CRLF stays one newline.
+            if (!final && match[0] === '\r' && match.index === buffer.length - 1) break;
+            const line = buffer.slice(0, match.index);
+            buffer = buffer.slice(match.index + match[0].length);
+            if (!line.trim()) consumeEvent();
+            else if (line.startsWith('data:')) {
+                dataLines.push(line.slice(5).replace(/^ /, ''));
+                // Some proxies omit empty separators between complete JSON frames.
+                if (dataLines.length === 1 && (dataLines[0].trim() === '[DONE]' || parseJson(dataLines[0]) !== null)) consumeEvent();
+            }
+        }
+        if (final && !streamDone) {
+            if (buffer.startsWith('data:')) dataLines.push(buffer.slice(5).replace(/^ /, ''));
+            buffer = '';
+            consumeEvent();
+        }
+    };
+    const cancel = () => { void reader.cancel().catch(() => {}); };
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
-        while (true) {
+        while (!streamDone) {
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             const { done, value } = await reader.read();
+            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split(/\r?\n/);
-            buffer = lines.pop() ?? '';
-            for (const line of lines) {
-                if (consumeLine(line)) {
-                    streamDone = true;
-                    break;
-                }
-            }
-            if (streamDone) {
-                await reader.cancel();
-                break;
-            }
+            consumeBuffer();
         }
-        if (!streamDone) {
-            buffer += decoder.decode();
-            if (buffer) consumeLine(buffer);
-        }
-        return { content, reasoning, finishReason, eventCount };
+        buffer += decoder.decode();
+        consumeBuffer(true);
+        if (streamDone) await reader.cancel();
+        return mode === 'json' ? { raw: buffer } : { content, reasoning, finishReason, eventCount };
+    } catch (error) {
+        cancel();
+        throw error;
     } finally {
+        signal?.removeEventListener('abort', cancel);
         reader.releaseLock?.();
     }
 }
@@ -198,7 +217,7 @@ const CUSTOM_BODY_KEYS = [
 const ST_NATIVE_BODY_KEYS = new Set(['model', 'messages', 'temperature', 'max_tokens', 'max_completion_tokens', 'stream']);
 
 function classifyFailure(status, message, code, proxyRouteMissing = false) {
-    if (code === 'REQUEST_TIMEOUT') return 'timeout';
+    if (code === 'CONNECTION_CLOSED') return 'network_error';
     if (code === 'REQUEST_ABORTED') return 'cancelled';
     if (code === 'ST_PROXY_UNAVAILABLE' || code === 'ST_PROXY_ROUTE_MISSING' || code === 'ST_PROXY_HTTP_ERROR' || proxyRouteMissing) return 'proxy_error';
     const numericStatus = Number(status);
@@ -357,20 +376,18 @@ export class SummaryApiClient {
             blocked.code = 'DIRECT_CROSS_ORIGIN_BLOCKED';
             throw blocked;
         }
-        const settings = this.getSettings();
         const controller = new AbortController();
         this.activeControllers.add(controller);
         const externalSignal = options.signal;
         const cancel = () => { this.cancelledControllers.add(controller); controller.abort(); };
         externalSignal?.addEventListener('abort', cancel, { once: true });
         if (externalSignal?.aborted) cancel();
-        const timeoutMs = Number(settings.timeoutMs) || 180000;
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-        const cleanup = () => { clearTimeout(timeout); externalSignal?.removeEventListener('abort', cancel); this.activeControllers.delete(controller); };
+        const cleanup = () => { externalSignal?.removeEventListener('abort', cancel); this.activeControllers.delete(controller); };
         const translate = error => {
             if (error?.name !== 'AbortError') return error;
-            const aborted = new Error(this.cancelledControllers.has(controller) ? '请求已取消' : `请求超时（${timeoutMs} 毫秒）`);
-            aborted.code = this.cancelledControllers.has(controller) ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT';
+            const cancelled = this.cancelledControllers.has(controller);
+            const aborted = new Error(cancelled ? '请求已取消' : '上游或 SillyTavern 代理连接已中断');
+            aborted.code = cancelled ? 'REQUEST_ABORTED' : 'CONNECTION_CLOSED';
             return aborted;
         };
         try {
@@ -392,7 +409,7 @@ export class SummaryApiClient {
 
     async consumeSse(response, onFirstChunk) {
         const control = this.responseControls.get(response);
-        try { return await readOpenAISse(response, { signal: control?.signal, onFirstChunk }); }
+        try { return await readOpenAISse(response, { signal: control?.signal, onFirstChunk, allowJson: true }); }
         catch (error) { throw control?.translate(error) ?? error; }
         finally { control?.cleanup(); this.responseControls.delete(response); }
     }
@@ -480,30 +497,36 @@ export class SummaryApiClient {
             diagnostics.proxy = `HTTP ${response.status}`;
             diagnostics.proxyEndpoint = safeText(safeUrl(response.url || diagnostics.proxyEndpoint), secrets, Infinity);
             diagnostics.contentType = responseContentType(response) || '未提供';
-            if (stream && /text\/event-stream/i.test(diagnostics.contentType) && response.ok) {
+            let raw;
+            if (kind === 'completion' && response.ok && response.body?.getReader) {
                 let streamed;
                 try {
                     streamed = await this.consumeSse(response, () => { diagnostics.ttfcMs ??= elapsed(startedAt); });
                 } catch (error) {
                     diagnostics.proxyException = safeText(errorText(error), secrets);
                     const status = error.status ?? response.status;
+                    if (error.status) diagnostics.upstream = `HTTP ${error.status}`;
                     throw fail(error.message, error.code, status);
                 }
-                diagnostics.totalMs = elapsed(startedAt);
-                diagnostics.upstream = 'HTTP 200';
-                console.info('[Cache Memory] response diagnostics:', {
-                    transport: diagnostics.transport, stream, http: response.status, contentType: diagnostics.contentType,
-                    ttfbMs: diagnostics.ttfbMs, ttfcMs: diagnostics.ttfcMs, totalMs: diagnostics.totalMs,
-                    sseEvents: streamed.eventCount, contentChars: streamed.content.length, reasoningChars: streamed.reasoning.length,
-                });
-                return {
-                    data: { choices: [{ message: { content: streamed.content, reasoning_content: streamed.reasoning }, finish_reason: streamed.finishReason }] },
-                    response, diagnostics, source: 'proxy', streamed: true,
-                };
+                if (streamed.raw !== undefined) raw = streamed.raw;
+                else {
+                    diagnostics.totalMs = elapsed(startedAt);
+                    diagnostics.upstream = 'HTTP 200';
+                    console.info('[Cache Memory] response diagnostics:', {
+                        transport: diagnostics.transport, stream, http: response.status, contentType: diagnostics.contentType,
+                        ttfbMs: diagnostics.ttfbMs, ttfcMs: diagnostics.ttfcMs, totalMs: diagnostics.totalMs,
+                        sseEvents: streamed.eventCount, contentChars: streamed.content.length, reasoningChars: streamed.reasoning.length,
+                    });
+                    return {
+                        data: { choices: [{ message: { content: streamed.content, reasoning_content: streamed.reasoning }, finish_reason: streamed.finishReason }] },
+                        response, diagnostics, source: 'proxy', streamed: true,
+                    };
+                }
             }
-            let raw;
-            try { raw = await this.consumeText(response); }
-            catch (error) { diagnostics.proxyException = safeText(errorText(error), secrets); throw fail(error.message, error.code, response.status); }
+            if (raw === undefined) {
+                try { raw = await this.consumeText(response); }
+                catch (error) { diagnostics.proxyException = safeText(errorText(error), secrets); throw fail(error.message, error.code, response.status); }
+            }
             diagnostics.totalMs = elapsed(startedAt);
             diagnostics.proxyBody = safeText(raw, secrets);
             const proxyRouteMissing = response.status === 405
@@ -617,20 +640,45 @@ export class SummaryApiClient {
             }
             return { models, source: result.source, warning: '', diagnostics: result.diagnostics };
         } catch (error) {
-            if (['REQUEST_ABORTED', 'REQUEST_TIMEOUT'].includes(error.code)) throw error;
+            if (error.code === 'REQUEST_ABORTED') throw error;
             return { models: [], source: 'unavailable', warning: MODEL_LIST_WARNING, diagnostics: error.diagnostics, error: error.message };
         }
     }
 
     async test({ stream = true } = {}) {
-        const result = await this.complete({
-            systemPrompt: 'Reply with exactly OK.', userContent: 'OK', maxTokens: 16,
-            transportMode: stream ? 'stream' : 'non-stream',
+        const settings = this.getSettings();
+        // One click, one request: do not retry a paid diagnostic with other parameters.
+        const payload = this.buildPayload({
+            systemPrompt: 'Reply with exactly OK.', userContent: 'OK',
+            maxTokens: settings.summaryMaxTokens ?? settings.maxTokens ?? 1024,
         });
-        return { ok: true, status: result.status, model: this.getSettings().model, source: result.source,
-            content: result.content, contentType: result.diagnostics.contentType,
-            ttfbMs: result.diagnostics.ttfbMs, ttfcMs: result.diagnostics.ttfcMs,
-            totalMs: result.diagnostics.totalMs, latencyMs: result.diagnostics.totalMs,
-            stream: result.diagnostics.stream };
+        const { data, response, diagnostics, source } = await this.requestOpenAICompatible({ payload: { ...payload, stream } });
+        const parts = chunkParts(data);
+        const content = contentText(parts.content || data?.content || data?.response).trim();
+        const reasoning = parts.reasoning.trim();
+        const truncated = /^(?:length|max_tokens|max_completion_tokens)$/i.test(parts.finishReason ?? '');
+        let outcome = 'success';
+        let warning = '';
+        if (truncated) {
+            outcome = reasoning && !content ? 'reasoning_truncated' : 'output_truncated';
+            warning = reasoning && !content
+                ? '连接成功，但思考输出达到 token 上限，尚未生成正文。可调高现有小总结 max tokens 后手动重测。'
+                : '连接成功，但输出达到 token 上限，正文可能不完整。';
+        } else if (reasoning && !content) {
+            outcome = 'reasoning_only';
+            warning = '连接成功，已收到思考内容，但未收到正文。';
+        } else if (!content) {
+            const error = new Error('HTTP 请求成功，但响应中没有正文或思考内容');
+            error.code = 'EMPTY_RESPONSE';
+            error.category = 'invalid_response';
+            error.status = response.status;
+            error.diagnostics = diagnostics;
+            throw error;
+        }
+        return { ok: true, outcome, warning, status: response.status, model: settings.model, source,
+            content, finishReason: parts.finishReason, contentType: diagnostics.contentType,
+            ttfbMs: diagnostics.ttfbMs, ttfcMs: diagnostics.ttfcMs,
+            totalMs: diagnostics.totalMs, latencyMs: diagnostics.totalMs,
+            stream: diagnostics.stream };
     }
 }

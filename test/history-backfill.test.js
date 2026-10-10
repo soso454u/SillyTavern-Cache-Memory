@@ -352,10 +352,10 @@ test('retry filtering, interruptible delay and three error UI categories preserv
     assert.match(formatSummaryFailure({ errorDiagnostics: { ...diagnostics, upstream: 'HTTP 504' } }), /上游 HTTP 504/);
 });
 
-test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
+test('default prompts adopt user-provided formats, new budgets apply and custom prompts survive and obsolete request timeouts are ignored', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.22.12');
-    assert.equal(settings.timeoutMs, 180000);
+    assert.equal(PLUGIN_VERSION, '1.22.13');
+    assert.equal(Object.hasOwn(settings, 'timeoutMs'), false);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);
     assert.deepEqual([settings.summaryMaxLength, settings.checkpointMaxLength, settings.longMemoryMaxLength], [350, 1000, 2200]);
@@ -380,7 +380,7 @@ test('default prompts adopt user-provided formats, new budgets apply and custom 
     assert.match(DEFAULT_PROMPTS.longMemory, /\[UPDATED_FACTS\][\s\S]*\[RETIRED_FACTS\]/);
     assert.match(DEFAULT_PROMPTS.longMemory, /【剧情日期\/时间】[\s\S]*时间范围同样使用完整剧情日期时间[\s\S]*缺失时间不得推算或补全/);
     const custom = normalizeSettings({ timeoutMs: 60000, prompts: { summary: '自定义模板' } });
-    assert.equal(custom.timeoutMs, 60000);
+    assert.equal(Object.hasOwn(custom, 'timeoutMs'), false);
     assert.equal(custom.prompts.summary, '自定义模板');
     const migrated = normalizeSettings({ maxTokens: 1234, summaryMaxLength: 777, checkpointMaxLength: 888, longMemoryMaxLength: 999 });
     assert.deepEqual([migrated.summaryMaxTokens, migrated.checkpointMaxTokens, migrated.longMemoryMaxTokens], [1234, 1234, 1234]);
