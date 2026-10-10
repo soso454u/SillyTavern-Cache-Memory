@@ -1,8 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.22.6';
-import { buildInjection } from './injection.js?v=1.22.6';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.22.6';
-import { fnv1a } from './utils.js?v=1.22.6';
-import { stripStructuredSections } from './summary-format.js?v=1.22.6';
+import { INJECTION_MODES } from './defaults.js?v=1.22.7';
+import { buildInjection } from './injection.js?v=1.22.7';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.22.7';
+import { fnv1a } from './utils.js?v=1.22.7';
+import { stripStructuredSections } from './summary-format.js?v=1.22.7';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.22.7';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -19,15 +20,16 @@ export function shouldRefreshInjection(settings, reason) {
         || (reason === 'new long memory' && [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_BOUNDARY].includes(mode));
 }
 
-function frozenBlocks(store, mode) {
+function frozenBlocks(store, mode, settings) {
     const blocks = [];
     const add = (record, type) => {
         const delta = (record.factUpdates ?? []).map(update => update.action === 'retire'
             ? `- RETIRE ${update.previousId}: ${update.reason || update.evidence || '明确失效'}`
             : `- ${update.action.toUpperCase()} ${update.id}${update.previousId ? ` (supersedes ${update.previousId})` : ''}: ${update.text}`).join('\n');
-        const content = record.memoryKind === 'facts' && Array.isArray(record.factUpdates)
+        let content = record.memoryKind === 'facts' && Array.isArray(record.factUpdates)
             ? `[FACT_DELTA]\n${delta || '本阶段无新增或有证据的长期事实变更。'}${record.continuityState ? `\n${record.continuityState}` : ''}`
             : stripStructuredSections(record.content ?? '', ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']);
+        if (type === 'checkpoint' && record.memoryKind === 'state' && settings.activeStateEnabled) content = reconcileTrackedCheckpoint(content, store, record.endFloor, record.startFloor);
         blocks.push({ id: `${type}:${record.id}`, type, startFloor: record.startFloor, endFloor: record.endFloor,
             text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}` });
     };
@@ -42,7 +44,7 @@ function frozenBlocks(store, mode) {
 
 // Snapshot bytes belong to a chat and survive reload. Background tasks can add blocks,
 // but never rewrite published text. Only a Long boundary may remove fully covered CP injection.
-export function refreshSnapshot(store, settings, reason = 'manual edit') {
+export function refreshSnapshot(store, settings, reason = 'manual edit', sourceStore = store) {
     if (!shouldRefreshInjection(settings, reason)) return { value: store.injectionSnapshot?.value ?? '', changed: false, skipped: true };
     const mode = effectiveInjectionMode(settings);
     const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode]);
@@ -56,9 +58,9 @@ export function refreshSnapshot(store, settings, reason = 'manual edit') {
     let blocks = [];
     let value = '';
     if (settings.enabled && mode !== INJECTION_MODES.NONE) {
-        if (!settings.strictCacheMode) value = buildInjection(store, settings);
+        if (!settings.strictCacheMode) value = buildInjection(sourceStore, settings);
         else {
-            const fresh = frozenBlocks(store, mode);
+            const fresh = frozenBlocks(sourceStore, mode, settings);
             const rebuild = !previous || previous.signature !== signature || (previous.needsRebuild || invalidPublishedSource || previous.budget?.clipped || previous.budget?.omitted) && ['new checkpoint', 'new long memory'].includes(reason) || ['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason);
             blocks = rebuild ? fresh : [...(previous.blocks ?? [])];
             if (!rebuild) {
@@ -71,6 +73,12 @@ export function refreshSnapshot(store, settings, reason = 'manual edit') {
             // Explicitly permitted compaction at a Long boundary; never delete Checkpoint data.
             const longs = blocks.filter(block => block.type === 'long');
             blocks = blocks.filter(block => block.type !== 'checkpoint' || !longs.some(long => long.startFloor <= block.startFloor && long.endFloor >= block.endFloor));
+            const published = new Set(rebuild ? [] : (previous.blocks ?? []).map(block => block.id));
+            const currentLines = new Map();
+            blocks = blocks.map(block => {
+                const text = omitRepeatedStateLines(block.text, currentLines, { omit: !published.has(block.id) });
+                return text === block.text ? block : { ...block, text };
+            });
             value = blocks.length ? `<CACHE_MEMORY>\n冻结块按提交顺序排列。后续有证据的事实更新优先；旧记录保留历史意义，已解决事项不要恢复为未解决。\n\n${blocks.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
         }
     }

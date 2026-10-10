@@ -209,6 +209,7 @@ test('Long generation failure publishes the completed CP once; retry commits Lon
     for (let floor = 1; floor <= 50; floor++) store.addSummary({ messageId: `m${floor}`, floor, raw: `S${floor}`, status: 'frozen', frozen: true });
     const previous = structuredClone(store.current().checkpoints);
     const chat = Array.from({ length: 50 }, (_, index) => ({ name: 'A', mes: 'body', gen_started: String(index), send_date: String(index) }));
+    for (const entry of getAssistantMessages(chat)) store.current().summaries[`m${entry.floor}`].sourceContentFingerprint = entry.contentFingerprint;
     const summarizer = new MemorySummarizer({ store, getSettings: () => settings, getChat: () => chat, apiClient: {
         complete: async request => { if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) throw new Error('Long unavailable'); return { content: '[CHECKPOINT]\ncompleted 46-50' }; },
     } });

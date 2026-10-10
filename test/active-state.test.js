@@ -30,7 +30,7 @@ test('task persists through 100 quiet floors and ends only on an evidenced updat
     const end = { ...task, id: stateId(task), status: 'completed', value: '结算完成', evidence: '系统确认任务完成，发放奖励' };
     put(store, 101, parseStateChanges(JSON.stringify([end]), end.evidence, projectActiveState(store)));
     const current = projectActiveState(store); assert.equal(current.length, 1); assert.equal(current[0].status, 'completed');
-    assert.equal(current[0].history.length, 1); assert.equal(stateContext(store), '无');
+    assert.equal(current[0].history.length, 1); assert.match(stateContext(store), /completed/);
     assert.match(stateContext(store, 100), /维持到入睡前/);
 });
 

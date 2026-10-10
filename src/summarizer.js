@@ -1,10 +1,10 @@
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.6';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.6';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.6';
-import { extractSummarySource } from './summary-source.js?v=1.22.6';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.6';
-import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.22.6';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.6';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.22.7';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.22.7';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.7';
+import { extractSummarySource } from './summary-source.js?v=1.22.7';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.22.7';
+import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.22.7';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion, STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.22.7';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -162,7 +162,9 @@ export class MemorySummarizer {
 
     async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal } = {}) {
         const existing = this.store.getSummaryForEntry(entry) ?? this.store.summaryCandidates(entry).map(([, item]) => item).find(isUsableMemory);
-        if (isUsableMemory(existing) && summaryMatchesEntry(existing, entry) && !overwrite) return existing;
+        // Missing legacy fingerprints cannot prove an edit and must not cause
+        // automatic regeneration. They remain stored but are not aggregate inputs.
+        if (isUsableMemory(existing) && (summaryMatchesEntry(existing, entry) || !existing.sourceContentFingerprint) && !overwrite) return existing;
         overwrite ||= Boolean(this.store.getSummary(entry.messageId));
         const flightKey = `${this.store.current().chatId}:${entry.messageId}`;
         if (this.inFlight.has(flightKey)) return null;
@@ -228,7 +230,7 @@ export class MemorySummarizer {
                 open: parsed.open,
                 quote: parsed.quote,
                 keep: parsed.keep,
-                ...(settings.activeStateEnabled ? { stateChanges: parseStateChanges(parsed.changes, summarySource.text, projectActiveState(this.store.current(), entry.floor - 1)) } : {}),
+                ...(settings.activeStateEnabled ? { stateChanges: parseStateChanges(parsed.changes, summarySource.text, projectActiveState(this.generationStore(), entry.floor - 1)) } : {}),
                 raw: parsed.raw,
                 format: parsed.format,
                 createdAt: new Date().toISOString(),
@@ -557,10 +559,12 @@ export class MemorySummarizer {
         const newSummaries = summaries.map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
         const incremental = settings.memoryStrategy !== 'legacy';
         const state = previousState(this.generationStore(), startFloor);
+        if (incremental && settings.activeStateEnabled && state.id) state.content = reconcileTrackedCheckpoint(state.content, this.generationStore(), startFloor - 1, startFloor);
         const preceding = [...checkpoints].filter(cp => cp.endFloor < startFloor).sort((a, b) => b.endFloor - a.endFloor)[0];
         if (preceding && (!isUsableMemory(preceding) || preceding.sourceReplaced)) throw new Error(`前序 ${preceding.id} 尚无当前来源的可用内容，已停止后续生成`);
         const checkpointVersions = state.id ? { [state.id]: aggregateVersion([...checkpoints, ...this.store.current().longMemories].find(cp => cp.id === state.id)) } : {};
-        const keeps = collectKeepItems(this.store.current(), endFloor);
+        const keeps = collectKeepItems(this.generationStore(), endFloor);
+        const keepVersion = JSON.stringify(this.store.current().keepRegistry);
         const storyMetadata = storyMetadataRange(summaries);
         const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.generationStore(), endFloor) : null;
         const sourceVersions = Object.fromEntries(summaries.map(item => [item.messageId, summaryVersion(item)]));
@@ -571,6 +575,7 @@ export class MemorySummarizer {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             if (targetVersions() !== expectedTargets) throw Object.assign(new Error('阶段记忆已被其他窗口更新，未覆盖较新记录'), { code: 'SOURCE_CHANGED' });
+            if (JSON.stringify(this.store.current().keepRegistry) !== keepVersion) throw Object.assign(new Error('KEEP 已变化，未提交过期阶段结果'), { code: 'SOURCE_CHANGED' });
             if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.generationStore(), endFloor)) throw Object.assign(new Error('聚合期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
             if (Object.entries(checkpointVersions).some(([id, version]) => aggregateVersion([...this.store.current().checkpoints, ...this.store.current().longMemories].find(cp => cp.id === id)) !== version)
                 || chatVersion !== JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]))

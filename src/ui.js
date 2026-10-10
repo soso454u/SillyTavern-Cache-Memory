@@ -1,17 +1,17 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.6';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.6';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.6';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.6';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.6';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.6';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.6';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.6';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.6';
-import { parseFloorSummary } from './summarizer.js?v=1.22.6';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.6';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.7';
+import { effectiveInjectionMode } from './cache-control.js?v=1.22.7';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.7';
+import { HistoryBackfill } from './history-backfill.js?v=1.22.7';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.7';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.7';
+import { buildStructuredSummary } from './summary-format.js?v=1.22.7';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.7';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.7';
+import { parseFloorSummary } from './summarizer.js?v=1.22.7';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.7';
 
-import { memoryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.6';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.6';
+import { memoryHealth, summaryForEntry, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.7';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.7';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -68,18 +68,21 @@ export function summaryHealthDetails(store, assistants) {
     const matched = new Set();
     const details = [];
     for (const entry of entries) {
-        const record = summaries[entry.messageId];
-        if (record) matched.add(entry.messageId);
-        if (!record) details.push({ floor: entry.floor, messageId: entry.messageId, reason: 'missing', label: memoryHealth(null).label });
-        else if (record.status === 'failed') details.push({ floor: entry.floor, messageId: entry.messageId, reason: 'failed', label: `生成失败：${record.error || '未提供错误'}` });
-        else if (!isUsableMemory(record) && record.status !== 'orphaned') details.push({ floor: entry.floor, messageId: entry.messageId, reason: memoryHealth(record).code, label: memoryHealth(record).label });
-        else if (record.status === 'orphaned') details.push({ floor: entry.floor, messageId: entry.messageId, reason: 'orphaned', label: '已由明确消息删除事件标记为 orphaned' });
+        const record = summaryForEntry(store, entry);
+        if (record) matched.add(record);
+        const health = currentSummaryHealth(record, entry);
+        if (health.code !== 'valid') details.push({ floor: entry.floor, messageId: entry.messageId, reason: health.code, label: health.label, current: true });
     }
     for (const [key, record] of Object.entries(summaries)) {
+        if (matched.has(record)) continue;
         const id = String(record?.messageId || key);
-        if (matched.has(id)) continue;
-        details.push({ floor: Number(record?.floor) || 0, messageId: id, reason: record?.status === 'orphaned' ? 'orphaned' : 'source-unloaded',
-            label: record?.status === 'orphaned' ? '原消息已明确删除，摘要仍保留' : '来源消息当前未加载；摘要保留且不自动判定 orphaned' });
+        const related = entries.find(entry => entry.relatedMessageIds?.includes(key)
+            || record.sourceMessageKey && record.sourceMessageKey === entry.sourceMessageKey
+            || entry.messageId === id);
+        const reason = record?.status === 'orphaned' ? 'orphaned' : related ? 'old-version' : 'source-unloaded';
+        const label = reason === 'orphaned' ? '旧消息 / 旧版本来源已失效（orphaned），摘要仍保留' : reason === 'old-version'
+            ? '当前消息的旧版本 / 重复存储记录，未参与整理' : '来源消息当前未加载；摘要保留且不自动判定 orphaned';
+        details.push({ floor: Number(record?.floor) || 0, messageId: id, reason, label, current: false });
     }
     return details.sort((a, b) => a.floor - b.floor || a.messageId.localeCompare(b.messageId));
 }
@@ -97,21 +100,21 @@ export function memoryOverviewStats(store, assistants, settings) {
     const longMemories = safeStore.longMemories.filter(isUsableMemory);
     const checkpointRanges = completedRanges(latestFloor, checkpointInterval);
     const longRanges = completedRanges(latestFloor, longMemoryInterval);
-    const usableSummaries = entries.filter(entry => safeStore.summaries[entry.messageId] && isUsableMemory(safeStore.summaries[entry.messageId]));
+    const summaryDetails = summaryHealthDetails(safeStore, entries);
+    const currentIssues = summaryDetails.filter(item => item.current);
+    const usableSummaries = entries.filter(entry => currentSummaryHealth(summaryForEntry(safeStore, entry), entry).code === 'valid');
     const generatedSummaries = entries.filter(entry => {
-        const row = safeStore.summaries[entry.messageId];
+        const row = summaryForEntry(safeStore, entry);
         return row && row.status !== 'failed' && row.frozen !== false && ['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(row[key] ?? '').trim());
     });
     const missingCheckpointRanges = checkpointRanges.filter(([start, end]) => !checkpoints.some(item => item.startFloor === start && item.endFloor === end));
-    const missingSummaryFloors = entries.filter(entry => !safeStore.summaries[entry.messageId]
-        || !isUsableMemory(safeStore.summaries[entry.messageId])).map(entry => entry.floor);
+    const missingSummaryFloors = currentIssues.map(item => item.floor);
     const missingLongRanges = longRanges.filter(([start, end]) => !longMemories.some(item => item.startFloor === start && item.endFloor === end));
     const longDueThrough = longRanges.at(-1)?.[1] ?? 0;
     const checkpointGapsBlockingLong = missingCheckpointRanges.filter(([, end]) => end <= longDueThrough);
     const issues = [];
     if (missingSummaryFloors.length) {
-        const labels = entries.filter(entry => missingSummaryFloors.includes(entry.floor)).slice(0, 8)
-            .map(entry => `第${entry.floor}层：${memoryHealth(safeStore.summaries[entry.messageId]).label}`);
+        const labels = currentIssues.slice(0, 8).map(item => `第${item.floor}层：${item.label}`);
         issues.push(`Summary 待处理 ${missingSummaryFloors.length} 层（${labels.join('；')}）；对应 Checkpoint 需先修复来源。`);
     }
     const aggregateDetails = [];
@@ -135,7 +138,8 @@ export function memoryOverviewStats(store, assistants, settings) {
         injectedCheckpoints: Math.max(blockCount, textCount),
         estimatedTokens: estimateTokenCount(injectionValue),
         recentBodyWindow: '由 SillyTavern 上下文设置控制',
-        summaryDetails: summaryHealthDetails(safeStore, entries), aggregateDetails,
+        storedSummaryRecords: Object.keys(safeStore.summaries).length,
+        summaryDetails, aggregateDetails,
         issues,
     };
 }
@@ -451,7 +455,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.6', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.22.7', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -1171,7 +1175,7 @@ export class CacheMemoryUI {
         const store = this.store.current();
         const overview = memoryOverviewStats(store, assistants, this.getSettings());
         const stats = [
-            ['摘要：已生成 / 应有', `${overview.summaries.generated} / ${overview.summaries.expected}`],
+            ['摘要：当前聊天有效 / 应有', `${overview.summaries.actual} / ${overview.summaries.expected}`],
             ['阶段记忆：已生成 / 应有', `${overview.checkpoints.actual} / ${overview.checkpoints.expected}`],
             ['长期记忆：已生成 / 应有', `${overview.longMemories.actual} / ${overview.longMemories.expected}`],
             ['有效 KEEP', overview.activeKeeps],
@@ -1185,7 +1189,7 @@ export class CacheMemoryUI {
         const health = this.element('section', 'cache-memory-health');
         health.dataset.state = overview.issues.length ? 'incomplete' : 'healthy';
         health.append(this.element('h4', '', '记忆状态'));
-        health.append(this.element('p', '', `摘要已生成 ${overview.summaries.generated} 条，其中有效 ${overview.summaries.actual} 条。已确认保存表示本机与服务器读回一致，已有记忆保持冻结，是否重新生成由你决定。`));
+        health.append(this.element('p', '', `存储摘要记录总数 ${overview.storedSummaryRecords} 条；当前聊天 ${overview.summaries.expected} 层，其中 ${overview.summaries.generated} 层有正文记录、${overview.summaries.actual} 层摘要与当前有效正文匹配。旧版本、已删除来源、空记录及未验证记录不参与后续整理，存储内容保持保留。已确认保存表示本机与服务器读回一致。`));
         health.append(this.element('strong', '', overview.issues.length ? '有待处理问题' : '记忆正常'));
         if (overview.issues.length) {
             const details = this.element('details');
@@ -1197,7 +1201,7 @@ export class CacheMemoryUI {
             health.append(this.element('p', '', '当前应有的 Summary、Checkpoint 与 Long Memory 均已生成。'));
         }
         const diagnostics = this.manager.querySelector('[data-memory-diagnostics]');
-        if (diagnostics) diagnostics.textContent = `已保存摘要 ${Object.keys(store.summaries).length} 条 · 当前注入 CP ${overview.injectedCheckpoints} 条 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
+        if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 当前注入 CP ${overview.injectedCheckpoints} 条 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
         if (this.showSummaryHealthDetails) {
             const detailSection = this.element('div', 'cache-memory-summary-health-details');
             detailSection.append(this.element('h5', '', '摘要异常明细'));

@@ -87,7 +87,11 @@ test('205 generated summaries remain usable despite 6 old source flags; only 2 U
     const store = makeStore(207);
     for (let n = 1; n <= 6; n++) Object.assign(store.summaries[`m${n}`], { status: 'stale', sourceValidity: 'changed' });
     for (let n = 206; n <= 207; n++) Object.assign(store.summaries[`m${n}`], { status: 'failed', frozen: false, error: 'Unauthorized' });
-    const entries = Array.from({ length: 207 }, (_, i) => ({ floor: i + 1, messageId: `m${i + 1}` }));
+    const entries = Array.from({ length: 207 }, (_, i) => {
+        const fingerprint = `body-${i + 1}`;
+        store.summaries[`m${i + 1}`].sourceContentFingerprint = fingerprint;
+        return { floor: i + 1, messageId: `m${i + 1}`, contentFingerprint: fingerprint };
+    });
     const overview = memoryOverviewStats(store, entries, {});
     assert.deepEqual(overview.summaries, { actual: 205, generated: 205, expected: 207 });
     assert.equal(overview.summaryDetails.filter(row => row.reason === 'stale').length, 0);

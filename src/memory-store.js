@@ -1,12 +1,31 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.6';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.6';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.6';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.7';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.7';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.7';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
     if (!record || !entry) return false;
-    // Absent legacy fingerprints are not evidence of a changed story.
-    return record.sourceContentFingerprint ? record.sourceContentFingerprint === entry.contentFingerprint : true;
+    return record.sourceContentFingerprint ? record.sourceContentFingerprint === entry.contentFingerprint
+        : Boolean(record.sourceFingerprint && record.sourceFingerprint === entry.fingerprint);
+}
+
+export function summaryForEntry(store, entry, byFloor = null) {
+    const summaries = store?.summaries ?? {};
+    if (summaries[entry.messageId]) return summaries[entry.messageId];
+    const rows = byFloor?.get(entry.floor) ?? Object.values(summaries).filter(item => item.floor === entry.floor);
+    const matching = rows.filter(item => isUsableMemory(item) && summaryMatchesEntry(item, entry));
+    if (matching.length === 1) return matching[0];
+    return rows.length === 1 && isUsableMemory(rows[0]) && rows[0].messageIndex === undefined && !rows[0].sourceFingerprint && !rows[0].sourceContentFingerprint ? rows[0] : null;
+}
+
+export function currentSummaryHealth(record, entry) {
+    const health = memoryHealth(record);
+    if (health.code !== 'valid') return health;
+    if (!isUsableMemory(record)) return { code: 'invalid', label: '摘要未冻结或状态不可用，原记录保留' };
+    if (summaryMatchesEntry(record, entry)) return health;
+    return record.sourceContentFingerprint
+        ? { code: 'body-mismatch', label: '摘要对应旧正文 / Swipe，与当前有效正文不匹配，未参与整理' }
+        : { code: 'unverified', label: '缺少可验证的当前正文指纹，原记录保留，未参与整理' };
 }
 const KEEP_STATUSES = new Set(['active', 'resolved', 'superseded', 'invalid']);
 
@@ -373,12 +392,7 @@ export class MemoryStore {
     }
 
     getSummaryForEntry(entry, store = this.current(), byFloor = null) {
-        const exact = store.summaries[entry.messageId];
-        if (exact) return exact;
-        // Very old JSON had floor-only summaries. Use a single unambiguous
-        // legacy record without inventing an identity or deleting its key.
-        const rows = byFloor?.get(entry.floor) ?? Object.values(store.summaries).filter(item => item.floor === entry.floor);
-        return rows.length === 1 && rows[0].messageIndex === undefined && !rows[0].sourceFingerprint && !rows[0].sourceContentFingerprint ? rows[0] : null;
+        return summaryForEntry(store, entry, byFloor);
     }
 
     retireSummaries(entry, record, store = this.current()) {
@@ -549,7 +563,9 @@ export class MemoryStore {
         for (const item of items) {
             const key = String(item.id).toUpperCase();
             const current = store.keepRegistry[key];
-            if (!current || !KEEP_STATUSES.has(item.status)) continue;
+            // Automatic lifecycle application cannot resurrect a KEEP changed
+            // while the request was in flight; manual status tools are separate.
+            if (!current || current.status !== 'active' || !KEEP_STATUSES.has(item.status) || item.status === 'active') continue;
             if (['status', 'reason', 'evidence', 'replacedBy', 'resolvedStoryTime'].some(field => String(current[field] ?? '') !== String(item[field] ?? ''))) {
                 Object.assign(current, { status: item.status, reason: item.reason ?? '', evidence: item.evidence ?? '', replacedBy: item.replacedBy ?? '',
                     resolvedStoryTime: item.resolvedStoryTime ?? '', updatedAt: item.updatedAt ?? new Date().toISOString() });
@@ -757,7 +773,8 @@ export function memoryHealth(item) {
     if (!item) return { code: 'missing', label: '尚未生成 / 记录不存在' };
     if (item.status === 'failed') return { code: 'failed', label: `生成失败：${item.error || '未提供错误'}` };
     if (item.startFloor !== undefined && !hasAggregateContent(item)) return { code: 'missing', label: '内容为空，待生成' };
-    if (item.status === 'orphaned') return { code: 'orphaned', label: '来源消息已明确删除，原记录保留' };
+    if (item.status === 'orphaned') return { code: 'orphaned', label: '旧消息 / 旧版本来源已失效（orphaned），原记录保留' };
+    if (item.startFloor === undefined && !['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(item[key] ?? '').trim())) return { code: 'empty', label: '摘要内容为空，原记录保留' };
     return { code: 'valid', label: item.status === 'manual-edited' ? '已冻结 · 人工编辑' : '已冻结' };
 }
 

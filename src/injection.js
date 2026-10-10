@@ -1,6 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.22.6';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.22.6';
-import { stripStructuredSections } from './summary-format.js?v=1.22.6';
+import { INJECTION_MODES } from './defaults.js?v=1.22.7';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, summaryText } from './continuity.js?v=1.22.7';
+import { stripStructuredSections } from './summary-format.js?v=1.22.7';
+import { reconcileTrackedCheckpoint } from './active-state.js?v=1.22.7';
 function fullInjection(blocks) {
     return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
 }
@@ -18,12 +19,13 @@ export function buildInjection(store, settings) {
         const blocks = [];
         const legacyLatest = store.checkpoints.filter(isUsableMemory).sort(byRange).at(-1);
         const stateEnd = latest?.endFloor ?? legacyLatest?.endFloor ?? 0;
-        const facts = formatLongFacts(projectLongFacts(store));
+        const facts = formatLongFacts(projectLongFacts(store, Infinity, { includeTracked: settings.activeStateEnabled }));
         if (facts !== '无') blocks.push(`[LONG_MEMORY]\n${facts}`);
         const keeps = formatKeepItems(collectKeepItems(store));
         if (keeps !== '无') blocks.push(`[KEEP]\n${keeps}`);
         if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode) && stateEnd) {
-            const state = latest?.content ?? previousState(store, stateEnd + 1).content;
+            let state = latest?.content ?? previousState(store, stateEnd + 1).content;
+            if (settings.activeStateEnabled) state = reconcileTrackedCheckpoint(state, store, stateEnd, latest?.startFloor ?? 1);
             blocks.push(`[LATEST_CHECKPOINT | 截至第${stateEnd}层]\n${stripStructuredSections(state, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP'])}`);
         }
         if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {

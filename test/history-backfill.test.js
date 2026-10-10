@@ -287,7 +287,7 @@ test('late failed checkpoints and long memories are discarded after a chat switc
     for (const kind of ['checkpoint', 'long']) {
         const f = fixture(5);
         const entries = getAssistantMessages(f.chat);
-        for (const entry of entries) f.store.addSummary({ ...entry, message: undefined, title: 'S', event: '事件', status: 'frozen', frozen: true });
+        for (const entry of entries) f.store.addSummary({ ...entry, message: undefined, sourceContentFingerprint: entry.contentFingerprint, title: 'S', event: '事件', status: 'frozen', frozen: true });
         const started = gate(), response = gate();
         f.apiClient.complete = () => { started.resolve(); return response.promise; };
         const pending = kind === 'checkpoint' ? f.summarizer.generateCheckpoint(1, 5)
@@ -354,7 +354,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts/timeouts survive', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.22.6');
+    assert.equal(PLUGIN_VERSION, '1.22.7');
     assert.equal(settings.timeoutMs, 180000);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);

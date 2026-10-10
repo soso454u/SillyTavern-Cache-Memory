@@ -4,9 +4,9 @@ import { resolveUIRoot, viewportSize } from '../src/ui-context.js';
 import { buildCheckpointContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections, summaryHealthDetails } from '../src/ui.js';
 
 test('overview reports expected memory counts, injection size and broken chains locally', () => {
-    const assistants = Array.from({ length: 10 }, (_, index) => ({ floor: index + 1, messageId: `m${index + 1}` }));
+    const assistants = Array.from({ length: 10 }, (_, index) => ({ floor: index + 1, messageId: `m${index + 1}`, contentFingerprint: `body${index + 1}` }));
     const summaries = Object.fromEntries(assistants.filter(entry => entry.floor !== 8)
-        .map(entry => [entry.messageId, { floor: entry.floor, event: 'saved content', status: 'frozen', frozen: true }]));
+        .map(entry => [entry.messageId, { floor: entry.floor, event: 'saved content', sourceContentFingerprint: entry.contentFingerprint, status: 'frozen', frozen: true }]));
     const store = {
         summaries,
         checkpoints: [{ id: 'checkpoint-001', startFloor: 1, endFloor: 5, content: '完整阶段记忆', status: 'frozen', frozen: true }],
@@ -42,12 +42,12 @@ test('summary health ignores old source flags and separates missing, failed, del
     const assistants = [
         { floor: 1, messageId: 'missing' },
         { floor: 2, messageId: 'failed' },
-        { floor: 3, messageId: 'stale' },
+        { floor: 3, messageId: 'stale', contentFingerprint: 'body3' },
         { floor: 4, messageId: 'orphaned-visible' },
     ];
     const details = summaryHealthDetails({ summaries: {
         failed: { messageId: 'failed', floor: 2, status: 'failed', error: 'timeout' },
-        stale: { messageId: 'stale', floor: 3, status: 'stale' },
+        stale: { messageId: 'stale', floor: 3, status: 'stale', event: 'saved content', sourceContentFingerprint: 'body3' },
         'orphaned-visible': { messageId: 'orphaned-visible', floor: 4, status: 'orphaned' },
         unloaded: { messageId: 'unloaded', floor: 5, status: 'frozen' },
         'orphaned-hidden': { messageId: 'orphaned-hidden', floor: 6, status: 'orphaned' },

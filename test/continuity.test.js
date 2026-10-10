@@ -15,7 +15,13 @@ function fixture() {
 
 function loadedChat(store) {
     const latest = Math.max(0, ...Object.values(store.current().summaries).map(item => item.floor || 0));
-    return Array.from({ length: latest }, (_, i) => ({ name: '合成角色', mes: `合成正文${i + 1}`, gen_started: `g${i}` }));
+    const chat = Array.from({ length: latest }, (_, i) => ({ name: '合成角色', mes: `合成正文${i + 1}`, gen_started: `g${i}` }));
+    const entries = getAssistantMessages(chat);
+    for (const row of Object.values(store.current().summaries)) {
+        const entry = entries[row.floor - 1];
+        if (entry) { row.sourceContentFingerprint = entry.contentFingerprint; row.sourceFingerprint = entry.fingerprint; }
+    }
+    return chat;
 }
 
 function addSummary(store, floor, text) {
@@ -335,7 +341,7 @@ test('truncated model output does not replace an existing frozen summary and fai
     const { store } = fixture();
     const chat = [{ is_user: true, mes: 'u' }, { name: 'A', mes: '正文', send_date: '1', gen_started: '1', is_user: false }];
     const entry = getAssistantMessages(chat)[0];
-    store.addSummary({ ...entry, title: 'original', event: '完整内容', frozen: true, status: 'frozen' });
+    store.addSummary({ ...entry, sourceContentFingerprint: entry.contentFingerprint, title: 'original', event: '完整内容', frozen: true, status: 'frozen' });
     const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 1 }), getChat: () => chat,
         apiClient: { complete: async () => ({ content: 'partial', finishReason: 'length' }) } });
     await assert.rejects(summarizer.summarizeEntry(entry, { overwrite: true }), /token 上限/);

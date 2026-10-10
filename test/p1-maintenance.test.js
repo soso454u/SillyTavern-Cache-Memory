@@ -57,7 +57,7 @@ test('new defaults and reset templates preserve structure, NPC rules and custom 
     assert.equal(normalizeSettings({ injectionMaxTokens: 2800 }).injectionMaxTokens, undefined);
 });
 
-test('published, ready and unclaimed tasks remain active; failed tasks leave current context', () => {
+test('published, ready and unclaimed tasks remain active; failed results remain in inheritance context', () => {
     const store = createEmptyStore('a');
     const base = { kind: 'thread', entity: '甲/主角', key: '任务', value: '已正式发布', evidence: '系统正式发布任务', confirmed: true };
     for (const [i, status] of ['published', 'active', 'ready', 'unclaimed', 'failed'].entries()) {
@@ -68,7 +68,7 @@ test('published, ready and unclaimed tasks remain active; failed tasks leave cur
         if (status !== 'failed') assert.match(stateContext(store), /任务/);
     }
     assert.equal(projectActiveState(store).length, 1);
-    assert.equal(stateContext(store), '无');
+    assert.match(stateContext(store), /failed/);
 });
 
 test('unclaimed rewards do not enter Long Facts and acquired skills reuse unique existing fact IDs', () => {

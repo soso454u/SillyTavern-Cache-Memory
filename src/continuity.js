@@ -1,12 +1,13 @@
-import { fnv1a } from './utils.js?v=1.22.6';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.6';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.22.6';
-import { matchesTrackedFact, projectActiveState } from './active-state.js?v=1.22.6';
+import { fnv1a } from './utils.js?v=1.22.7';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.22.7';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.22.7';
+import { isTrackedActive, matchesTrackedFact, projectActiveState } from './active-state.js?v=1.22.7';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
 export const isUsableMemory = item => item && item.frozen !== false && ['frozen', 'manual-edited', 'stale'].includes(item.status ?? 'frozen')
-    && (item.startFloor === undefined || hasAggregateContent(item));
+    && (item.startFloor !== undefined || item.endFloor !== undefined || item.memoryKind === 'facts'
+        ? hasAggregateContent(item) : ['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(item[key] ?? '').trim()));
 
 export function readSection(text, name) {
     const sections = String(text ?? '').split(/^\s*\[([^\]\n]+)\]\s*$/m);
@@ -41,8 +42,44 @@ export function extractSummaryKeepEntries(item) {
     return [...new Set(entries)];
 }
 
+function knowledgeKeepChanged(keep, state) {
+    if (state.category !== 'knowledge' || !String(keep.text).includes(state.entity)) return false;
+    const old = state.history.find(item => item.sourceId === keep.sourceId);
+    if (!old) return false;
+    const actors = state.actors ?? [];
+    const withoutActors = text => actors.reduce((value, actor) => value.replaceAll(actor, ''), String(text))
+        .replace(/对此|这件事|不知情|不知道|不知晓|未知|不知|知晓|知道|得知|获知|已知|目前|仍然|仍旧/gu, '')
+        .replace(/[\s，。；、：“”‘’()（）]/gu, '');
+    const original = withoutActors(old.value), text = withoutActors(keep.text);
+    // Same source and a shared substantive phrase tie the knowledge to the
+    // same subject. Never merge secrets merely because an observer is shared.
+    if (![...original].some((_, index) => original.slice(index, index + 4).length === 4 && text.includes(original.slice(index, index + 4)))) return false;
+    const knowledge = (value, actor) => {
+        const escaped = actor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        for (const [, clause] of String(value).matchAll(new RegExp(`${escaped}([^，。；;\\n]{0,16})`, 'gu'))) {
+            const predicate = clause.match(/不知情|不知道|不知晓|未知|不知|知晓|知道|得知|获知/u);
+            if (!predicate || actors.some(other => other !== actor && clause.slice(0, predicate.index).includes(other))) continue;
+            return /^(?:不|未)/u.test(predicate[0]) ? 'unknown' : 'known';
+        }
+        return '';
+    };
+    return actors.some(actor => {
+        const before = knowledge(keep.text, actor), after = knowledge(state.value, actor);
+        return before && after && before !== after;
+    });
+}
+
 export function collectKeepItems(store, throughFloor = Infinity) {
-    return Object.entries(store?.keepRegistry ?? {}).map(([id, item]) => ({ ...item, id }))
+    const state = projectActiveState(store, throughFloor).filter(item => !item.needsReview);
+    return Object.entries(store?.keepRegistry ?? {}).map(([id, item]) => {
+        const latest = state.find(row => row.sourceFloor > (Number(item.sourceFloor) || 0)
+            && (matchesTrackedFact(item, row) || knowledgeKeepChanged(item, row)));
+        if (item.status !== 'active' || !latest || !latest.evidence) return { ...item, id };
+        const ended = !isTrackedActive(latest);
+        const changed = knowledgeKeepChanged(item, latest)
+            || !String(item.text).includes(latest.value) && latest.history.some(old => old.value && String(item.text).includes(old.value));
+        return ended || changed ? { ...item, id, status: ended ? 'resolved' : 'superseded', reason: latest.value, evidence: latest.evidence } : { ...item, id };
+    })
         .filter(item => (Number(item.sourceFloor) || 0) <= throughFloor)
         .sort((a, b) => {
             const left = Number(String(a.id).match(/\d+/)?.[0]) || 0;
@@ -77,7 +114,9 @@ export function resolveKeepItems(items, output, newSummaries, summaries = []) {
 }
 
 export function formatKeepItems(items) {
-    return items.filter(item => item.status === 'active').map(item => `- ${item.id} | ${item.text}`).join('\n') || '无';
+    const seen = new Set();
+    return items.filter(item => item.status === 'active' && normalizeKeepText(item.text) && !seen.has(normalizeKeepText(item.text)) && seen.add(normalizeKeepText(item.text)))
+        .map(item => `- ${item.id} | ${item.text}`).join('\n') || '无';
 }
 
 export function previousState(store, startFloor) {
@@ -117,8 +156,9 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
         }
     }
     if (includeTracked) {
-        for (const item of projectActiveState(store, throughFloor).filter(row => row.kind === 'state' && row.lifetime !== 'temporary' && row.acquisition !== 'pending')) {
+        for (const item of projectActiveState(store, throughFloor).filter(row => row.kind === 'state' && !row.needsReview && row.lifetime !== 'temporary' && row.acquisition !== 'pending')) {
             const matches = [...facts.values()].filter(fact => fact.status === 'active' && matchesTrackedFact(fact, item));
+            if (matches.some(fact => fact.floor > item.sourceFloor)) continue;
             const id = matches[0]?.id ?? item.id;
             for (const duplicate of matches.slice(1)) facts.set(duplicate.id, { ...duplicate, status: 'superseded' });
             facts.set(id, { id, stateId: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: item.needsReview ? 'needs-review' : item.status === 'active' ? 'active' : 'retired',
