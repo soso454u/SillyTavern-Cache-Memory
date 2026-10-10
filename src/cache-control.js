@@ -1,9 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.22.9';
-import { buildInjection } from './injection.js?v=1.22.9';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.22.9';
-import { fnv1a } from './utils.js?v=1.22.9';
-import { stripStructuredSections } from './summary-format.js?v=1.22.9';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.22.9';
+import { INJECTION_MODES } from './defaults.js?v=1.22.10';
+import { buildInjection } from './injection.js?v=1.22.10';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.22.10';
+import { fnv1a } from './utils.js?v=1.22.10';
+import { stripStructuredSections } from './summary-format.js?v=1.22.10';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.22.10';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;

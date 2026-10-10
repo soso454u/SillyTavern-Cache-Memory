@@ -1,4 +1,4 @@
-import { fnv1a } from './utils.js?v=1.22.9';
+import { fnv1a } from './utils.js?v=1.22.10';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
@@ -7,15 +7,20 @@ const validSummary = item => item && item.frozen !== false && !['failed', 'orpha
 
 export function threadKey(value) {
     const key = clean(value);
-    const named = key.match(/^(?:(?:突发)?任务\s*[:：]?\s*)?【([^【】]+)】(?:剧情判定|判定|任务|进度|状态)?$/u);
-    return named?.[1].trim() ?? key.replace(/^(?:突发)?任务\s*[:：]\s*/u, '').trim();
+    const named = key.match(/^(?:(?:新手|突发)?任务\s*[:：]?\s*)?【([^【】]+)】(?:剧情判定|判定|任务|进度|状态)?$/u);
+    return named?.[1].trim() ?? key.replace(/^(?:新手|突发)?任务\s*[:：]\s*/u, '').trim();
 }
 
+// This suffix names the same displayed measurement, not a second attribute.
+// Other slash-separated fields may be independent and are not merged.
+const attributeKey = value => clean(value).replace(/\s*[/／]\s*红字数值$/u, '');
+const subjectKey = item => item.kind === 'thread' ? threadKey(item.key)
+    : item.category === 'attribute' ? attributeKey(item.key) : clean(item.key);
 const sameSubject = (a, b) => a.kind === b.kind && a.entity === b.entity
-    && (a.kind === 'thread' ? threadKey(a.key) === threadKey(b.key) : a.key === b.key);
+    && subjectKey(a) === subjectKey({ ...b, category: b.category || a.category });
 
 export function stateId(item) {
-    return `${item.kind === 'thread' ? 'thread' : 'state'}-${fnv1a(JSON.stringify([clean(item.entity), item.kind === 'thread' ? threadKey(item.key) : clean(item.key)]))}`;
+    return `${item.kind === 'thread' ? 'thread' : 'state'}-${fnv1a(JSON.stringify([clean(item.entity), subjectKey(item)]))}`;
 }
 
 // Only a small, evidenced delta is extracted in the existing Summary request.
@@ -50,14 +55,22 @@ export function parseStateChanges(text, source, known = []) {
 
 export function projectActiveState(store, throughFloor = Infinity) {
     const records = new Map();
+    const aggregateSources = new Set();
     const replay = (change, source) => {
         if (!change?.id || !['thread', 'state'].includes(change.kind)) return;
         const recordKey = stateId(change);
         const old = records.get(recordKey);
-        if (!change.manual && old && !old.needsReview && old.kind === 'thread' && old.status === 'completed'
-            && change.status !== 'completed') return;
+        // A frozen Long may be the only retained, verified settlement after a
+        // Summary version switch. Use its explicit structured result only as
+        // a fallback, preserving a real Summary result and manual correction.
+        if (source.aggregate && old && !old.needsReview && (old.manual || !isTrackedActive(old))) return;
+        if (!change.manual && old && !old.needsReview) {
+            if (source.needsReview) return;
+            if (old.kind === 'thread' && (old.status === 'completed' && change.status !== 'completed'
+                || !isTrackedActive(old) && isTrackedActive(change))) return;
+        }
         const history = old ? [...old.history, { key: old.key, value: old.value, status: old.status, sourceId: old.sourceId, sourceFloor: old.sourceFloor }] : [];
-        records.set(recordKey, { ...old, ...change, id: old?.id ?? change.id, ...source, history, originSourceId: change.manual ? change.sourceId : old?.originSourceId ?? source.sourceId,
+        records.set(recordKey, { ...old, ...change, manual: Boolean(change.manual), id: old?.id ?? change.id, ...source, history, originSourceId: change.manual ? change.sourceId : source.aggregate ? source.sourceId : old?.originSourceId ?? source.sourceId,
             condition: change.condition || old?.condition || '', actors: change.actors?.length ? change.actors : old?.actors ?? [] });
     };
     const events = [];
@@ -73,10 +86,23 @@ export function projectActiveState(store, throughFloor = Infinity) {
         events.push({ change: override, floor: override.sourceFloor, sequence: override.sequence || 1,
             source: { needsReview: !validSummary(source) || source.sourceFingerprint !== override.sourceFingerprint } });
     }
+    for (const memory of store.longMemories ?? []) {
+        if (!validSummary(memory) || !['frozen', 'manual-edited', 'stale'].includes(memory.status ?? 'frozen')
+            || memory.sourceReplaced || !(memory.endFloor <= throughFloor)) continue;
+        for (const line of String(memory.continuityState ?? '').split('\n')) {
+            const match = line.match(/^\s*-\s*已结束\s+([^·\n]+)\s·\s((?:(?:新手|突发)?任务\s*[:：]\s*)?[^：:\n]+)[：:]\s*(.+)\s\((completed|failed|cancelled)，(?:仅作)?历史结果\)\s*$/u);
+            if (!match) continue;
+            const [, entity, key, value, status] = match;
+            const change = { kind: 'thread', entity: entity.trim(), key: key.trim(), value: value.trim(), status, evidence: line.trim() };
+            change.id = stateId(change);
+            aggregateSources.add(memory.id);
+            events.push({ change, floor: memory.endFloor, sequence: 0, source: { sourceId: memory.id, sourceFloor: memory.endFloor, needsReview: false, aggregate: true } });
+        }
+    }
     events.sort((a, b) => a.floor - b.floor || a.sequence - b.sequence);
     for (const event of events) replay(event.change, event.source);
     // A later progress report cannot repair an erased/edited task announcement.
-    for (const item of records.values()) if (!validSummary(store.summaries?.[item.originSourceId])) item.needsReview = true;
+    for (const item of records.values()) if (!aggregateSources.has(item.originSourceId) && !validSummary(store.summaries?.[item.originSourceId])) item.needsReview = true;
     return [...records.values()];
 }
 
@@ -97,12 +123,15 @@ export function trackedLines(store, throughFloor, kind) {
 }
 
 export function matchesTrackedFact(fact, item) {
-    if (fact.stateId) return fact.stateId === item.id;
+    if (fact.stateId && fact.stateId === item.id) return true;
     const text = String(fact.text ?? '').replace(/^\s*(?:[-*•]|\d+[.)、])\s*/, '').trim();
     // Both the observer and the exact subject must match, including knowledge.
     const escape = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const keys = item.kind === 'thread' ? [...new Set([item.key, ...(item.history ?? []).map(old => old.key).filter(Boolean), threadKey(item.key)])] : [item.key];
-    return keys.some(key => new RegExp(`^(?:已结束\\s+)?(?:【)?${escape(item.entity)}\\s*(?:[·|｜:：的]\\s*)?${escape(key)}(?:[：:】\\s]|$)`).test(text));
+    const prefix = `^(?:已结束\\s+)?(?:【)?${escape(item.entity)}\\s*(?:[·|｜:：的]\\s*)?`;
+    const keys = [...new Set([item.key, ...(item.history ?? []).map(old => old.key).filter(Boolean), subjectKey(item)])];
+    if (keys.some(key => new RegExp(`${prefix}${escape(key)}(?:[：:】\\s]|$)`).test(text))) return true;
+    if (item.kind === 'thread') return new RegExp(`${prefix}(?:(?:新手|突发)?任务\\s*[:：]?\\s*)?(?:【${escape(threadKey(item.key))}】(?:剧情判定|判定|任务|进度|状态)?|${escape(threadKey(item.key))})(?:[：:\\s]|$)`).test(text);
+    return item.category === 'attribute' && new RegExp(`${prefix}${escape(attributeKey(item.key))}(?:\\s*[/／]\\s*红字数值)?(?:[：:】\\s]|$)`).test(text);
 }
 
 export function reconcileTrackedCheckpoint(content, store, throughFloor, startFloor = 1) {

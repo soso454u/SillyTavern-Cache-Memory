@@ -1,7 +1,7 @@
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.9';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.22.9';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.10';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.22.10';
 
-export const PLUGIN_VERSION = '1.22.9';
+export const PLUGIN_VERSION = '1.22.10';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
