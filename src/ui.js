@@ -1,17 +1,17 @@
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.10';
-import { effectiveInjectionMode } from './cache-control.js?v=1.22.10';
-import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.10';
-import { HistoryBackfill } from './history-backfill.js?v=1.22.10';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.10';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.10';
-import { buildStructuredSummary } from './summary-format.js?v=1.22.10';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.10';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.10';
-import { parseFloorSummary } from './summarizer.js?v=1.22.10';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.10';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.22.11';
+import { effectiveInjectionMode } from './cache-control.js?v=1.22.11';
+import { API_PROVIDERS, DEFAULT_PROMPTS, GENERATION_TRANSPORTS, LEGACY_PROMPTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.22.11';
+import { HistoryBackfill } from './history-backfill.js?v=1.22.11';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.22.11';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.22.11';
+import { buildStructuredSummary } from './summary-format.js?v=1.22.11';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.22.11';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.22.11';
+import { parseFloorSummary } from './summarizer.js?v=1.22.11';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.22.11';
 
-import { memoryHealth, summaryForEntry, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.10';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.10';
+import { memoryHealth, summaryForEntry, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.22.11';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.22.11';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -28,6 +28,12 @@ const CHECKPOINT_SECTIONS = Object.freeze([
     ['secretsKnowledge', 'Secrets & Knowledge', '秘密与认知差'],
     ['openThreads', 'Open Threads', '未解决事项'],
     ['continuityLocks', 'Continuity Locks', '连续性锁'],
+]);
+
+const LONG_MEMORY_SECTIONS = Object.freeze([
+    ['longMemory', 'LONG_MEMORY', '长期记忆'],
+    ['updatedFacts', 'UPDATED_FACTS', '更新事实'],
+    ['retiredFacts', 'RETIRED_FACTS', '已退役事实'],
 ]);
 
 export function estimateTokenCount(value) {
@@ -156,6 +162,20 @@ export function buildCheckpointContent(fields) {
         .join('\n');
 }
 
+export function parseLongMemorySections(content) {
+    const text = String(content ?? '');
+    const parts = text.split(/^\s*\[([^\]\n]+)\]\s*$/m);
+    const names = parts.filter((_, index) => index % 2 === 1).map(name => name.toUpperCase());
+    // Custom formats remain fully visible and editable without losing extra sections.
+    if (parts[0].trim() || !names.includes('LONG_MEMORY') || new Set(names).size !== names.length
+        || names.some(name => !LONG_MEMORY_SECTIONS.some(([, section]) => section === name))) return null;
+    return Object.fromEntries(LONG_MEMORY_SECTIONS.map(([key, section]) => [key, readSection(text, section)]));
+}
+
+export function buildLongMemoryContent(fields) {
+    return LONG_MEMORY_SECTIONS.flatMap(([key, section]) => [`[${section}]`, String(fields[key] ?? '').trim() || '无']).join('\n');
+}
+
 function notify(type, message) {
     const root = resolveUIRoot();
     const owner = root.window?.[OWNER_KEY] ?? root[OWNER_KEY];
@@ -246,7 +266,7 @@ function managerPanelTemplate() {
     return `
         <section id="${MANAGER_ID}" class="cache-memory-tab-panel cache-memory-manager-panel" role="tabpanel" data-settings-panel="manager" hidden>
             <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
-                <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="long">长期记忆 Long Memory</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button>
+                <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="long">长期记忆 Long Memory</button>
             </nav>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-save-memory>上传记忆到服务器</button>
@@ -455,7 +475,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.22.10', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.22.11', import.meta.url).href;
         this.doc.head.append(this.style);
     }
 
@@ -1524,8 +1544,26 @@ export class CacheMemoryUI {
             root.append(this.foldCard({ key: `long:${memory.id}`, group: 'facts', type: 'long', id: memory.id,
                 title: `${memory.id}｜${memory.startFloor}–${memory.endFloor}层`, status: memoryHealth(memory).label,
                 renderBody: body => {
-                    body.append(this.line('有效性', memoryHealth(memory).label), this.element('pre', '', memory.content));
+                    body.append(this.line('有效性', memoryHealth(memory).label),
+                        this.line('剧情日期/时间范围', memory.storyStartTime && memory.storyEndTime ? `${memory.storyStartTime} → ${memory.storyEndTime}` : memory.storyStartTime || memory.storyEndTime));
+                    const fields = parseLongMemorySections(memory.content);
+                    if (this.isEditing('long', memory.id)) {
+                        this.inlineEditor(body, fields ? LONG_MEMORY_SECTIONS.map(([key, section, label]) => ({
+                            key, label: `${label} · ${section}`, value: fields[key], multiline: true, rows: 5,
+                        })) : [{ key: 'rawContent', label: '原始 Long Memory（自定义或旧格式）', value: memory.content, multiline: true, rows: 14 }]);
+                        return;
+                    }
+                    if (fields) {
+                        const sections = this.element('div', 'cache-memory-structured-sections');
+                        for (const [key, , label] of LONG_MEMORY_SECTIONS) {
+                            const section = this.element('section', 'cache-memory-structured-section');
+                            section.append(this.element('h5', '', label), this.element('p', '', fields[key] || '无'));
+                            sections.append(section);
+                        }
+                        body.append(sections);
+                    } else body.append(this.element('div', 'cache-memory-raw-content', memory.content));
                     const actions = this.element('div', 'cache-memory-actions');
+                    actions.innerHTML = '<button type="button" class="menu_button" data-manager-action="edit">编辑</button>';
                     if (memory.checkpointIds?.length) {
                         const button = this.element('button', 'menu_button', '查看来源阶段记忆');
                         button.dataset.locateType = 'Checkpoint'; button.dataset.locateId = memory.checkpointIds[0]; actions.append(button);
@@ -2223,10 +2261,10 @@ export class CacheMemoryUI {
     }
 
     beginInlineEdit(type, id, extra = {}) {
-        const groups = { summary: 'summaries', checkpoint: 'checkpoints', fact: 'facts', keep: 'keeps' };
+        const groups = { summary: 'summaries', checkpoint: 'checkpoints', long: 'facts', fact: 'facts', keep: 'keeps' };
         const group = groups[type];
         if (!group) return;
-        this.managerExpanded[group].add(id);
+        this.managerExpanded[group].add(type === 'long' ? `long:${id}` : id);
         this.managerEditing = { type, id, ...extra };
     }
 
@@ -2251,6 +2289,9 @@ export class CacheMemoryUI {
         } else if (type === 'checkpoint') {
             const content = Object.hasOwn(values, 'rawContent') ? values.rawContent : buildCheckpointContent(values);
             this.store.updateAggregate('checkpoint', id, { content, ...edited });
+        } else if (type === 'long') {
+            const content = Object.hasOwn(values, 'rawContent') ? values.rawContent : buildLongMemoryContent(values);
+            this.store.updateAggregate('long', id, { content, ...edited });
         } else if (type === 'fact') {
             const legacy = this.store.current().longMemories.find(item => item.id === id && item.memoryKind !== 'facts');
             if (legacy) this.store.updateAggregate('long', id, { content: values.rawContent, ...edited });

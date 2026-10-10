@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveUIRoot, viewportSize } from '../src/ui-context.js';
-import { buildCheckpointContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections, summaryHealthDetails } from '../src/ui.js';
+import { buildCheckpointContent, buildLongMemoryContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections, parseLongMemorySections, summaryHealthDetails } from '../src/ui.js';
 
 test('overview reports expected memory counts, injection size and broken chains locally', () => {
     const assistants = Array.from({ length: 10 }, (_, index) => ({ floor: index + 1, messageId: `m${index + 1}`, contentFingerprint: `body${index + 1}` }));
@@ -29,6 +29,8 @@ test('overview reports expected memory counts, injection size and broken chains 
 test('memory manager is a settings tab instead of a second dialog', () => {
     const html = configTemplate();
     assert.match(html, /data-settings-tab="manager"/);
+    assert.deepEqual([...html.matchAll(/data-manager-view="([^"]+)"/g)].map(match => match[1]),
+        ['overview', 'summaries', 'facts', 'keeps', 'threads', 'states', 'checkpoints', 'long']);
     assert.match(html, /id="cache-memory-manager"[^>]+data-settings-panel="manager"/);
     assert.doesNotMatch(html, /data-manager-back|data-manager-close|aria-label="记忆管理"/);
     assert.match(html, /data-save-settings/);
@@ -156,4 +158,35 @@ test('100 pointer moves measure layout once and queue one compositor frame; abor
     assert.ok(Object.values(handlers).every(item => item.signal.aborted));
     assert.equal(measurements, 1);
     assert.ok(cancelled.length);
+});
+
+test('Long Memory structured editing preserves all three existing sections and custom formats fall back intact', () => {
+    const fields = { longMemory: '- 【合成主角｜关系】与同伴共同调查', updatedFacts: '- fact-old | 已找到钥匙 | 找到钥匙的证据', retiredFacts: '- fact-done | 已完成调查 | 已完成调查的证据' };
+    assert.deepEqual(parseLongMemorySections(buildLongMemoryContent(fields)), fields);
+    assert.equal(parseLongMemorySections(buildLongMemoryContent({ ...fields, retiredFacts: '' })).retiredFacts, '无');
+    assert.deepEqual(parseLongMemorySections('[LONG_MEMORY]\n- 合成历史'), { longMemory: '- 合成历史', updatedFacts: '', retiredFacts: '' });
+    for (const text of ['旧格式完整正文', '[LONG_MEMORY]\n历史\n[Extra]\n必须保留', '前言\n[LONG_MEMORY]\n正文', '[LONG_MEMORY]\n甲\n[LONG_MEMORY]\n乙']) {
+        assert.equal(parseLongMemorySections(text), null);
+    }
+});
+
+test('Long Memory inline save uses the existing store edit path and keeps its card expanded', () => {
+    const calls = [];
+    const ui = new CacheMemoryUI({ store: { updateAggregate: (...args) => calls.push(args) } });
+    ui.renderManager = () => {};
+    ui.renderMessageMemories = () => {};
+    const fields = { longMemory: '- 合成修订后的重要历史', updatedFacts: '无', retiredFacts: '无' };
+    const card = { dataset: { memoryType: 'long', memoryId: 'long-001' }, querySelectorAll: () => Object.entries(fields).map(([key, value]) => ({ dataset: { editField: key }, value })) };
+    ui.beginInlineEdit('long', 'long-001');
+    assert.ok(ui.managerExpanded.facts.has('long:long-001'));
+    ui.saveInlineEdit(card);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].slice(0, 2), ['long', 'long-001']);
+    assert.deepEqual(parseLongMemorySections(calls[0][2].content), fields);
+    assert.equal(calls[0][2].manualEdited, true);
+    assert.equal(calls[0][2].frozen, true);
+    assert.equal(ui.managerEditing, null);
+    ui.beginInlineEdit('long', 'legacy');
+    ui.saveInlineEdit({ dataset: { memoryType: 'long', memoryId: 'legacy' }, querySelectorAll: () => [{ dataset: { editField: 'rawContent' }, value: '完整旧格式正文\n[Extra]\n独有信息' }] });
+    assert.equal(calls[1][2].content, '完整旧格式正文\n[Extra]\n独有信息');
 });

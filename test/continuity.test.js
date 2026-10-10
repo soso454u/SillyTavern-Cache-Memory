@@ -402,3 +402,31 @@ test('KEEP and stable facts survive 100 incremental checkpoints through floor 10
     assert.match(output, /十二月前陪陆雾回巴黎见外婆/);
     assert.match(output, /截至第1000层/);
 });
+
+test('Long Memory section edits preserve separate tracked state and untouched historical updates', () => {
+    const { store } = fixture();
+    const tracked = { action: 'add', id: 'state-synthetic', stateId: 'state-synthetic', text: '合成主角 · 能力：二级', evidence: '明确升级证据' };
+    const historical = { action: 'replace', id: 'fact-revised', previousId: 'fact-old', text: '旧债务已结清', evidence: '旧层结算证据' };
+    const original = { action: 'add', id: 'fact-stable', text: '独有历史因果' };
+    const content = '[LONG_MEMORY]\n- 独有历史因果\n[UPDATED_FACTS]\n- fact-old | 旧债务已结清 | 旧层结算证据\n[RETIRED_FACTS]\n无';
+    store.addLongMemory({ id: 'long-edit', startFloor: 1, endFloor: 10, memoryKind: 'facts', content,
+        factUpdates: [original, historical, tracked], continuityState: '[Open Threads]\n合成历史事项', checkpointIds: [], status: 'frozen', frozen: true });
+    const before = structuredClone(store.current().longMemories[0]);
+    store.updateAggregate('long', 'long-edit', { content, manualEdited: true });
+    assert.deepEqual(store.current().longMemories[0].factUpdates, before.factUpdates);
+    const changed = content.replace('- 独有历史因果', '- 独有历史因果\n- 新增重要关系');
+    store.updateAggregate('long', 'long-edit', { content: changed, manualEdited: true });
+    const memory = store.current().longMemories[0];
+    assert.deepEqual(memory.factUpdates.find(update => update.id === original.id), original);
+    assert.deepEqual(memory.factUpdates.find(update => update.id === tracked.id), tracked);
+    assert.deepEqual(memory.factUpdates.find(update => update.id === historical.id), historical);
+    assert.equal(memory.continuityState, before.continuityState);
+    assert.match(formatLongFacts(projectLongFacts(store.current())), /新增重要关系/);
+    assert.equal(memory.content, changed);
+    store.updateAggregate('long', 'long-edit', { content: changed.replace('旧层结算证据\n', '旧层结算证据\n- fact-other | 新增事实 | 尚无法验证证据\n') });
+    assert.deepEqual(store.current().longMemories[0].factUpdates.find(update => update.id === historical.id), historical);
+    assert.ok(!store.current().longMemories[0].factUpdates.some(update => update.text === '新增事实'));
+    store.updateAggregate('long', 'long-edit', { content: changed.replace('- 独有历史因果\n', '') });
+    assert.ok(!store.current().longMemories[0].factUpdates.some(update => update.id === original.id));
+    assert.deepEqual(store.current().longMemories[0].factUpdates.find(update => update.stateId), tracked);
+});

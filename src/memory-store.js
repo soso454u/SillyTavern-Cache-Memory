@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.10';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, summaryText } from './continuity.js?v=1.22.10';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.10';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.22.11';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.22.11';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.22.11';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -708,12 +708,36 @@ export class MemoryStore {
         const list = type === 'long' ? store.longMemories : store.checkpoints;
         const item = list.find(entry => entry.id === id);
         if (!item) return null;
+        const previousContent = item.content;
+        const previousUpdates = item.factUpdates ?? [];
         Object.assign(item, structuredClone(updates), { id });
         if (updates.content !== undefined) { delete item.factCorrection; delete item.invalidSourceIds; delete item.invalidSourceVersions; }
-        if (item.memoryKind === 'facts' && Object.hasOwn(updates, 'content')) {
+        if (item.memoryKind === 'facts' && Object.hasOwn(updates, 'content') && item.content !== previousContent) {
             const evidence = Object.values(store.summaries).filter(summary => summary.floor >= item.startFloor && summary.floor <= item.endFloor)
                 .map(summaryText).join('\n');
-            item.factUpdates = parseFactUpdates(item.content, projectLongFacts(store, item.startFloor - 1), evidence);
+            const sections = { add: 'LONG_MEMORY', replace: 'UPDATED_FACTS', retire: 'RETIRED_FACTS' };
+            const structured = /^\s*\[LONG_MEMORY\]\s*$/im.test(previousContent ?? '') && /^\s*\[LONG_MEMORY\]\s*$/im.test(item.content);
+            const unchanged = update => {
+                if (!structured) return false;
+                const before = readSection(previousContent, sections[update.action]), after = readSection(item.content, sections[update.action]);
+                if (before === after) return true;
+                const contains = text => text.split('\n').some(line => {
+                    const value = line.replace(/^\s*[-*]\s*/, '').trim();
+                    if (update.action === 'add') return value === update.text;
+                    const [id, fact, quote] = value.split('|').map(part => part.trim());
+                    return id === update.previousId && fact === (update.text ?? update.reason) && quote === update.evidence;
+                });
+                return contains(before) && contains(after);
+            };
+            const parsed = parseFactUpdates(item.content, projectLongFacts(store, item.startFloor - 1), evidence);
+            // Editing narrative must not discard separate tracked states, or revalidate
+            // untouched historical sections against summaries that may no longer be loaded.
+            item.factUpdates = [
+                ...parsed.filter(update => !unchanged(update)).map(update => previousUpdates.find(previous => !previous.stateId
+                    && previous.action === update.action && previous.text === update.text && previous.previousId === update.previousId) ?? update),
+                ...previousUpdates.filter(update => !update.stateId && unchanged(update)),
+                ...previousUpdates.filter(update => update.stateId),
+            ];
         }
         this.validateDependencies(store);
         this.persist('manual edit');
