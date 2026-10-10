@@ -1,9 +1,10 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>窗口交互与主题回归</title>
 <style>
-/* Simulate a host theme that gives native buttons a strong default appearance. */
+/* Simulate a host theme that forces its native button appearance. */
 body { margin: 0; background: #151820; color: #ddd; font: 16px/1.5 sans-serif; }
-body button { padding: 12px; border: 2px solid #aaa; border-radius: 4px; background: #eee; color: #444; box-shadow: 0 2px 5px #888; }
+body button { padding: 12px !important; border: 2px solid #aaa !important; border-radius: 4px !important; background: #eee !important; color: #444 !important; box-shadow: 0 2px 5px #888 !important; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-thumb, ::-webkit-scrollbar-corner { background: white !important; }
 #results { position: absolute; top: 0; white-space: pre-wrap; }
 </style>
 <div id="extensions_settings2"></div><div id="chat"></div><pre id="results">正在验证…</pre>
@@ -26,8 +27,10 @@ const settle = () => new Promise(resolve => requestAnimationFrame(() => requestA
 const click = selector => { const element = document.querySelector(selector); if (!element) throw Error(`缺少 ${selector}`); element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); };
 const panel = name => ui.config.querySelector(`[data-settings-panel="${name}"]`);
 try {
+    if (!ui.style.sheet) await new Promise(resolve => ui.style.addEventListener('load', resolve, { once: true }));
     click('[data-open-settings]');
     assert('窗口状态属性不是按钮动作属性', !ui.config.matches('[data-summary-mode]') && ui.config.dataset.currentSummaryMode === 'normal');
+    assert('模式区仅留两个按钮，没有卡片标题', !ui.config.querySelector('.cache-memory-mode-heading') && [...ui.config.querySelectorAll('.cache-memory-mode-switch')].every(element => element.children.length === 1 && element.querySelectorAll('button').length === 2 && getComputedStyle(element).borderWidth === '0px'));
     const initialMode = store.current().summaryMode;
     for (const name of ['manager', 'api', 'injection', 'prompts', 'general']) {
         click(`[data-settings-tab="${name}"] span`);
@@ -35,9 +38,14 @@ try {
     }
     click('button[data-summary-mode="ensemble"]');
     assert('点击群像按钮同步编辑器和高亮', store.current().summaryMode === 'advanced' && ui.config.querySelector('[data-prompt="summary"]').value === ENSEMBLE_PROMPTS.summary && [...ui.config.querySelectorAll('button[data-summary-mode="ensemble"]')].every(button => button.getAttribute('aria-pressed') === 'true'));
+    assert('顶部与提示词页均明确标出群像为当前模式', [...ui.config.querySelectorAll('button[data-summary-mode]')].every(button => button.querySelector('[data-summary-current]').hidden === (button.dataset.summaryMode !== 'ensemble') && (button.dataset.summaryMode !== 'ensemble' || button.getAttribute('aria-label').includes('当前聊天正在使用'))));
+    const groupButton = ui.config.querySelector('button[data-summary-mode="ensemble"]');
+    const normalButton = ui.config.querySelector('button[data-summary-mode="normal"]');
+    assert('宿主强制按钮样式下仍有选中高亮且无边框阴影', getComputedStyle(groupButton).backgroundColor !== getComputedStyle(normalButton).backgroundColor && getComputedStyle(groupButton).borderWidth === '0px' && getComputedStyle(groupButton).boxShadow === 'none');
     click('[data-settings-tab="prompts"] span');
     click('[data-settings-panel="prompts"] button[data-summary-mode="normal"]');
     assert('提示词页按钮可切回普通且不吞菜单点击', store.current().summaryMode === 'normal' && !panel('prompts').hidden && ui.config.querySelector('[data-prompt="summary"]').value === settings.prompts.summary);
+    assert('切回普通后两处当前文字立即同步', [...ui.config.querySelectorAll('button[data-summary-mode]')].every(button => button.querySelector('[data-summary-current]').hidden === (button.dataset.summaryMode !== 'normal')));
     const details = panel('prompts').querySelector('[data-prompt="summary"]').closest('details');
     details.querySelector('summary').click(); await settle();
     const editor = details.querySelector('textarea');
@@ -45,6 +53,12 @@ try {
     assert('模式切换后提示词编辑仍自动保存', settings.prompts.summary === '合成普通自定义');
     click('[data-theme-mode="dark"] svg');
     assert('点击夜间图标立即生效且保存', settings.uiThemeMode === 'dark' && ui.config.dataset.uiTheme === 'dark' && getComputedStyle(ui.config.querySelector('.cache-memory-config-panel')).backgroundColor === 'rgb(23, 27, 34)');
+    assert('主题图标没有外围圆框且宿主不能覆盖按钮底色', getComputedStyle(ui.config.querySelector('.cache-memory-theme-controls')).borderWidth === '0px' && getComputedStyle(ui.config.querySelector('[data-theme-mode="light"]')).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(ui.config.querySelector('[data-theme-mode="dark"]')).backgroundColor === 'rgb(41, 49, 59)');
+    click('[data-settings-tab="manager"] span');
+    assert('夜间菜单与管理操作按钮不出现白底白阴影', [...ui.config.querySelectorAll('.cache-memory-tab, [data-manager-view], .cache-memory-actions .menu_button')].every(button => getComputedStyle(button).backgroundColor !== 'rgb(238, 238, 238)' && getComputedStyle(button).boxShadow === 'none'));
+    const configPanel = ui.config.querySelector('.cache-memory-config-panel');
+    assert('夜间边框滚动条和标题没有白色亮线', getComputedStyle(configPanel).borderTopColor === 'rgb(56, 65, 77)' && getComputedStyle(configPanel, '::-webkit-scrollbar-track').backgroundColor === 'rgb(23, 27, 34)' && getComputedStyle(ui.config.querySelector('.cache-memory-dialog-header')).boxShadow === 'none');
+    click('[data-settings-tab="prompts"] span');
     click('[data-theme-mode="light"]');
     assert('手动日间不会被系统事件覆盖', settings.uiThemeMode === 'light' && ui.config.dataset.uiTheme === 'light');
     media.matches = true; media.dispatchEvent(new Event('change'));

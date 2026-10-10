@@ -102,7 +102,7 @@
 .cache-memory-config-panel {
     height: min(860px, calc(100vh - 64px), calc(100dvh - 64px));
     overflow: hidden;
-    border: 1px solid rgba(151, 166, 184, 0.72);
+    border: 1px solid var(--cm-line);
     border-radius: 16px;
     background: var(--cm-canvas, #f8fafc);
     opacity: 1;
@@ -132,7 +132,7 @@
     padding: 16px 20px;
     border-bottom: 1px solid var(--cm-line);
     background: linear-gradient(115deg, var(--cm-header, #effbf8) 0%, var(--cm-header, #f5f8fc) 72%, var(--cm-header, #fffaf2) 100%);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset;
+    box-shadow: none;
 }
 .cache-memory-dialog-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .cache-memory-dialog-title > i {
@@ -435,15 +435,19 @@ body.cache-memory-config-open { overflow: hidden; }
    mobile across the top. It shares the pinned area with the existing tabs. */
 .cache-memory-pinned { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); align-items: start; }
 .cache-memory-pinned > .cache-memory-dialog-header { grid-column: 1 / -1; grid-row: 1; }
-#cache-memory-config .cache-memory-mode-switch { grid-column: 1; grid-row: 2; min-width: 0; margin: 10px 12px 4px; padding: 11px 12px 8px; border: 1px solid var(--cm-line); border-radius: 13px; background: var(--cm-panel); color: var(--cm-ink); }
-.cache-memory-mode-heading strong { display: block; font-size: 13px; font-weight: 700; }
-.cache-memory-mode-heading small { display: block; margin-top: 3px; color: var(--cm-muted); font-size: 11px; }
-#cache-memory-config .cache-memory-mode-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 9px; padding: 0; border: 0; background: transparent; }
-#cache-memory-config .cache-memory-mode-buttons > button { appearance: none; display: block; width: 100%; min-width: 0; min-height: 34px; margin: 0; padding: 6px 8px; border: 0; border-radius: 999px; background: transparent; color: var(--cm-muted); box-shadow: none; font: inherit; font-size: 12px; font-weight: 650; text-align: center; cursor: pointer; touch-action: manipulation; }
-#cache-memory-config .cache-memory-mode-buttons > button[aria-pressed="true"] { background: var(--cm-soft); color: var(--cm-ink); }
+#cache-memory-config .cache-memory-mode-switch { grid-column: 1; grid-row: 2; min-width: 0; margin: 8px 12px 4px; padding: 0; border: 0; background: transparent; color: var(--cm-ink); }
+#cache-memory-config .cache-memory-mode-buttons { display: inline-flex; flex-wrap: wrap; gap: 4px; max-width: 100%; margin: 0; padding: 0; border: 0; background: transparent; }
+/* Some host themes use !important on all buttons. Scope these resets to the
+   four mode buttons; the selected mode also has a real text badge. */
+#cache-memory-config .cache-memory-mode-buttons > button { appearance: none; display: inline-flex !important; align-items: center; justify-content: center; gap: 6px; width: auto !important; min-width: 0 !important; min-height: 32px; height: auto !important; margin: 0 !important; padding: 6px 10px !important; border: 0 !important; border-radius: 999px !important; background: transparent !important; background-image: none !important; color: var(--cm-muted) !important; box-shadow: none !important; text-shadow: none !important; filter: none !important; font: inherit; font-size: 12px; font-weight: 600; line-height: 1.4; text-align: center; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
+#cache-memory-config .cache-memory-mode-buttons > button[aria-pressed="true"] { background: var(--cm-accent-soft) !important; color: var(--cm-teal-dark) !important; font-weight: 700; }
+#cache-memory-config .cache-memory-mode-buttons > button:hover { color: var(--cm-ink) !important; }
+#cache-memory-config .cache-memory-mode-buttons > button > span { color: inherit !important; }
+#cache-memory-config .cache-memory-mode-buttons [data-summary-current] { color: inherit !important; font-size: 10px; font-weight: 600; }
+#cache-memory-config .cache-memory-mode-buttons [data-summary-current][hidden] { display: none !important; }
 #cache-memory-config .cache-memory-mode-buttons > button:focus-visible { outline: 2px solid var(--cm-teal); outline-offset: 2px; }
 #cache-memory-config .cache-memory-mode-buttons > button:disabled { opacity: .5; cursor: default; }
-#cache-memory-config .cache-memory-prompt-mode { margin: 0 0 10px; max-width: 560px; }
+#cache-memory-config .cache-memory-prompt-mode { margin: 0 0 10px; }
 .cache-memory-pinned > [data-freeze-status] { grid-column: 1 / -1; grid-row: 3; }
 .cache-memory-prompt-preview { margin-top: 12px; font-size: 12px; }
 .cache-memory-prompt-preview summary { cursor: pointer; }
@@ -478,21 +482,35 @@ body.cache-memory-config-open { overflow: hidden; }
 
 /* Keep essential controls recognizable when the host styles all native buttons. */
 #cache-memory-config .cache-memory-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
-#cache-memory-config .cache-memory-theme-controls { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--cm-line); border-radius: 999px; background: var(--cm-panel); }
-#cache-memory-config .cache-memory-theme-controls > button { appearance: none; display: grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--cm-muted); box-shadow: none; cursor: pointer; touch-action: manipulation; }
-#cache-memory-config .cache-memory-theme-controls > button[aria-pressed="true"] { color: var(--cm-ink); background: var(--cm-soft); }
+#cache-memory-config .cache-memory-theme-controls { display: inline-flex; gap: 2px; padding: 0; border: 0; background: transparent; }
+#cache-memory-config .cache-memory-theme-controls > button { appearance: none; display: grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; margin: 0; padding: 0 !important; border: 0 !important; border-radius: 6px !important; background: transparent !important; color: var(--cm-muted) !important; box-shadow: none !important; cursor: pointer; touch-action: manipulation; }
+#cache-memory-config .cache-memory-theme-controls > button[aria-pressed="true"] { color: var(--cm-ink) !important; background: var(--cm-soft) !important; }
 #cache-memory-config .cache-memory-theme-controls svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 #cache-memory-config .cache-memory-theme-controls > button:focus-visible { outline: 2px solid var(--cm-teal); outline-offset: 1px; }
-#cache-memory-config [data-settings-close] { display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--cm-muted); box-shadow: none; }
-#cache-memory-config [data-settings-close]:hover { color: var(--cm-ink); background: var(--cm-soft); }
-#cache-memory-config .cache-memory-tab { appearance: none; margin: 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--cm-muted); box-shadow: none; }
-#cache-memory-config .cache-memory-tab[aria-selected="true"] { border-bottom-color: var(--cm-teal); color: var(--cm-ink); background: var(--cm-soft); }
-#cache-memory-config .cache-memory-tab:hover { color: var(--cm-ink); background: var(--cm-soft); }
-#cache-memory-config .cache-memory-primary, .cache-memory-modal-panel .cache-memory-primary { color: var(--cm-on-accent); background: var(--cm-teal); }
+#cache-memory-config [data-settings-close] { display: grid; place-items: center; padding: 0 !important; border: 0 !important; border-radius: 6px !important; background: transparent !important; color: var(--cm-muted) !important; box-shadow: none !important; }
+#cache-memory-config [data-settings-close]:hover { color: var(--cm-ink) !important; background: var(--cm-soft) !important; }
+#cache-memory-config .cache-memory-tab { appearance: none; margin: 0; padding: 8px 11px !important; border: 0 !important; border-bottom: 2px solid transparent !important; border-radius: 0 !important; background: transparent !important; color: var(--cm-muted) !important; box-shadow: none !important; }
+#cache-memory-config .cache-memory-tab[aria-selected="true"] { border-bottom-color: var(--cm-teal) !important; color: var(--cm-ink) !important; background: var(--cm-soft) !important; }
+#cache-memory-config .cache-memory-tab:hover { color: var(--cm-ink) !important; background: var(--cm-soft) !important; }
+#cache-memory-config .cache-memory-primary, .cache-memory-modal-panel .cache-memory-primary { color: var(--cm-on-accent) !important; background: var(--cm-teal) !important; }
 .cache-memory-modal-panel .cache-memory-danger { color: #fff !important; background: var(--cm-error) !important; }
+
+/* Host button rules must not leave white controls inside the dark windows. */
+#cache-memory-config button, .cache-memory-modal-panel button { background-image: none !important; border-color: var(--cm-border) !important; background-color: var(--cm-panel) !important; color: var(--cm-ink) !important; box-shadow: none !important; text-shadow: none !important; }
+#cache-memory-config .menu_button, .cache-memory-modal-panel .menu_button { padding: 6px 11px !important; border-radius: 8px !important; }
+#cache-memory-config .cache-memory-icon-button, .cache-memory-modal-panel .cache-memory-icon-button { padding: 0 !important; }
+#cache-memory-config .cache-memory-subtabs button.is-active, #cache-memory-config .cache-memory-manager-tabs button.is-active { border-color: var(--cm-teal) !important; background: var(--cm-accent-soft) !important; color: var(--cm-teal-dark) !important; }
+#cache-memory-config button.cache-memory-danger { border-color: var(--cm-error-border) !important; background: var(--cm-error-bg) !important; color: var(--cm-error-ink) !important; }
+#cache-memory-config .cache-memory-person-field { padding: 0 !important; border: 0 !important; background: transparent !important; color: inherit !important; }
+#cache-memory-config button:focus-visible, .cache-memory-modal-panel button:focus-visible { outline: 2px solid var(--cm-teal) !important; outline-offset: 2px; }
+.cache-memory-config-panel, .cache-memory-modal-panel { scrollbar-color: var(--cm-border) var(--cm-canvas); }
+#cache-memory-config ::-webkit-scrollbar, .cache-memory-modal-overlay ::-webkit-scrollbar { width: 6px !important; height: 6px !important; background: var(--cm-canvas) !important; }
+#cache-memory-config ::-webkit-scrollbar-track, #cache-memory-config ::-webkit-scrollbar-corner, .cache-memory-modal-overlay ::-webkit-scrollbar-track, .cache-memory-modal-overlay ::-webkit-scrollbar-corner { background: var(--cm-canvas) !important; box-shadow: none !important; }
+#cache-memory-config ::-webkit-scrollbar-thumb, .cache-memory-modal-overlay ::-webkit-scrollbar-thumb { background: var(--cm-border) !important; border: 1px solid var(--cm-canvas) !important; border-radius: 6px !important; box-shadow: none !important; }
 @media (max-width: 640px) {
     #cache-memory-config .cache-memory-mode-switch { margin: 6px 10px; }
     #cache-memory-config .cache-memory-prompt-mode { margin: 0 0 10px; }
+    #cache-memory-config .cache-memory-tab { padding: 8px 4px !important; }
     #cache-memory-config .cache-memory-header-actions { gap: 4px; }
     #cache-memory-config .cache-memory-dialog-header { gap: 8px; }
     #cache-memory-config .cache-memory-dialog-title { gap: 8px; }

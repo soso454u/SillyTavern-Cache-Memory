@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.1';
-import { generationPrompt } from './generation-prompts.js?v=1.24.1';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.1';
-import { effectiveInjectionMode } from './cache-control.js?v=1.24.1';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.1';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.1';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.1';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.1';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.1';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.1';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.1';
-import { parseFloorSummary } from './summarizer.js?v=1.24.1';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.1';
+import { applyUITheme } from './ui-theme.js?v=1.24.2';
+import { generationPrompt } from './generation-prompts.js?v=1.24.2';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.2';
+import { effectiveInjectionMode } from './cache-control.js?v=1.24.2';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.2';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.2';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.2';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.2';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.2';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.2';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.2';
+import { parseFloorSummary } from './summarizer.js?v=1.24.2';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.2';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.1';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.1';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.2';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.2';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -330,7 +330,7 @@ export function configTemplate() {
                     </div>
                     <div class="cache-memory-header-actions"><div class="cache-memory-theme-controls" role="group" aria-label="界面主题"><button type="button" data-theme-mode="light" aria-label="日间模式" title="日间模式" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button><button type="button" data-theme-mode="dark" aria-label="夜间模式" title="夜间模式" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z"/></svg></button><button type="button" data-theme-mode="system" aria-label="跟随系统深浅色" title="跟随系统深浅色" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M12 4v13"/></svg></button></div><button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button></div>
                 </header>
-                <div class="cache-memory-mode-switch"><div class="cache-memory-mode-heading"><strong>总结模式</strong><small>当前聊天独立选择</small></div><div class="cache-memory-mode-buttons" role="group" aria-label="当前聊天总结模式"><button type="button" data-summary-mode="normal" aria-pressed="true">普通总结</button><button type="button" data-summary-mode="ensemble" aria-pressed="false">群像详细总结</button></div></div>
+                <div class="cache-memory-mode-switch"><div class="cache-memory-mode-buttons" role="group" aria-label="当前聊天总结模式"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>普通总结</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>群像详细总结</span><small data-summary-current hidden>当前</small></button></div></div>
                 <div class="cache-memory-task-feedback cache-memory-status" data-cache-status data-state="idle" role="status" aria-live="polite" hidden></div>
                 <div class="cache-memory-config-status cache-memory-status" data-freeze-status data-state="success" hidden></div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
@@ -436,7 +436,7 @@ export function configTemplate() {
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
                         <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>两套模板分别自动保存；切换只影响以后生成的记忆。</p></div></div>
-                        <div class="cache-memory-mode-switch cache-memory-prompt-mode"><div class="cache-memory-mode-heading"><strong>提示词模板</strong><small>与当前聊天模式同步</small></div><div class="cache-memory-mode-buttons" role="group" aria-label="提示词模式"><button type="button" data-summary-mode="normal" aria-pressed="true">普通</button><button type="button" data-summary-mode="ensemble" aria-pressed="false">群像</button></div></div>
+                        <div class="cache-memory-mode-switch cache-memory-prompt-mode"><div class="cache-memory-mode-buttons" role="group" aria-label="提示词模式"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>普通总结</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>群像详细总结</span><small data-summary-current hidden>当前</small></button></div></div>
                         <small class="cache-memory-help" data-prompt-mode-help></small>
                         <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
                         <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
@@ -512,7 +512,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.1', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.2', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -710,11 +710,15 @@ export class CacheMemoryUI {
                 const remove = scope.querySelector('[data-profile-action="delete"]');
                 if (remove) remove.disabled = index.profiles.length <= 1;
             }
-            for (const element of scope.querySelectorAll('[data-summary-mode]')) {
+            for (const element of scope.querySelectorAll('button[data-summary-mode]')) {
                 const active = element.dataset.summaryMode === settings.summaryMode;
                 element.classList.toggle('is-active', active);
                 element.setAttribute('aria-pressed', String(active));
                 element.disabled = !hasChat;
+                element.querySelector('[data-summary-current]').hidden = !active || !hasChat;
+                const label = element.querySelector('span').textContent;
+                element.setAttribute('aria-label', active && hasChat ? `${label}（当前聊天正在使用）` : label);
+                element.title = hasChat ? `${label}${active ? '：当前聊天正在使用' : '：点击切换，仅影响以后生成的记忆'}` : '打开聊天后可选择总结模式';
             }
             const modeHelp = scope.querySelector('[data-prompt-mode-help]');
             if (modeHelp) modeHelp.textContent = `${settings.summaryMode === 'ensemble' ? '群像详细总结' : '普通总结'} · 编辑后自动保存，恢复默认仅影响本模式。展开可查看含全局及必要状态规则的完整提示词。`;
