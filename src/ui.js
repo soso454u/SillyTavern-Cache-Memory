@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.5';
-import { generationPrompt } from './generation-prompts.js?v=1.24.5';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.5';
-import { effectiveInjectionMode } from './cache-control.js?v=1.24.5';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.5';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.5';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.5';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.5';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.5';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.5';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.5';
-import { parseFloorSummary } from './summarizer.js?v=1.24.5';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.5';
+import { applyUITheme } from './ui-theme.js?v=1.24.6';
+import { generationPrompt } from './generation-prompts.js?v=1.24.6';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.6';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.6';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.6';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.6';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.6';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.6';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.6';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.6';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.6';
+import { parseFloorSummary } from './summarizer.js?v=1.24.6';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.6';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.5';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.5';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.6';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.6';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -137,14 +137,15 @@ export function memoryOverviewStats(store, assistants, settings) {
     }
     const injectionValue = String(safeStore.injectionSnapshot?.value ?? '');
     const blockCount = (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'checkpoint').length;
-    const textCount = injectionValue.match(/^\[(?:LATEST_)?CHECKPOINT(?:_[^\]\n]+)?(?:\s*\|[^\]\n]+)?\]/gm)?.length ?? 0;
+    // Count outer injection blocks, not their inner [CHECKPOINT] format header.
+    const textCount = injectionValue.match(/^\[(?:LATEST_CHECKPOINT|CHECKPOINT_[^\]\n]+|CHECKPOINT\s*\|[^\]\n]+)\]/gm)?.length ?? 0;
     return {
         summaries: { actual: usableSummaries.length, generated: generatedSummaries.length, expected: entries.length },
         checkpoints: { actual: checkpoints.length, expected: checkpointRanges.length },
         longMemories: { actual: longMemories.length, expected: longRanges.length },
         activeLongFacts: projectLongFacts(safeStore).facts.filter(item => isTrackedActive(item)).length,
         activeKeeps: collectKeepItems(safeStore).filter(item => isTrackedActive(item)).length,
-        injectedCheckpoints: Math.max(blockCount, textCount),
+        injectedCheckpoints: safeStore.injectionSnapshot?.blocks?.length ? blockCount : textCount,
         estimatedTokens: estimateTokenCount(injectionValue),
         recentBodyWindow: '由 SillyTavern 上下文设置控制',
         storedSummaryRecords: Object.keys(safeStore.summaries).length,
@@ -291,18 +292,19 @@ function managerPanelTemplate() {
                 <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 下载记忆 JSON</button>
                 <button type="button" class="menu_button" data-import-merge><i class="fa-solid fa-upload"></i> 导入记忆 JSON</button>
                 <input type="file" accept="application/json,.json" data-import-merge-file hidden>
-            </div>
+            </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
             <details class="cache-memory-backup"><summary>保存与诊断</summary>
             <div class="cache-memory-actions cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-validate-memory>检查记忆状态</button>
+                <button type="button" class="menu_button" data-cleanup-summaries title="清理已确认归属且已有当前摘要的旧 Swipe 和重复记录；服务器确认后生效，不调用模型">清理旧摘要</button>
                 <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
                 <button type="button" class="menu_button" data-pending-backup hidden>下载待保存副本</button>
                 <button type="button" class="menu_button" data-reinject>重新注入</button>
                 <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
-            </div><p data-memory-diagnostics></p>
+            </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p><p data-memory-diagnostics></p>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
-            </div>
+            </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
             <div>
                 <div class="cache-memory-actions" data-memory-conflict-actions hidden>
                     <button type="button" class="menu_button" data-memory-conflict="merge">合并双方</button>
@@ -514,7 +516,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.5', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.6', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2399,6 +2401,68 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
+        const button = event.target.closest('[data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
+        if (!button) return this.performManagerClick(event);
+        if (this.activeManagerAction) return;
+        this.activeManagerAction = button;
+        const label = button.textContent.trim(), html = button.innerHTML, disabled = button.disabled;
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        button.textContent = `${label}…`;
+        this.setManagerActionStatus('busy', `正在${label}…`);
+        try {
+            // The original click can target an icon removed by the busy label.
+            await this.performManagerClick({ target: button });
+            if (this.managerActionState === 'busy') this.setManagerActionStatus('warning', '操作已取消或未执行。');
+        } catch (error) {
+            this.setManagerActionStatus('error', error.message);
+            throw error;
+        } finally {
+            button.innerHTML = html;
+            button.disabled = disabled;
+            button.removeAttribute('aria-busy');
+            this.activeManagerAction = null;
+            this.renderMemorySaveState();
+        }
+    }
+
+    setManagerActionStatus(state, message) {
+        this.managerActionState = state;
+        const toolbar = this.activeManagerAction?.closest('.cache-memory-manager-toolbar');
+        const output = toolbar?.nextElementSibling?.matches('[data-manager-action-status]')
+            ? toolbar.nextElementSibling : this.manager?.querySelector('[data-manager-action-status]');
+        if (output) { output.hidden = false; output.dataset.state = state; output.textContent = message; }
+        if (this.config && this.doc) this.setStatus(state, message);
+        else notify(state === 'busy' ? 'info' : state, message);
+    }
+
+    async cleanupOldSummaries() {
+        if (this.uploadingMemory || this.restoringServerMemory || this.importingMemory || this.isMissingCheckpointBackfillActive()
+            || this.backfill?.active || this.summarizer.inFlight?.size || this.summarizer.pendingSummaries?.size) throw new Error('请先停止正在进行的生成、导入或上传，再清理旧摘要');
+        const chatId = this.store.current().chatId;
+        const sources = () => JSON.stringify(getAssistantMessages(this.getChat()).map(({ messageId, floor, messageIndex, fingerprint }) => [messageId, floor, messageIndex, fingerprint]));
+        const expected = sources();
+        const assertActive = () => {
+            if (this.store.current().chatId !== chatId || sources() !== expected) throw new Error('聊天或正文已变化，未采用清理结果，请重试');
+            if (expected === '[]') throw new Error('当前聊天尚未加载，未清理任何记录');
+        };
+        assertActive();
+        if (!this.persistence?.commitReplacement) throw new Error('记忆保存尚未就绪，请稍后重试');
+        const removed = await this.persistence.commitReplacement(this.store, () => {
+            const current = this.store.current();
+            const before = { summaries: Object.keys(current.summaries).length, aggregates: current.checkpoints.length + current.longMemories.length };
+            this.store.cleanupSuperseded(this.getChat());
+            refreshSnapshot(current, this.getSettings(), 'manual reinject', this.store.effectiveStore(this.getChat()));
+            return { summaries: before.summaries - Object.keys(current.summaries).length,
+                aggregates: before.aggregates - current.checkpoints.length - current.longMemories.length };
+        }, assertActive);
+        assertActive();
+        this.updateInjection('manual reinject');
+        this.renderManager(); this.renderMessageMemories();
+        this.setManagerActionStatus('success', `清理完成：删除 ${removed.summaries} 条旧版／重复摘要${removed.aggregates ? `、${removed.aggregates} 条重复阶段／长期记忆` : ''}，已由服务器保存并读回确认。未加载或归属不明、尚无当前摘要的记录保留；未调用模型。`);
+    }
+
+    async performManagerClick(event) {
         if (event.target.closest('[data-fill-long-memories]')) return this.startMissingMemoryBackfill({ onlyLong: true });
         if (event.target.closest('[data-fill-all-memories]')) return this.startMissingMemoryBackfill();
         if (event.target.closest('[data-read-server]')) {
@@ -2420,7 +2484,7 @@ export class CacheMemoryUI {
                 this.lastMergeReport = null;
                 this.updateInjection('chat changed');
                 this.renderManager(); this.renderMessageMemories();
-                notify('success', '已从服务器恢复当前聊天记忆'); return;
+                this.setManagerActionStatus('success', '已从服务器恢复当前聊天记忆'); return;
             } finally {
                 resumeSaves();
                 this.restoringServerMemory = false;
@@ -2428,8 +2492,9 @@ export class CacheMemoryUI {
         }
         if (event.target.closest('[data-validate-memory]')) {
             const rows = this.store.revalidate(this.getChat()); this.renderManager();
-            notify('success', `本地校验完成：${rows.length} 条阶段记忆仍需处理；没有调用模型。`); return;
+            this.setManagerActionStatus('success', `本地校验完成：${rows.length} 条阶段记忆仍需处理；没有调用模型。`); return;
         }
+        if (event.target.closest('[data-cleanup-summaries]')) return this.cleanupOldSummaries();
         const update = event.target.closest('[data-update-checkpoints], [data-update-checkpoint]');
         if (update) {
             const id = update.closest('[data-memory-id]')?.dataset.memoryId;
@@ -2460,12 +2525,14 @@ export class CacheMemoryUI {
             const pending = this.persistence?.pending.get(this.store.current().chatId);
             if (!pending) throw new Error('没有待保存副本');
             downloadJson('cache-memory-pending.json', pending.snapshot, this.doc);
+            this.setManagerActionStatus('success', '已发起待保存副本下载，请在浏览器下载列表查看。');
             return;
         }
         if (event.target.closest('[data-upload-backup]')) {
             const backup = await (this.persistence?.readUploadBackup?.(this.store.current().chatId) ?? this.persistence?.uploadBackup?.(this.store.current().chatId));
             if (!backup) throw new Error('当前浏览器没有此聊天的上传前备份');
             downloadJson(`cache-memory-before-upload-${backup.revision}.json`, backup.store, this.doc);
+            this.setManagerActionStatus('success', '已发起上传前服务器备份下载，请在浏览器下载列表查看。');
             return;
         }
         if (event.target.closest('[data-save-memory]') || event.target.closest('[data-memory-conflict="local"]')) {
@@ -2487,7 +2554,7 @@ export class CacheMemoryUI {
                 const status = await this.persistence.uploadCurrentChat(chatId, { assertActive });
                 if (this.store.current().chatId !== chatId) return;
                 this.renderManager(); this.renderMessageMemories();
-                notify(status.state === 'confirmed' ? 'success' : 'warning', status.state === 'confirmed'
+                this.setManagerActionStatus(status.state === 'confirmed' ? 'success' : 'warning', status.state === 'confirmed'
                     ? '已同步：记忆已上传服务器并读回确认'
                     : (status.detail || '上传尚未确认：状态未知'));
             } finally { this.uploadingMemory = false; this.renderMemorySaveState(); }
@@ -2495,6 +2562,7 @@ export class CacheMemoryUI {
         }
         if (event.target.closest('[data-import-merge]')) {
             this.manager.querySelector('[data-import-merge-file]').click();
+            this.setManagerActionStatus('success', '请选择记忆 JSON；选定文件后将显示导入检查结果。');
             return;
         }
         const conflictAction = event.target.closest('[data-memory-conflict]');
@@ -2526,7 +2594,7 @@ export class CacheMemoryUI {
         }
         if (event.target.closest('[data-reinject]')) {
             this.updateInjection('manual reinject');
-            notify('success', 'Cache Memory 已重新注入');
+            this.setManagerActionStatus('success', 'Cache Memory 已重新注入；下方诊断已更新。');
             this.renderManager();
             return;
         }
@@ -2562,9 +2630,9 @@ export class CacheMemoryUI {
                 this.setStatus('success', '当前聊天的 Cache Memory 已清空；历史摘要不会自动重建。');
                 this.renderMessageMemories();
                 this.renderManager();
-                notify('success', '当前聊天记忆已清空。需要时可手动“补齐缺失摘要”。');
+                this.setManagerActionStatus('success', '当前聊天记忆已清空。需要时可手动“补齐缺失摘要”。');
             } catch (error) {
-                notify('error', `清空失败：${error.message}`);
+                this.setManagerActionStatus('error', `清空失败：${error.message}`);
             } finally {
                 if (clearButton.isConnected) clearButton.disabled = false;
             }
@@ -2644,7 +2712,7 @@ export class CacheMemoryUI {
         }
         if (event.target.closest('[data-reparse-summaries]')) {
             const count = this.store.reparseStructuredSummaries(raw => parseFloorSummary(raw, this.getSettings().summaryMaxLength, { preserveFull: true }));
-            notify('success', count ? `已在本地重新解析 ${count} 条结构化摘要，未调用 API。` : '没有可重新解析的结构化摘要。');
+            this.setManagerActionStatus('success', count ? `已在本地重新解析 ${count} 条结构化摘要，未调用 API。` : '没有可重新解析的结构化摘要。');
             this.renderManager();
             return;
         }
@@ -2660,6 +2728,7 @@ export class CacheMemoryUI {
         if (event.target.closest('[data-export]')) {
             const chatId = this.store.current().chatId || 'chat';
             downloadJson(`cache-memory-${chatId}.json`, this.store.current(), this.doc);
+            this.setManagerActionStatus('success', '已发起记忆 JSON 下载，请在浏览器下载列表查看。');
             return;
         }
         const batchButton = event.target.closest('[data-backfill-action]');
@@ -2894,8 +2963,8 @@ export class CacheMemoryUI {
             const status = await this.persistence.flush(chatId);
             if (!active()) return;
             this.renderManager(); this.renderMessageMemories();
-            notify(status.state === 'confirmed' ? 'success' : 'warning', status.state === 'confirmed' ? '导入完成并已从服务器读回确认' : `导入尚未确认，已停止后续写入：${status.detail}`);
-        } catch (error) { notify('error', `导入未完成：${error.message}；请检查保存状态后重试`); }
+            this.setManagerActionStatus(status.state === 'confirmed' ? 'success' : 'warning', status.state === 'confirmed' ? '导入完成并已从服务器读回确认' : `导入尚未确认，已停止后续写入：${status.detail}`);
+        } catch (error) { this.setManagerActionStatus('error', `导入未完成：${error.message}；请检查保存状态后重试`); }
         finally { this.importingMemory = false; }
     }
 

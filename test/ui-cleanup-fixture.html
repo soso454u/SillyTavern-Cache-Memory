@@ -1,0 +1,46 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>旧摘要清理和操作反馈合成验证</title>
+<style>body{margin:0;background:#151820;color:#ddd;font:16px/1.5 sans-serif}body button{background:#eee!important;color:#444!important;border:2px solid #aaa!important;box-shadow:0 2px 5px #888!important}</style>
+<div id="extensions_settings2"></div><div id="chat"></div>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore, createEmptyStore } from '../src/memory-store.js';
+import { MemoryPersistenceCoordinator } from '../src/persistence.js';
+import { MemorySummarizer } from '../src/summarizer.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { refreshSnapshot } from '../src/cache-control.js';
+import { getAssistantMessages } from '../src/utils.js';
+const chat = Array.from({ length: 6 }, (_, i) => ({ name: '合成人物', mes: `当前有效正文${i + 1}`, gen_started: `g${i}` }));
+const chatId = 'synthetic-cleanup-feedback', metadata = { cache_memory: createEmptyStore(chatId) };
+let settings = normalizeSettings(), failed = false, modelCalls = 0, writes = 0;
+const store = new MemoryStore({ getChatId: () => chatId, getMetadata: () => metadata, saveMetadata() {} });
+for (const entry of getAssistantMessages(chat)) store.current().summaries[entry.messageId] = { messageId: entry.messageId, floor: entry.floor,
+    messageIndex: entry.messageIndex, sourceFingerprint: entry.fingerprint, sourceContentFingerprint: entry.contentFingerprint,
+    sourceMessageKey: entry.sourceMessageKey, event: `重要历史${entry.floor}`, status: 'frozen', frozen: true };
+const addOld = () => { const entry = getAssistantMessages(chat)[0]; store.current().summaries['lost-swipe-key'] = {
+    ...store.getSummary(entry.messageId), messageId: 'lost-swipe-key', sourceMessageKey: 'lost-swipe-key', sourceContentFingerprint: 'old-body', event: '废弃旧剧情' }; };
+addOld();
+store.getSummary(getAssistantMessages(chat)[5].messageId).sourceContentFingerprint = 'old-last-body';
+let remote = structuredClone(store.current());
+const journal = new Map();
+const persistence = new MemoryPersistenceCoordinator({ getChatId: () => chatId, getMetadata: () => metadata,
+    storage: { getItem: key => journal.get(key), setItem: (key, value) => journal.set(key, value), removeItem: key => journal.delete(key) },
+    readRemoteStore: async () => structuredClone(remote), saveMetadata: async () => {
+        writes++; await new Promise(resolve => setTimeout(resolve, 250));
+        if (failed) throw Error('合成服务器离线'); remote = structuredClone(metadata.cache_memory);
+    } });
+await persistence.ready;
+persistence.activate(chatId, store.current());
+store.saveMetadata = (snapshot, reason) => persistence.enqueue(snapshot, reason);
+const apiClient = { hasApiKey: () => false, complete() { modelCalls++; throw Error('禁止模型请求'); } };
+const summarizer = new MemorySummarizer({ store, apiClient, getSettings: () => settings, getChat: () => chat });
+const ui = new CacheMemoryUI({ store, persistence, getSettings: () => settings, getChat: () => chat,
+    updateSettings: patch => settings = normalizeSettings({ ...settings, ...patch }), persistSettings() {},
+    summarizer, apiClient,
+    updateInjection: reason => refreshSnapshot(store.current(), settings, reason, store.effectiveStore(chat)) });
+ui.mountSettings(); ui.openManager();
+ui.manager.querySelector('.cache-memory-backup').open = true;
+window.fixture = { ui, store, persistence, chat, addOld, get remote() { return remote; },
+    get writes() { return writes; }, get modelCalls() { return modelCalls; }, set failed(value) { failed = value; },
+    seed() { remote = structuredClone(store.current()); persistence.activate(chatId, store.current()); } };
+</script></html>

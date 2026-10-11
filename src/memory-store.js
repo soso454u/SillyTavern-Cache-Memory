@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.5';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.5';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.5';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.6';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.6';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.6';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -381,13 +381,18 @@ export class MemoryStore {
         if (changedBody) this.markReplacementDependents(store);
     }
 
-    markReplacementDependents(store) {
+    markReplacementDependents(store, verifiedSummaries = {}) {
         // previousCheckpointId is context, not ownership of every later event.
         // Recover legacy cascading flags only when the CP's own sources verify.
         for (const item of store.checkpoints) {
             const versions = Object.entries(item.sourceVersions ?? {});
-            if (item.sourceReplaced && item.previousCheckpointId && !item.replacedSourceFloors?.length && versions.length
-                && versions.every(([id, version]) => store.summaries[id] && summaryVersionMatches(store.summaries[id], version))) delete item.sourceReplaced;
+            const refs = [...new Set([...(item.summaryIds ?? []), ...versions.map(([id]) => id)])];
+            // Summary hashes also change on reparsing and ST metadata rebinding.
+            // A legacy flag without body-change evidence must not discard an
+            // otherwise verified stage and all of its Long Memory coverage.
+            if (item.sourceReplaced && !item.replacedSourceFloors?.length && refs.length
+                && (refs.every(id => verifiedSummaries[id]) || item.previousCheckpointId && versions.length
+                    && versions.every(([id, version]) => store.summaries[id] && summaryVersionMatches(store.summaries[id], version)))) delete item.sourceReplaced;
         }
         const replaced = new Set(store.checkpoints.filter(item => item.sourceReplaced).map(item => item.id));
         for (const item of store.longMemories) {
@@ -397,7 +402,8 @@ export class MemoryStore {
                 && ids.every(id => {
                     const cp = store.checkpoints.find(row => row.id === id);
                     return cp && isUsableMemory(cp) && (!item.checkpointVersions?.[id] || item.checkpointVersions[id] === aggregateVersion(cp));
-                }) && Object.entries(item.sourceVersions ?? {}).every(([id, version]) => store.summaries[id] && summaryVersionMatches(store.summaries[id], version))) delete item.sourceReplaced;
+                }) && Object.entries(item.sourceVersions ?? {}).every(([id, version]) => verifiedSummaries[id]
+                    || store.summaries[id] && summaryVersionMatches(store.summaries[id], version))) delete item.sourceReplaced;
         }
     }
 
@@ -423,14 +429,28 @@ export class MemoryStore {
 
     summarySourceIndex(chat) {
         const entries = getAssistantMessages(chat), ids = new Map(), sources = new Map(), floors = new Map();
-        const chatId = this.current().chatId;
+        const store = this.current(), chatId = store.chatId;
+        const records = Object.values(store.summaries);
+        // Legacy exports sometimes lost the stable swipe key. Use a positional
+        // slot only when the complete stored floor/index range is loaded and a
+        // current, body-verified Summary anchors that very slot. A floor alone,
+        // a partial chat, or a record without a source fingerprint is not proof.
         for (const entry of entries) {
             for (const id of [entry.messageId, ...(entry.relatedMessageIds ?? []), ...(this.summaryLinks.get(`${chatId}:${entry.messageId}`) ?? [])]) ids.set(id, entry);
             if (entry.sourceMessageKey) sources.set(entry.sourceMessageKey, entry);
             floors.set(entry.floor, entry);
         }
-        return (key, item) => ids.get(key) ?? ids.get(item.messageId) ?? sources.get(item.sourceMessageKey)
-            ?? (summaryMatchesEntry(item, floors.get(item.floor)) ? floors.get(item.floor) : null);
+        const completeSlots = entries.length > 0 && records.every(item => !item.floor || floors.has(item.floor)
+            && (item.messageIndex == null || item.messageIndex === floors.get(item.floor).messageIndex));
+        const sourceFor = (key, item) => {
+            const entry = floors.get(item.floor);
+            return ids.get(key) ?? ids.get(item.messageId) ?? sources.get(item.sourceMessageKey)
+                ?? (summaryMatchesEntry(item, entry) ? entry : null)
+                ?? (completeSlots && entry && (item.sourceContentFingerprint || item.sourceFingerprint)
+                    && item.messageIndex === entry.messageIndex && summaryMatchesEntry(this.getSummaryForEntry(entry, store), entry) ? entry : null);
+        };
+        sourceFor.complete = completeSlots;
+        return sourceFor;
     }
 
     effectiveStore(chat) {
@@ -443,15 +463,12 @@ export class MemoryStore {
             const knownSwipe = entry && id !== entry.messageId && entry.relatedMessageIds?.includes(id);
             if (entry && (item.sourceContentFingerprint || linked || knownSwipe) && !summaryMatchesEntry(item, entry)) invalid.add(id);
         }
-        const projected = { ...store, summaries, checkpoints: store.checkpoints.map(item => ({ ...item })),
+        const projected = { ...store, summaries, sourceSlotsLoaded: sourceFor.complete, checkpoints: store.checkpoints.map(item => ({ ...item })),
             longMemories: store.longMemories.map(item => ({ ...item })) };
         for (const item of [...projected.checkpoints, ...projected.longMemories]) {
             const refs = [...(item.summaryIds ?? []), ...Object.keys(item.sourceVersions ?? {})];
             const floors = [...invalid].filter(id => refs.includes(id)
                 || !refs.length && store.summaries[id]?.floor >= item.startFloor && store.summaries[id]?.floor <= item.endFloor).map(id => store.summaries[id].floor);
-            if (item.sourceReplaced) for (const [id, version] of Object.entries(item.sourceVersions ?? {})) {
-                if (summaries[id] && !summaryVersionMatches(summaries[id], version)) floors.push(summaries[id].floor);
-            }
             if (floors.length) {
                 item.sourceReplaced = true;
                 item.replacedSourceFloors = [...new Set([...(item.replacedSourceFloors ?? []), ...floors])];
@@ -459,7 +476,7 @@ export class MemoryStore {
         }
         // Repair inherited legacy flags using the stored source versions;
         // the effective Summary projection may be incomplete during chat loading.
-        this.markReplacementDependents({ ...projected, summaries: store.summaries });
+        this.markReplacementDependents({ ...projected, summaries: store.summaries }, summaries);
         const excluded = [...projected.checkpoints, ...projected.longMemories].filter(item => item.sourceReplaced);
         const invalidSources = new Set([...invalid, ...excluded.map(item => item.id)]);
         // Only the directly affected CP needs its unaffected current sources.
@@ -493,7 +510,10 @@ export class MemoryStore {
             const entry = item.sourceInvalidated && sourceFor(item.sourceId, item);
             return entry && summaryMatchesEntry(this.getSummaryForEntry(entry), entry);
         }));
-        return getAssistantMessages(chat).some(entry => {
+        return Object.entries(store.summaries).some(([key, item]) => {
+            const entry = sourceFor(key, item), record = entry && this.getSummaryForEntry(entry);
+            return entry && key !== entry.messageId && isUsableMemory(record) && summaryMatchesEntry(record, entry);
+        }) || getAssistantMessages(chat).some(entry => {
             const record = this.getSummaryForEntry(entry);
             return isUsableMemory(record) && summaryMatchesEntry(record, entry)
                 && (record.messageId !== entry.messageId || this.summaryCandidates(entry).some(([key]) => key !== entry.messageId));
@@ -564,7 +584,7 @@ export class MemoryStore {
         delete store.tombstones[`Summary:${record.messageId}`];
         store.summaries[record.messageId] = structuredClone(record);
         if (entry && isUsableMemory(record)) {
-            if (previous && summaryVersion(previous) !== summaryVersion(record)) this.rewriteSummaryReferences(store, record.messageId, record.messageId, true);
+            if (previous && !summaryMatchesEntry(previous, entry)) this.rewriteSummaryReferences(store, record.messageId, record.messageId, true);
             this.retireSummaries(entry, record, store);
         }
         this.registerSummaryKeeps(store.summaries[record.messageId]);

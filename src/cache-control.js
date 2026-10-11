@@ -1,9 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.5';
-import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.5';
-import { collectKeepItems, formatKeepItems, isUsableMemory, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.5';
-import { fnv1a } from './utils.js?v=1.24.5';
-import { stripStructuredSections } from './summary-format.js?v=1.24.5';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.5';
+import { INJECTION_MODES } from './defaults.js?v=1.24.6';
+import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.6';
+import { collectKeepItems, formatKeepItems, isUsableMemory, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.6';
+import { fnv1a } from './utils.js?v=1.24.6';
+import { stripStructuredSections } from './summary-format.js?v=1.24.6';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.6';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -53,8 +53,13 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
     if (!shouldRefreshInjection(settings, reason)) return { value: store.injectionSnapshot?.value ?? '', changed: false, skipped: true };
     const mode = effectiveInjectionMode(settings);
     // One-time migration discards snapshots inflated by the old cascade path.
-    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 1]);
+    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 2]);
     const previous = store.injectionSnapshot;
+    // Wait for chat loading before reading or migrating a frozen snapshot. An incomplete
+    // source projection cannot establish which legacy Longs should be restored.
+    // Explicit actions and proven body changes still rebuild immediately.
+    if (reason === 'chat changed' && previous && sourceStore.sourceSlotsLoaded === false
+        && !sourceStore.excludedSourceIds?.some(id => id.startsWith('summary:'))) return { value: previous.value, changed: false, skipped: true };
     const invalidPublishedSource = previous?.blocks?.some(block => {
         if (block.type === 'keep') return block.keepIds?.some(id => !sourceStore.keepRegistry[id]);
         if (!['long', 'checkpoint', 'summary'].includes(block.type)) return false;
