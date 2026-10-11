@@ -1,9 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.3';
-import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.3';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.24.3';
-import { fnv1a } from './utils.js?v=1.24.3';
-import { stripStructuredSections } from './summary-format.js?v=1.24.3';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.3';
+import { INJECTION_MODES } from './defaults.js?v=1.24.4';
+import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.4';
+import { collectKeepItems, formatKeepItems, isUsableMemory, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.4';
+import { fnv1a } from './utils.js?v=1.24.4';
+import { stripStructuredSections } from './summary-format.js?v=1.24.4';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.4';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -34,10 +34,12 @@ function frozenBlocks(store, mode, settings) {
         blocks.push({ id: `${type}:${record.id}`, type, startFloor: record.startFloor, endFloor: record.endFloor,
             text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}` });
     };
-    for (const record of [...store.longMemories].filter(isUsableMemory).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'long');
+    for (const record of [...store.longMemories].filter(item => !item.sourceReplaced && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'long');
     if (mode === INJECTION_MODES.CHECKPOINT_BOUNDARY) {
-        for (const record of [...store.checkpoints].filter(isUsableMemory).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'checkpoint');
+        for (const record of [...store.checkpoints].filter(item => !item.sourceReplaced && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'checkpoint');
     }
+    for (const record of sourceFallbackSummaries(store)) blocks.push({ id: `summary:${record.messageId}`, type: 'summary', startFloor: record.floor, endFloor: record.floor,
+        text: `[RECENT_SUMMARY_${String(record.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(record), ['KEEP'])}` });
     const keeps = formatKeepItems(collectKeepItems(store));
     if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: 0, text: `[KEEP]\n${keeps}` });
     return blocks;
@@ -51,11 +53,11 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
     const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode]);
     const previous = store.injectionSnapshot;
     const invalidPublishedSource = previous?.blocks?.some(block => {
-        if (!['long', 'checkpoint'].includes(block.type)) return false;
-        const records = block.type === 'long' ? store.longMemories : store.checkpoints;
-        return !records.some(item => `${block.type}:${item.id}` === block.id && isUsableMemory(item));
+        if (!['long', 'checkpoint', 'summary'].includes(block.type)) return false;
+        const records = block.type === 'long' ? sourceStore.longMemories : block.type === 'summary' ? Object.values(sourceStore.summaries) : sourceStore.checkpoints;
+        return !records.some(item => `${block.type}:${item.id ?? item.messageId}` === block.id && isUsableMemory(item));
     });
-    if (reason === 'chat changed' && previous?.signature === signature && (!invalidPublishedSource || previous.needsRebuild)) return { value: previous.value, changed: false };
+    if (reason === 'chat changed' && previous?.signature === signature && (!invalidPublishedSource || previous.needsRebuild && !sourceStore.sourceFallbackRanges?.length)) return { value: previous.value, changed: false };
     let blocks = [];
     let value = '';
     if (settings.enabled && mode !== INJECTION_MODES.NONE) {
@@ -73,7 +75,7 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
             }
             // Explicitly permitted compaction at a Long boundary; never delete Checkpoint data.
             const longs = blocks.filter(block => block.type === 'long');
-            blocks = blocks.filter(block => block.type !== 'checkpoint' || !longs.some(long => long.startFloor <= block.startFloor && long.endFloor >= block.endFloor));
+            blocks = blocks.filter(block => !['checkpoint', 'summary'].includes(block.type) || !longs.some(long => long.startFloor <= block.startFloor && long.endFloor >= block.endFloor));
             const published = new Set(rebuild ? [] : (previous.blocks ?? []).map(block => block.id));
             const currentLines = new Map();
             blocks = blocks.map(block => {

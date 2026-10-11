@@ -1,13 +1,13 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.3';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.3';
-import { generationPrompt } from './generation-prompts.js?v=1.24.3';
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.3';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.3';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.3';
-import { extractSummarySource } from './summary-source.js?v=1.24.3';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.3';
-import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.24.3';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.3';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.4';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.4';
+import { generationPrompt } from './generation-prompts.js?v=1.24.4';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.4';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.4';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.4';
+import { extractSummarySource } from './summary-source.js?v=1.24.4';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.4';
+import { summaryVersion, aggregateVersion, summaryMatchesEntry } from './memory-store.js?v=1.24.4';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.4';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -85,10 +85,7 @@ export class MemorySummarizer {
     invalidateContext() { this.contextRevision++; }
 
     generationStore() {
-        const store = this.store.current();
-        return { ...store, summaries: Object.fromEntries(this.store.currentSummaries(this.getChat()).map(item => [item.messageId, item])),
-            checkpoints: store.checkpoints.filter(item => !item.sourceReplaced),
-            longMemories: store.longMemories.filter(item => !item.sourceReplaced) };
+        return this.store.effectiveStore(this.getChat());
     }
 
     assertUnambiguousPrevious(startFloor, includeCheckpoints = true) {
@@ -244,7 +241,11 @@ export class MemorySummarizer {
                 frozen: true,
                 status: 'frozen',
             };
-            await this.commitMemory(() => this.store.addSummary(record, { overwrite, entry, background: deferAggregates || this.aggregateDeferrals > 0 }), assertContext);
+            await this.commitMemory(() => {
+                const saved = this.store.addSummary(record, { overwrite, entry, background: deferAggregates || this.aggregateDeferrals > 0 });
+                this.store.cleanupSuperseded(this.getChat(), { persist: false, aggregates: false });
+                return saved;
+            }, assertContext);
             let aggregateFailure = '';
             try {
                 if (!deferAggregates && !this.aggregateDeferrals) await this.generateDueAggregates({ signal });
@@ -569,8 +570,6 @@ export class MemorySummarizer {
         const incremental = settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy';
         const state = previousState(this.generationStore(), startFloor);
         if (incremental && settings.activeStateEnabled && state.id) state.content = reconcileTrackedCheckpoint(state.content, this.generationStore(), startFloor - 1, startFloor);
-        const preceding = [...checkpoints].filter(cp => cp.endFloor < startFloor).sort((a, b) => b.endFloor - a.endFloor)[0];
-        if (preceding && (!isUsableMemory(preceding) || preceding.sourceReplaced)) throw new Error(`前序 ${preceding.id} 尚无当前来源的可用内容，已停止后续生成`);
         const checkpointVersions = state.id ? { [state.id]: aggregateVersion([...checkpoints, ...this.store.current().longMemories].find(cp => cp.id === state.id)) } : {};
         const keeps = collectKeepItems(this.generationStore(), endFloor);
         const keepVersion = JSON.stringify(this.store.current().keepRegistry);
@@ -655,6 +654,7 @@ export class MemorySummarizer {
         const store = this.store.current();
         const committed = store.longMemories.filter(isUsableMemory);
         const usedThrough = committed.length ? Math.max(...committed.map(item => item.endFloor)) : 0;
+        const currentSources = new Set(this.generationStore().checkpoints.map(item => item.id));
         const available = store.checkpoints
             .filter(item => item.startFloor > usedThrough && isUsableMemory(item))
             .sort((a, b) => a.startFloor - b.startFloor);
@@ -667,7 +667,10 @@ export class MemorySummarizer {
             coveredFloors += checkpoint.endFloor - checkpoint.startFloor + 1;
             expectedStart = checkpoint.endFloor + 1;
             if (coveredFloors >= settings.longMemoryInterval) {
-                await this.generateLongMemory(group, { overwrite: false, signal });
+                // Historical swipe repairs never trigger a paid rebuild or a
+                // repeated failure on every new floor. Later complete groups
+                // can still be committed from their valid current sources.
+                if (group.every(item => currentSources.has(item.id))) await this.generateLongMemory(group, { overwrite: false, signal });
                 group = [];
                 coveredFloors = 0;
             }
@@ -679,7 +682,8 @@ export class MemorySummarizer {
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
         if (!Array.isArray(checkpoints) || !checkpoints.length) throw new Error('没有可用于长期记忆的 Checkpoint');
-        if (checkpoints.some(item => !isUsableMemory(item) || item.sourceReplaced)) throw new Error('来源 Checkpoint 尚无可用内容，不能用于长期整理');
+        const currentSourceIds = new Set(this.generationStore().checkpoints.map(item => item.id));
+        if (checkpoints.some(item => !isUsableMemory(item) || item.sourceReplaced || !currentSourceIds.has(item.id))) throw new Error('来源 Checkpoint 尚无可用内容，不能用于长期整理');
         const sorted = [...checkpoints].sort((a, b) => a.startFloor - b.startFloor);
         if (sorted.some((item, i) => i && item.startFloor !== sorted[i - 1].endFloor + 1)) throw new Error('来源 Checkpoint 区间存在缺口，不能作为完整 Long Memory 输入');
         const startFloor = sorted[0].startFloor;

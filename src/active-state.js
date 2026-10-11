@@ -1,9 +1,9 @@
-import { fnv1a } from './utils.js?v=1.24.3';
+import { fnv1a } from './utils.js?v=1.24.4';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
 const clean = value => String(value ?? '').trim();
-const validSummary = item => item && item.frozen !== false && !['failed', 'orphaned'].includes(item.status);
+const validSummary = item => item && !item.sourceInvalidated && item.frozen !== false && !['failed', 'orphaned'].includes(item.status);
 
 export function threadKey(value) {
     const key = clean(value);
@@ -87,7 +87,7 @@ export function projectActiveState(store, throughFloor = Infinity) {
         if (override.sourceFloor > throughFloor) continue;
         const source = store.summaries?.[override.sourceId];
         events.push({ change: override, floor: override.sourceFloor, sequence: override.sequence || 1,
-            source: { needsReview: !validSummary(source) || source.sourceFingerprint !== override.sourceFingerprint } });
+            source: { needsReview: Boolean(override.sourceInvalidated) || !validSummary(source) || source.sourceFingerprint !== override.sourceFingerprint } });
     }
     for (const memory of store.longMemories ?? []) {
         if (!validSummary(memory) || !['frozen', 'manual-edited', 'stale'].includes(memory.status ?? 'frozen')

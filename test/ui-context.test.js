@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveUIRoot, viewportSize } from '../src/ui-context.js';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from '../src/ui-context.js';
 import { buildCheckpointContent, buildLongMemoryContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections, parseLongMemorySections, summaryHealthDetails } from '../src/ui.js';
 
 test('overview reports expected memory counts, injection size and broken chains locally', () => {
@@ -21,7 +21,7 @@ test('overview reports expected memory counts, injection size and broken chains 
     assert.equal(stats.activeKeeps, 1);
     assert.equal(stats.injectedCheckpoints, 1);
     assert.ok(stats.estimatedTokens > 0);
-    assert.match(stats.issues.join('\n'), /Summary 待处理[\s\S]*第8层[\s\S]*Checkpoint 需先修复来源/);
+    assert.match(stats.issues.join('\n'), /当前正文缺少有效 Summary[\s\S]*第8层/);
     assert.match(stats.issues.join('\n'), /Checkpoint 待处理[\s\S]*第6–10层[\s\S]*尚未生成/);
     assert.equal(estimateTokenCount(''), 0);
 });
@@ -189,4 +189,29 @@ test('Long Memory inline save uses the existing store edit path and keeps its ca
     ui.beginInlineEdit('long', 'legacy');
     ui.saveInlineEdit({ dataset: { memoryType: 'long', memoryId: 'legacy' }, querySelectorAll: () => [{ dataset: { editField: 'rawContent' }, value: '完整旧格式正文\n[Extra]\n独有信息' }] });
     assert.equal(calls[1][2].content, '完整旧格式正文\n[Extra]\n独有信息');
+});
+
+test('mobile visual viewport resize and pan keeps inputs visible without clipping against a shrinking parent, then restores', () => {
+    const vvListeners = {}, overlayListeners = {}, frames = new Map(); let sequence = 0;
+    const vv = { width: 390, height: 844, offsetLeft: 0, offsetTop: 0,
+        addEventListener: (name, fn) => { vvListeners[name] = fn; }, removeEventListener: name => { delete vvListeners[name]; } };
+    const style = { setProperty(key, value) { this[key] = value; } };
+    const scroller = { scrollTop: 0, getBoundingClientRect: () => ({ top: vv.offsetTop + 12, bottom: vv.offsetTop + vv.height - 12 }), querySelector: () => ({ getBoundingClientRect: () => ({ bottom: vv.offsetTop + 72 }) }) };
+    const input = { matches: () => true, closest: () => scroller, getBoundingClientRect: () => ({ top: 700, bottom: 740 }) };
+    const root = { innerWidth: 390, innerHeight: 844, visualViewport: vv, document: { activeElement: null }, matchMedia: () => ({ matches: true }),
+        requestAnimationFrame: fn => { frames.set(++sequence, fn); return sequence; }, cancelAnimationFrame: id => frames.delete(id), addEventListener() {}, removeEventListener() {} };
+    const overlay = { style, dataset: {}, contains: el => el === input, addEventListener: (name, fn) => { overlayListeners[name] = fn; }, removeEventListener: name => { delete overlayListeners[name]; } };
+    const controller = new AbortController();
+    const dispose = bindDialogViewport(overlay, root, controller.signal, { getBoundingClientRect: () => ({ left: 0, right: 390, top: 350, bottom: 420 }) });
+    assert.equal(style.height, '844px'); root.document.activeElement = input;
+    vv.height = 400; vv.offsetTop = 38;
+    for (let n = 0; n < 30; n++) vvListeners.resize();
+    assert.equal(frames.size, 1); const frame = [...frames.values()][0]; frames.clear(); frame();
+    assert.equal(style.height, '400px'); assert.equal(style.top, '38px'); assert.equal(overlay.dataset.keyboardOpen, 'true'); assert.ok(scroller.scrollTop > 0);
+    // Android may shrink the layout viewport itself; it must use the same dimensions once.
+    root.innerHeight = 400; vv.offsetTop = 0; vvListeners.resize(); [...frames.values()][0](); frames.clear();
+    assert.equal(style.height, '400px'); assert.equal(style.top, '0px');
+    root.innerHeight = vv.height = 844; root.document.activeElement = null; overlayListeners.focusout(); [...frames.values()][0](); frames.clear();
+    assert.equal(style.height, '844px'); assert.equal(overlay.dataset.keyboardOpen, 'false');
+    dispose(); assert.equal(Object.keys(vvListeners).length, 0); assert.equal(Object.keys(overlayListeners).length, 0);
 });

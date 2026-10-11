@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.24.3';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.3';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.3';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.3';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.3';
-import { getAssistantMessages } from './src/utils.js?v=1.24.3';
-import { MemoryStore } from './src/memory-store.js?v=1.24.3';
-import { MemorySummarizer } from './src/summarizer.js?v=1.24.3';
-import { CacheMemoryUI } from './src/ui.js?v=1.24.3';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.3';
-import { MemoryServerClient } from './src/memory-server.js?v=1.24.3';
+import { SummaryApiClient } from './src/api-client.js?v=1.24.4';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.4';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.4';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.4';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.4';
+import { getAssistantMessages } from './src/utils.js?v=1.24.4';
+import { MemoryStore } from './src/memory-store.js?v=1.24.4';
+import { MemorySummarizer } from './src/summarizer.js?v=1.24.4';
+import { CacheMemoryUI } from './src/ui.js?v=1.24.4';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.4';
+import { MemoryServerClient } from './src/memory-server.js?v=1.24.4';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -197,7 +197,7 @@ const summarizer = new MemorySummarizer({
 function updateInjection(reason = 'manual edit') {
     if (!settings || !shouldRefreshInjection(settings, reason)) return;
     const current = store.current();
-    const sourceStore = { ...current, summaries: Object.fromEntries(store.currentSummaries(chat).map(item => [item.messageId, item])) };
+    const sourceStore = store.effectiveStore(chat);
     const result = refreshSnapshot(current, settings, reason, sourceStore);
     const readOnly = ['chat changed', 'history metadata changed', 'store migration'].includes(reason);
     if (readOnly) persistence.noteReadOnlySnapshot(current);

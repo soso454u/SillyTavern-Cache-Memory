@@ -87,7 +87,7 @@
     backdrop-filter: none;
     box-sizing: border-box;
 }
-.cache-memory-config-frame { position: relative; width: min(1040px, 100%); height: min(860px, calc(100vh - 64px), calc(100dvh - 64px)); max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
+.cache-memory-config-frame { position: relative; width: min(1040px, 100%); height: min(860px, 100%); max-width: 100%; max-height: 100%; min-width: 0; min-height: 0; }
 .cache-memory-config-frame > .cache-memory-config-panel { z-index: 1; width: 100%; height: 100%; max-width: 100%; }
 .cache-memory-resize-handle { position: absolute; z-index: 8; touch-action: none; user-select: none; }
 .cache-memory-resize-handle[data-resize-edge="n"], .cache-memory-resize-handle[data-resize-edge="s"] { left: 0; width: 100%; height: 8px; cursor: ns-resize; }
@@ -100,7 +100,7 @@
 .cache-memory-resize-handle[data-resize-edge="n"]::after, .cache-memory-resize-handle[data-resize-edge="s"]::after { width: 32px; height: 3px; }
 .cache-memory-resize-handle[data-resize-edge="e"]::after, .cache-memory-resize-handle[data-resize-edge="w"]::after { width: 3px; height: 32px; }
 .cache-memory-config-panel {
-    height: min(860px, calc(100vh - 64px), calc(100dvh - 64px));
+    height: min(860px, 100%);
     overflow: hidden;
     border: 1px solid var(--cm-line);
     border-radius: 16px;
@@ -358,7 +358,7 @@ body.cache-memory-config-open { overflow: hidden; }
 
 @media (max-width: 650px) {
     .cache-memory-overlay { padding: 6px; }
-    .cache-memory-config-panel { height: min(88vh, 88dvh); border-radius: 20px; }
+    .cache-memory-config-panel { height: 100%; border-radius: 20px; }
     .cache-memory-config-frame { height: 100%; }
     .cache-memory-resize-handle[data-resize-edge="e"], .cache-memory-resize-handle[data-resize-edge="w"] { width: 12px; }
     .cache-memory-resize-handle[data-resize-edge="n"], .cache-memory-resize-handle[data-resize-edge="s"] { height: 12px; }
@@ -424,7 +424,7 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-modal-actions .cache-memory-danger { background: var(--cm-error, #b42336) !important; color: var(--cm-panel, #fff) !important; }
 @media (max-width: 650px) {
     .cache-memory-overlay { padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
-    .cache-memory-config-panel { height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom))); max-width: 100%; }
+    .cache-memory-config-panel { height: 100%; max-width: 100%; }
     .cache-memory-config-panel .cache-memory-backup { margin-inline: 12px; }
     .cache-memory-card-summary { align-items: start; }
 }
@@ -520,4 +520,19 @@ body.cache-memory-config-open { overflow: hidden; }
 @media (max-width: 420px) {
     #cache-memory-config .cache-memory-dialog-title > i { display: none; }
     #cache-memory-config .cache-memory-dialog-title > div > small:first-of-type { display: none; }
+}
+
+/* Use one measured visible viewport for the dialog; dvh and focus zoom must
+   not independently resize its descendants while a keyboard is opening. */
+@media (max-width: 650px), (pointer: coarse) {
+    #cache-memory-config input:not([type="checkbox"]):not([type="radio"]),
+    #cache-memory-config textarea, #cache-memory-config select,
+    .cache-memory-modal-field input, .cache-memory-modal-field textarea,
+    .cache-memory-modal-field select { font-size: 16px; }
+    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-pinned { display: block; }
+    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-pinned > :not(.cache-memory-dialog-header) { display: none !important; }
+    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-config-panel { scroll-padding-top: 72px; }
+    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-dialog-title small { display: none; }
+    .cache-memory-overlay[data-keyboard-open="true"] textarea,
+    .cache-memory-modal-overlay[data-keyboard-open="true"] textarea { max-height: max(64px, calc(var(--cm-dialog-height) - 160px)); }
 }

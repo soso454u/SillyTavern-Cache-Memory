@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.3';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.3';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.3';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.4';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.4';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.4';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -113,6 +113,7 @@ function normalizedKeepRecord(item, id, fallbackTime) {
         createdAt: item?.createdAt ?? now,
         updatedAt: item?.updatedAt ?? item?.createdAt ?? now,
         replacedBy: String(item?.replacedBy ?? ''),
+        ...(item?.sourceInvalidated ? { sourceInvalidated: true } : {}),
     };
 }
 
@@ -352,7 +353,10 @@ export class MemoryStore {
     }
 
     rewriteSummaryReferences(store, oldId, newId, changedBody = false) {
-        for (const section of [store.keepRegistry, store.stateOverrides]) for (const item of Object.values(section)) if (item.sourceId === oldId) item.sourceId = newId;
+        for (const section of [store.keepRegistry, store.stateOverrides]) for (const item of Object.values(section)) if (item.sourceId === oldId) {
+            item.sourceId = newId;
+            if (changedBody) item.sourceInvalidated = true;
+        }
         for (const item of [...store.checkpoints, ...store.longMemories]) {
             const source = store.summaries[newId] ?? store.summaries[oldId];
             const referenced = item.summaryIds?.includes(oldId) || Object.hasOwn(item.sourceVersions ?? {}, oldId)
@@ -386,7 +390,8 @@ export class MemoryStore {
         const links = this.summaryLinks.get(`${store.chatId}:${entry.messageId}`);
         return Object.entries(store.summaries).filter(([key, item]) => key === entry.messageId || item.messageId === entry.messageId
             || links?.has(key) || entry.relatedMessageIds?.includes(key)
-            || item.sourceMessageKey && item.sourceMessageKey === entry.sourceMessageKey);
+            || item.sourceMessageKey && item.sourceMessageKey === entry.sourceMessageKey
+            || item.floor === entry.floor && summaryMatchesEntry(item, entry));
     }
 
     currentSummaries(chat) {
@@ -399,6 +404,46 @@ export class MemoryStore {
             const record = this.getSummaryForEntry(entry, store, byFloor);
             return isUsableMemory(record) && summaryMatchesEntry(record, entry) ? [record] : [];
         });
+    }
+
+    summarySourceIndex(chat) {
+        const entries = getAssistantMessages(chat), ids = new Map(), sources = new Map(), floors = new Map();
+        const chatId = this.current().chatId;
+        for (const entry of entries) {
+            for (const id of [entry.messageId, ...(entry.relatedMessageIds ?? []), ...(this.summaryLinks.get(`${chatId}:${entry.messageId}`) ?? [])]) ids.set(id, entry);
+            if (entry.sourceMessageKey) sources.set(entry.sourceMessageKey, entry);
+            floors.set(entry.floor, entry);
+        }
+        return (key, item) => ids.get(key) ?? ids.get(item.messageId) ?? sources.get(item.sourceMessageKey)
+            ?? (summaryMatchesEntry(item, floors.get(item.floor)) ? floors.get(item.floor) : null);
+    }
+
+    effectiveStore(chat) {
+        const store = this.current(), invalid = new Set();
+        const summaries = Object.fromEntries(this.currentSummaries(chat).map(item => [item.messageId, item]));
+        const sourceFor = this.summarySourceIndex(chat);
+        for (const [id, item] of Object.entries(store.summaries)) {
+            const entry = sourceFor(id, item);
+            const linked = entry && this.summaryLinks.get(`${store.chatId}:${entry.messageId}`)?.has(id);
+            const knownSwipe = entry && id !== entry.messageId && entry.relatedMessageIds?.includes(id);
+            if (entry && (item.sourceContentFingerprint || linked || knownSwipe) && !summaryMatchesEntry(item, entry)) invalid.add(id);
+        }
+        const projected = { ...store, summaries, checkpoints: store.checkpoints.map(item => ({ ...item })),
+            longMemories: store.longMemories.map(item => ({ ...item })) };
+        for (const item of [...projected.checkpoints, ...projected.longMemories]) {
+            const refs = [...(item.summaryIds ?? []), ...Object.keys(item.sourceVersions ?? {})];
+            if (refs.some(id => invalid.has(id))
+                || !refs.length && [...invalid].some(id => store.summaries[id]?.floor >= item.startFloor && store.summaries[id]?.floor <= item.endFloor)) item.sourceReplaced = true;
+        }
+        this.markReplacementDependents(projected);
+        const excluded = [...projected.checkpoints, ...projected.longMemories].filter(item => item.sourceReplaced);
+        const invalidSources = new Set([...invalid, ...excluded.map(item => item.id)]);
+        projected.sourceFallbackRanges = excluded.map(({ startFloor, endFloor }) => ({ startFloor, endFloor }));
+        projected.checkpoints = projected.checkpoints.filter(item => !item.sourceReplaced);
+        projected.longMemories = projected.longMemories.filter(item => !item.sourceReplaced);
+        projected.keepRegistry = Object.fromEntries(Object.entries(store.keepRegistry).filter(([, item]) => !item.sourceInvalidated && !invalidSources.has(item.sourceId)));
+        projected.stateOverrides = Object.fromEntries(Object.entries(store.stateOverrides).filter(([, item]) => !item.sourceInvalidated && !invalidSources.has(item.sourceId)));
+        return projected;
     }
 
     getSummaryForEntry(entry, store = this.current(), byFloor = null) {
@@ -444,14 +489,19 @@ export class MemoryStore {
         return groups;
     }
 
-    cleanupSuperseded(chat) {
+    cleanupSuperseded(chat, { persist = true, aggregates = true } = {}) {
         const store = this.current();
-        for (const entry of getAssistantMessages(chat)) {
-            const record = store.summaries[entry.messageId];
-            if (isUsableMemory(record) && summaryMatchesEntry(record, entry)) this.retireSummaries(entry, record, store);
+        const sourceFor = this.summarySourceIndex(chat);
+        for (const [key, old] of Object.entries(store.summaries)) {
+            const entry = sourceFor(key, old), record = entry && store.summaries[entry.messageId];
+            if (!entry || key === entry.messageId || !isUsableMemory(record) || !summaryMatchesEntry(record, entry)) continue;
+            this.rewriteSummaryReferences(store, key, record.messageId, !summaryMatchesEntry(old, entry)
+                || JSON.stringify(summaryFields(old).slice(1)) !== JSON.stringify(summaryFields(record).slice(1)));
+            store.tombstones[`Summary:${key}`] = { replacedBy: record.messageId, sourceFloor: entry.floor };
+            delete store.summaries[key];
         }
-        for (const { section, winner } of this.supersededAggregates()) this.addAggregate(section, section === 'checkpoints' ? 'Checkpoint' : 'Long Memory', winner, true);
-        this.persist('memory replacement');
+        if (aggregates) for (const { section, winner } of this.supersededAggregates()) this.addAggregate(section, section === 'checkpoints' ? 'Checkpoint' : 'Long Memory', winner, true);
+        if (persist) this.persist('memory replacement');
     }
 
     getSummary(messageId) {
@@ -515,7 +565,10 @@ export class MemoryStore {
         const existing = new Set(Object.values(store.keepRegistry).map(item => normalizeKeepText(item.text)).filter(Boolean));
         for (const text of extractSummaryKeepEntries(record)) {
             const normalized = normalizeKeepText(text);
-            if (!normalized || existing.has(normalized)) continue;
+            if (!normalized) continue;
+            const previous = Object.values(store.keepRegistry).find(item => normalizeKeepText(item.text) === normalized);
+            if (previous?.sourceInvalidated) Object.assign(previous, { sourceId: record.messageId, sourceFloor: record.floor, sourceInvalidated: false });
+            if (existing.has(normalized)) continue;
             const id = nextKeepId(store.keepRegistry);
             const now = new Date().toISOString();
             store.keepRegistry[id] = normalizedKeepRecord({
@@ -563,7 +616,7 @@ export class MemoryStore {
         for (const field of allowed) if (Object.hasOwn(updates, field)) record[field] = String(updates[field] ?? '').trim();
         if (!KEEP_STATUSES.has(record.status)) record.status = 'active';
         record.updatedAt = new Date().toISOString();
-        if (persist) this.persist('manual edit');
+        if (persist) { delete record.sourceInvalidated; this.persist('manual edit'); }
         return { ...record, id: key };
     }
 

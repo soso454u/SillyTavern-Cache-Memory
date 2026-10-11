@@ -179,12 +179,11 @@ test('manual UI upload requires no second confirmation and verifies valid messag
     assert.match(configTemplate(), /data-upload-backup/);
 });
 
-test('manual UI rejects unloaded chat messages, mismatched source bodies and edits during upload', async () => {
-    for (const kind of ['empty', 'mismatch', 'edited']) {
+test('manual UI rejects unloaded chat messages and source edits during upload', async () => {
+    for (const kind of ['empty', 'edited']) {
         const f = fixture();
         const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { store: f.store, persistence: f.p, getChat: () => kind === 'empty' ? [] : f.chat,
             renderMemorySaveState() {}, renderManager() {}, renderMessageMemories() {} });
-        if (kind === 'mismatch') f.metadata.cache_memory.summaries[f.entries[0].messageId].sourceContentFingerprint = 'old-body';
         if (kind === 'edited') { const read = f.p.readAuthoritativeStore; f.p.readAuthoritativeStore = async () => { const result = await read(); f.chat[0].mes = '读取期间修改了原文'; return result; }; }
         if (kind === 'edited') await ui.handleManagerClick({ target: { closest: selector => selector === '[data-save-memory]' ? {} : null } });
         else await assert.rejects(ui.handleManagerClick({ target: { closest: selector => selector === '[data-save-memory]' ? {} : null } }), /未上传/);
@@ -270,4 +269,15 @@ test('the local conflict button uses the exact manual upload without another cho
     await ui.handleManagerClick({ target: { closest: selector => selector === '[data-memory-conflict="local"]' ? {} : null } });
     assert.equal(confirms, 0); assert.equal(f.p.getState().state, 'confirmed'); assert.equal(f.writes.length, 1);
     assert.equal(memoryContentDigest(f.record.store), digest); assert.ok(f.p.uploadBackup());
+});
+
+test('archived old-body Summary does not veto an explicit native upload of a stable current chat', async () => {
+    const f = fixture({ authority: false });
+    f.metadata.cache_memory.summaries[f.entries[0].messageId].sourceContentFingerprint = 'known-old-body';
+    const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { store: f.store, persistence: f.p, getChat: () => f.chat,
+        showPluginDialog: async () => { throw new Error('不应再次要求选择'); }, renderMemorySaveState() {}, renderManager() {}, renderMessageMemories() {} });
+    const desired = memoryContentDigest(f.metadata.cache_memory);
+    await ui.handleManagerClick({ target: { closest: selector => selector === '[data-save-memory]' ? {} : null } });
+    assert.equal(f.p.getState().state, 'confirmed'); assert.equal(f.writes.length, 1);
+    assert.equal(memoryContentDigest(f.record.store), desired); assert.ok(f.p.uploadBackup());
 });

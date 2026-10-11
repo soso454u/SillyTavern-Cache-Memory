@@ -1,7 +1,7 @@
-import { fnv1a } from './utils.js?v=1.24.3';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.3';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.24.3';
-import { isTrackedActive, matchesTrackedFact, projectActiveState } from './active-state.js?v=1.24.3';
+import { fnv1a } from './utils.js?v=1.24.4';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.4';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.24.4';
+import { isTrackedActive, matchesTrackedFact, projectActiveState } from './active-state.js?v=1.24.4';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
@@ -115,27 +115,28 @@ export function resolveKeepItems(items, output, newSummaries, summaries = []) {
 
 export function formatKeepItems(items) {
     const seen = new Set();
-    return items.filter(item => item.status === 'active' && normalizeKeepText(item.text) && !seen.has(normalizeKeepText(item.text)) && seen.add(normalizeKeepText(item.text)))
+    return items.filter(item => !item.sourceInvalidated && item.status === 'active' && normalizeKeepText(item.text) && !seen.has(normalizeKeepText(item.text)) && seen.add(normalizeKeepText(item.text)))
         .map(item => `- ${item.id} | ${item.text}`).join('\n') || '无';
 }
 
 export function previousState(store, startFloor) {
-    const checkpoints = store.checkpoints.filter(item => isUsableMemory(item) && item.endFloor < startFloor)
+    const checkpoints = store.checkpoints.filter(item => !item.sourceReplaced && isUsableMemory(item) && item.endFloor < startFloor)
         .sort((a, b) => a.endFloor - b.endFloor);
     const latest = checkpoints.at(-1);
-    if (latest?.memoryKind === 'state') return { id: latest.id, content: stripStructuredSections(latest.content, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']) };
+    const fallback = sourceFallbackSummaries(store, startFloor - 1).map(item => `[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${summaryText(item)}`).join('\n\n');
+    if (latest?.memoryKind === 'state' && !fallback) return { id: latest.id, content: stripStructuredSections(latest.content, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']) };
     // First incremental checkpoint seeds from all retained legacy aggregate ranges.
-    const longs = store.longMemories.filter(item => isUsableMemory(item) && item.endFloor < startFloor && item.memoryKind !== 'facts');
+    const longs = store.longMemories.filter(item => !item.sourceReplaced && isUsableMemory(item) && item.endFloor < startFloor && item.memoryKind !== 'facts');
     return {
         id: latest?.id ?? '',
-        content: [...longs, ...checkpoints].map(item => `[${item.id} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n') || '无上一份状态',
+        content: [[...longs, ...checkpoints].map(item => `[${item.id} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n'), fallback].filter(Boolean).join('\n\n') || '无上一份状态',
     };
 }
 
 export function projectLongFacts(store, throughFloor = Infinity, { includeTracked = false } = {}) {
     const facts = new Map();
     const legacy = [];
-    const memories = store.longMemories.filter(item => isUsableMemory(item) && item.endFloor <= throughFloor)
+    const memories = store.longMemories.filter(item => !item.sourceReplaced && isUsableMemory(item) && item.endFloor <= throughFloor)
         .sort((a, b) => a.endFloor - b.endFloor);
     for (const memory of memories) {
         if (memory.memoryKind !== 'facts') {
@@ -206,4 +207,13 @@ export function parseFactUpdates(output, projection, newSummaries) {
         if (seen.has(key)) return false;
         seen.add(key); return true;
     });
+}
+
+// Retain unaffected story from a quarantined aggregate using its original,
+// currently valid Summaries. No model rewrite, guessed sentence deletion or cap.
+export function sourceFallbackSummaries(store, throughFloor = Infinity) {
+    return Object.values(store.summaries ?? {}).filter(item => isUsableMemory(item) && item.floor <= throughFloor
+        && store.sourceFallbackRanges?.some(range => item.floor >= range.startFloor && item.floor <= range.endFloor)
+        && ![...store.checkpoints, ...store.longMemories].some(memory => !memory.sourceReplaced && isUsableMemory(memory)
+            && item.floor >= memory.startFloor && item.floor <= memory.endFloor)).sort((a, b) => a.floor - b.floor);
 }

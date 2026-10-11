@@ -1,4 +1,5 @@
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.3';
+import { LocalMemoryStorage } from './local-memory-storage.js?v=1.24.4';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.4';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -10,7 +11,6 @@ export const MEMORY_SAVE_STATES = Object.freeze({
 });
 
 const STORAGE_KEY = 'cache_memory_pending_saves_v1';
-const MIGRATION_BACKUP_PREFIX = 'cache_memory_migration_backup_v1:';
 const UPLOAD_BACKUP_PREFIX = 'cache_memory_upload_backup_v1:';
 
 export function withDeadline(operation, timeoutMs = 45000) {
@@ -45,7 +45,7 @@ function validateAuthoritativeRecord(record, chatId) {
 }
 
 export class MemoryPersistenceCoordinator {
-    constructor({ getChatId, getMetadata, readRemoteStore, saveMetadata, readAuthoritativeStore = null, commitAuthoritative = null, authoritativeAvailable = () => true, storage = null, sessionStorage = null, locks = null, createJournalChannel = null, onStatus = () => {}, timeoutMs = 45000 }) {
+    constructor({ getChatId, getMetadata, readRemoteStore, saveMetadata, readAuthoritativeStore = null, commitAuthoritative = null, authoritativeAvailable = () => true, storage = null, durableStorage = globalThis.indexedDB ? new LocalMemoryStorage() : null, sessionStorage = null, locks = null, createJournalChannel = null, onStatus = () => {}, timeoutMs = 45000 }) {
         this.getChatId = getChatId;
         this.getMetadata = getMetadata;
         this.readRemoteStore = readRemoteStore;
@@ -54,6 +54,9 @@ export class MemoryPersistenceCoordinator {
         this.commitAuthoritative = commitAuthoritative;
         this.authoritativeAvailable = authoritativeAvailable;
         this.storage = storage;
+        this.durableStorage = durableStorage;
+        this.journalWrite = Promise.resolve(true);
+        this.backups = new Map();
         this.onStatus = onStatus;
         this.writerId = writerId();
         this.storageKey = typeof storage?.key === 'function' ? `${STORAGE_KEY}:${this.writerId}` : STORAGE_KEY;
@@ -88,9 +91,13 @@ export class MemoryPersistenceCoordinator {
 
     claimJournal(locks) {
         this.journalReady = false;
-        const restore = () => { this.restorePending(); this.journalReady = true; };
+        const restore = () => {
+            this.restorePending();
+            if (this.durableStorage) return this.restoreDurablePending().then(() => { this.journalReady = true; });
+            this.journalReady = true;
+        };
         if (this.sessionStorage && !locks?.request && this.createJournalChannel) return this.claimJournalByChannel();
-        if (!this.sessionStorage || !locks?.request) { restore(); return Promise.resolve(); }
+        if (!this.sessionStorage || !locks?.request) { return Promise.resolve(restore()); }
         return new Promise(resolve => {
             // Duplicating a browser tab copies sessionStorage. A browser-local
             // lock prevents the duplicate from inheriting the live owner's edits.
@@ -101,12 +108,12 @@ export class MemoryPersistenceCoordinator {
                     try { this.sessionStorage.setItem(STORAGE_KEY, this.storageKey); } catch { /* Keep this window isolated. */ }
                     await this.claimJournal(locks); resolve(); return;
                 }
-                restore(); resolve();
+                await restore(); resolve();
                 await new Promise(release => {
                     this.releaseJournal = () => { this.journalLockReleased = true; release(); };
                     this.journalLockReleased = false;
                 });
-            }).catch(() => { restore(); resolve(); });
+            }).catch(() => { Promise.resolve(restore()).then(resolve); });
         });
     }
 
@@ -115,7 +122,7 @@ export class MemoryPersistenceCoordinator {
         // ordinary LAN HTTP installations and detects a copied live session.
         let channel;
         try { channel = this.createJournalChannel('cache-memory-journal-owner-v1'); }
-        catch { this.restorePending(); this.journalReady = true; return; }
+        catch { this.restorePending(); if (this.durableStorage) await this.restoreDurablePending(); this.journalReady = true; return; }
         this.journalReady = false;
         this.journalLockReleased = false;
         const key = this.storageKey;
@@ -135,28 +142,22 @@ export class MemoryPersistenceCoordinator {
             try { this.sessionStorage.setItem(STORAGE_KEY, this.storageKey); } catch { /* Keep this window isolated. */ }
             return this.claimJournalByChannel();
         }
-        this.restorePending(); this.journalReady = true;
+        this.restorePending(); if (this.durableStorage) await this.restoreDurablePending(); this.journalReady = true;
     }
 
-    restorePending() {
-        if (!this.storage) return;
+    restorePending(records = null) {
+        if (!this.storage && !records) return;
         const keys = new Set(this.sessionStorage ? [this.storageKey] : [STORAGE_KEY]);
         try {
-            for (let i = 0; i < (this.storage.length ?? 0); i++) {
+            for (let i = 0; i < (this.storage?.length ?? 0); i++) {
                 const key = this.storage.key(i);
                 if (!this.sessionStorage && key?.startsWith(`${STORAGE_KEY}:`)) keys.add(key);
             }
-            const obsolete = [];
-            for (let i = 0; i < (this.storage.length ?? 0); i++) {
-                const key = this.storage.key(i);
-                if (key?.startsWith(MIGRATION_BACKUP_PREFIX)) obsolete.push(key);
-            }
-            for (const key of obsolete) this.storage.removeItem(key);
             for (const key of keys) {
-                const raw = this.storage.getItem(key);
+                const raw = records ? records : this.storage.getItem(key);
                 if (!raw) continue;
                 let entries;
-                try { entries = JSON.parse(raw); } catch (error) { console.warn('[Cache Memory] Pending journal retained:', error); continue; }
+                try { entries = records ?? JSON.parse(raw); } catch (error) { console.warn('[Cache Memory] Pending journal retained:', error); continue; }
                 if (!Array.isArray(entries)) continue;
                 let complete = true;
                 for (const saved of entries) {
@@ -189,12 +190,48 @@ export class MemoryPersistenceCoordinator {
                     if (entry.conflict) this.conflicts.set(id, entry.conflict);
                     this.states.set(id, { state: entry.conflict ? MEMORY_SAVE_STATES.CONFLICT : MEMORY_SAVE_STATES.PENDING, detail: '浏览器中有尚未确认写入服务器的记忆', at: new Date().toISOString() });
                 }
-                if (complete) this.restoredJournals.set(key, raw);
+                if (complete && !records) this.restoredJournals.set(key, raw);
             }
         } catch (error) { console.warn('[Cache Memory] Unable to restore pending memory saves:', error); }
     }
 
+    async restoreDurablePending() {
+        try {
+            const records = await this.durableStorage.read(this.storageKey);
+            if (records) this.restorePending(records);
+            // Remove legacy large localStorage journals only after IDB commits.
+            if (this.restoredJournals.size && !await this.persistPending()) throw new Error('旧待保存副本迁移失败');
+        } catch (error) {
+            this.journalReadError = error;
+            for (const id of this.pending.keys()) this.setState(id, MEMORY_SAVE_STATES.FAILED, `本机待保存副本读取失败：${error.message}`);
+        }
+    }
+
+    clearLegacyJournals() {
+        for (const [key, raw] of this.restoredJournals) {
+            try { if (this.storage?.getItem(key) === raw) this.storage.removeItem?.(key); } catch { /* Retained. */ }
+        }
+        this.restoredJournals.clear();
+        // Removal failures must not turn an already committed IDB transaction
+        // into a failed save; retaining a legacy copy is safe.
+        try { this.storage?.removeItem?.(this.storageKey); } catch { /* Retained. */ }
+    }
+
     persistPending() {
+        if (this.durableStorage) {
+            const records = clone([...this.pending.values()]);
+            this.journalWrite = this.journalWrite.then(async () => {
+                if (this.journalReadError) throw this.journalReadError;
+                if (records.length) await this.durableStorage.write(this.storageKey, records);
+                else await this.durableStorage.remove(this.storageKey);
+                this.clearLegacyJournals();
+                return true;
+            }).catch(error => {
+                console.warn('[Cache Memory] Recovery data retained in this window; local commit failed:', error);
+                return false;
+            });
+            return this.journalWrite;
+        }
         if (!this.storage) return true;
         try {
             // Each window owns a separate journal. A pagehide in an old window
@@ -253,9 +290,14 @@ export class MemoryPersistenceCoordinator {
         if (!id) return null;
         this.epoch++;
         this.readController?.abort();
+        if (this.durableStorage) this.readUploadBackup(id).then(() => this.onStatus(id, this.getState(id))).catch(() => {});
         const loaded = normalizeStore(clone(loadedValue), id);
         const loadedDigest = memoryContentDigest(loaded);
         const pending = this.pending.get(id);
+        if (this.journalReadError) {
+            this.setState(id, MEMORY_SAVE_STATES.FAILED, `本机待保存日志尚无法读取，未自动替换：${this.journalReadError.message}；请重试核验`);
+            return loaded;
+        }
         if (pending?.conflict) {
             this.getMetadata().cache_memory = clone(pending.snapshot);
             this.setState(id, MEMORY_SAVE_STATES.CONFLICT, '已保留未解决冲突的双方副本；请核对后恢复');
@@ -282,6 +324,7 @@ export class MemoryPersistenceCoordinator {
     async sync(chatId = this.getChatId(), loadedValue = this.getMetadata().cache_memory) {
         if (!this.journalReady) await this.ready;
         const id = String(chatId ?? '');
+        if (this.journalReadError) return loadedValue;
         if (this.conflicts.has(id)) return this.getMetadata().cache_memory;
         if (!id || !this.readAuthoritativeStore || !this.authoritativeAvailable() || String(this.getChatId() ?? '') !== id) return loadedValue;
         if (this.pending.has(id)) { await this.flush(id); return String(this.getChatId()) === id ? this.getMetadata().cache_memory : loadedValue; }
@@ -425,6 +468,7 @@ export class MemoryPersistenceCoordinator {
 
     async loadLatest(chatId = this.getChatId()) {
         if (!this.journalReady) await this.ready;
+        if (this.journalReadError) return this.setState(String(chatId), MEMORY_SAVE_STATES.FAILED, `本机待保存日志读取失败，未替换：${this.journalReadError.message}；请重试核验`);
         const id = String(chatId ?? ''), epoch = this.epoch;
         // Loading is not an explicit server-over-local decision. Preserve real
         // pending edits and reconcile them through the normal save queue.
@@ -471,7 +515,7 @@ export class MemoryPersistenceCoordinator {
         return this.setState(prepared.chatId, MEMORY_SAVE_STATES.CONFIRMED, '已从服务器读取并恢复当前聊天记忆');
     }
 
-    enqueue(value, reason = 'memory changed') {
+    async enqueue(value, reason = 'memory changed') {
         if (!this.journalReady) return this.ready.then(() => this.enqueue(value, reason));
         let snapshot = normalizeStore(clone(value), value?.chatId || this.getChatId());
         const chatId = String(snapshot.chatId ?? '');
@@ -509,20 +553,54 @@ export class MemoryPersistenceCoordinator {
             restore: reason === 'memory import' || Boolean(previous?.restore),
             sequence: ++this.sequence,
             queuedAt: new Date().toISOString(),
-            ...(replacementFallback ? { replacementFallback } : {}),
+            ...(replacementFallback ? { replacementFallback, backupRequired: previous?.backupRequired } : {}),
+            ...(this.conflicts.has(chatId) ? { conflict: clone(this.conflicts.get(chatId)) } : {}),
         };
         this.pending.set(chatId, entry);
-        const locallyRetained = this.persistPending();
+        const locallyRetained = await this.persistPending();
         this.setState(chatId, this.conflicts.has(chatId) ? MEMORY_SAVE_STATES.CONFLICT : MEMORY_SAVE_STATES.PENDING, locallyRetained ? '记忆已进入当前聊天的保存队列' : '记忆已排队，但浏览器本地待保存副本写入失败；请立即导出 JSON');
         queueMicrotask(() => this.flush(chatId));
         return Promise.resolve(this.getState(chatId));
     }
 
     uploadBackup(chatId = this.getChatId()) {
+        if (this.backups.has(String(chatId))) return this.backups.get(String(chatId));
         try {
             const backup = JSON.parse(this.storage?.getItem(`${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(chatId)}`) || 'null');
-            return backup?.chatId === String(chatId) && backup.store ? backup : null;
+            const valid = backup?.chatId === String(chatId) && backup.store ? backup : null;
+            this.backups.set(String(chatId), valid);
+            return valid;
         } catch { return null; }
+    }
+
+    async readReplacementBackup(chatId = this.getChatId()) {
+        const key = `cache_memory_replacement_backup_v1:${encodeURIComponent(chatId)}`;
+        return this.durableStorage ? this.durableStorage.read(key) : JSON.parse(this.storage?.getItem(key) || 'null');
+    }
+
+    async readUploadBackup(chatId = this.getChatId()) {
+        if (!this.durableStorage) return this.uploadBackup(chatId);
+        const key = `${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(chatId)}`;
+        let backup = await this.durableStorage.read(key);
+        if (!backup) {
+            backup = this.uploadBackup(chatId);
+            if (backup) { await this.retainBackup(key, backup); try { this.storage?.removeItem?.(key); } catch { /* Retained. */ } }
+        }
+        if (backup?.chatId === String(chatId) && backup.store) this.backups.set(String(chatId), backup);
+        return this.uploadBackup(chatId);
+    }
+
+    async retainBackup(key, backup) {
+        if (this.durableStorage) {
+            await this.durableStorage.write(key, backup);
+            const saved = await this.durableStorage.read(key);
+            if (!saved || memoryContentDigest(saved.store) !== memoryContentDigest(backup.store)) throw new Error('备份未通过读回校验');
+        } else {
+            if (!this.storage?.setItem || !this.storage?.getItem) throw new Error('浏览器备份存储不可用');
+            const raw = JSON.stringify(backup);
+            this.storage.setItem(key, raw);
+            if (this.storage.getItem(key) !== raw) throw new Error('备份未通过读回校验');
+        }
     }
 
     uploadCurrentChat(chatId = this.getChatId(), { assertActive = () => {} } = {}) {
@@ -530,9 +608,19 @@ export class MemoryPersistenceCoordinator {
         const id = String(chatId ?? ''), epoch = this.epoch;
         if (!id || String(this.getChatId()) !== id) return Promise.resolve({ state: MEMORY_SAVE_STATES.FAILED, detail: '聊天身份已变化，未上传' });
         if (this.pausedSaves.has(id) || this.replacementRuns.has(id)) return Promise.resolve({ state: MEMORY_SAVE_STATES.PENDING, detail: '当前聊天仍在保存或恢复，请完成后再上传' });
-        const local = clone(this.getMetadata().cache_memory);
+        const visible = this.getMetadata().cache_memory, queued = this.pending.get(id);
+        // A failed generated replacement keeps the old record visible. An
+        // explicit upload must rescue that window's retained draft rather than
+        // confirm the old server copy and silently clear the generated result.
+        const selectedDraft = queued?.replacementFallback && memoryContentDigest(visible) === memoryContentDigest(queued.replacementFallback);
+        const replacement = selectedDraft ? this.replacementStores.get(id) : null;
+        const local = clone(selectedDraft ? queued.snapshot : visible);
         if (local?.chatId !== id) return Promise.resolve(this.setState(id, MEMORY_SAVE_STATES.FAILED, '本机记忆的聊天身份不匹配，未上传'));
         const digest = memoryContentDigest(local);
+        if (selectedDraft) {
+            this.getMetadata().cache_memory = clone(local);
+            if (replacement) replacement.store.replacementView = clone(queued.replacementFallback);
+        }
         const previous = this.running.get(id);
         const resume = this.pauseSaves(id);
         const task = Promise.resolve(previous).then(() => {
@@ -541,6 +629,17 @@ export class MemoryPersistenceCoordinator {
         }).finally(() => {
             if (this.running.get(id) === task) this.running.delete(id);
             resume({ retryPending: false });
+            if (selectedDraft) {
+                const pending = this.pending.get(id);
+                if (pending?.replacementFallback && String(this.getChatId()) === id) this.getMetadata().cache_memory = clone(pending.replacementFallback);
+                if (replacement) {
+                    delete replacement.store.replacementView;
+                    if (!pending && this.getState(id).state === MEMORY_SAVE_STATES.CONFIRMED && String(this.getChatId()) === id) {
+                        this.replacementStores.delete(id);
+                        replacement.store.persist(replacement.reason);
+                    }
+                }
+            }
         });
         this.running.set(id, task);
         return task;
@@ -585,12 +684,10 @@ export class MemoryPersistenceCoordinator {
                 this.baselines.set(id, { digest, revision: remote.sync.revision, snapshot: clone(remote), authoritative: authority });
                 return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已同步：服务器读回与本机一致');
             }
-            if (!this.persistPending()) throw new Error('本机待保存副本写入失败，未覆盖服务器');
+            if (!await this.persistPending()) throw new Error('本机待保存副本写入失败，未覆盖服务器');
             const backup = { chatId: id, revision: remote.sync.revision, savedAt: new Date().toISOString(), store: clone(authority ? record.store : record) };
-            const key = `${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(id)}`, serialized = JSON.stringify(backup);
-            if (!this.storage?.setItem || !this.storage?.getItem) throw new Error('浏览器备份存储不可用，未覆盖服务器');
-            this.storage.setItem(key, serialized);
-            if (this.storage.getItem(key) !== serialized) throw new Error('服务器原数据备份未通过读回校验，未覆盖服务器');
+            await this.retainBackup(`${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(id)}`, backup);
+            this.backups.set(id, backup);
             check();
             // Native ST has no CAS. This narrows the race window but cannot
             // prevent another device writing between this read and the save.
@@ -693,18 +790,21 @@ export class MemoryPersistenceCoordinator {
         finally { store.persist = persist; this.getMetadata().cache_memory = previous; }
         store.replacementView = clone(previous);
         this.replacementStores.set(chatId, { store, reason });
+        const resume = this.pauseSaves(chatId);
         try {
             await this.enqueue(candidate, reason);
             const pending = this.pending.get(chatId);
             if (pending) {
                 pending.replacementFallback = previous;
-                if (!this.persistPending()) {
-                    this.pending.delete(chatId); this.replacementStores.delete(chatId);
+                pending.backupRequired = reason === 'memory replacement' || Object.entries(previous.summaries).some(([id, old]) => !candidate.summaries[id]
+                    || summaryVersion(old) !== summaryVersion(candidate.summaries[id]));
+                if (!await this.persistPending()) {
                     this.getMetadata().cache_memory = previous;
-                    this.setState(chatId, MEMORY_SAVE_STATES.FAILED, '无法保留替换前的临时副本，原记忆未替换；请检查浏览器存储空间');
+                    this.setState(chatId, MEMORY_SAVE_STATES.FAILED, '本机待提交数据写入失败；原记忆和生成结果仍保留在当前窗口，请导出后重试');
                     throw Object.assign(new Error(this.getState(chatId).detail), { code: 'SAVE_UNCONFIRMED' });
                 }
             }
+            resume({ retryPending: false });
             state = await this.flush(chatId);
             if (String(this.getChatId()) !== chatId || this.epoch !== epoch) throw Object.assign(new Error('保存期间聊天已切换，未发布替换结果'), { code: 'CHAT_CHANGED' });
             if (state.state !== MEMORY_SAVE_STATES.CONFIRMED) throw Object.assign(new Error(`替换尚未确认，原记忆保留：${state.detail}`), { code: 'SAVE_UNCONFIRMED' });
@@ -717,7 +817,7 @@ export class MemoryPersistenceCoordinator {
                     if (version(before[id]) !== version(desired[id]) && version(actual[id]) !== version(desired[id])) throw Object.assign(new Error('保存期间记忆被再次编辑，未采用这次生成结果'), { code: 'SAVE_UNCONFIRMED' });
                 }
             }
-        } finally { delete store.replacementView; }
+        } finally { resume({ retryPending: false }); delete store.replacementView; }
         return result;
     }
 
@@ -798,7 +898,14 @@ export class MemoryPersistenceCoordinator {
             this.getMetadata().cache_memory = clone(desired);
             entry.snapshot = clone(desired);
             this.pending.set(chatId, entry);
-            this.persistPending();
+            if (!await this.persistPending()) return this.setState(chatId, MEMORY_SAVE_STATES.FAILED, '本机待保存副本写入失败；未写入服务器，数据仍在当前窗口，请导出后重试');
+            if (entry.backupRequired) {
+                try {
+                    await this.retainBackup(`cache_memory_replacement_backup_v1:${encodeURIComponent(chatId)}`,
+                        { chatId, savedAt: new Date().toISOString(), store: entry.replacementFallback });
+                } catch (error) { return this.setState(chatId, MEMORY_SAVE_STATES.FAILED, `清理前备份保存失败，未替换服务器记忆：${error.message}`); }
+            }
+            if (!stillActive() || this.pending.get(chatId)?.sequence !== entry.sequence) continue;
             try {
                 if (useAuthority) {
                     let result;
@@ -914,6 +1021,11 @@ export class MemoryPersistenceCoordinator {
 
     async reread(chatId = this.getChatId()) {
         if (!this.journalReady) await this.ready;
+        if (this.journalReadError) {
+            this.journalReadError = null;
+            await this.restoreDurablePending();
+            if (this.journalReadError) return this.setState(String(chatId), MEMORY_SAVE_STATES.FAILED, `本机待保存日志读取失败：${this.journalReadError.message}`);
+        }
         const id = String(chatId ?? ''), epoch = this.epoch, sequence = ++this.readSequence;
         if (String(this.getChatId()) !== id || this.conflicts.has(id)) return this.getState(id);
         if (this.pending.has(id)) return this.flush(id);

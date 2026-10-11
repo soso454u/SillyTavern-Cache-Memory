@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.3';
-import { generationPrompt } from './generation-prompts.js?v=1.24.3';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.3';
-import { effectiveInjectionMode } from './cache-control.js?v=1.24.3';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.3';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.3';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.3';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.3';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.3';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.3';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.3';
-import { parseFloorSummary } from './summarizer.js?v=1.24.3';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.3';
+import { applyUITheme } from './ui-theme.js?v=1.24.4';
+import { generationPrompt } from './generation-prompts.js?v=1.24.4';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.4';
+import { effectiveInjectionMode } from './cache-control.js?v=1.24.4';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.4';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.4';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.4';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.4';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.4';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.4';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.4';
+import { parseFloorSummary } from './summarizer.js?v=1.24.4';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.4';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.3';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.3';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.4';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.4';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -124,8 +124,7 @@ export function memoryOverviewStats(store, assistants, settings) {
     const checkpointGapsBlockingLong = missingCheckpointRanges.filter(([, end]) => end <= longDueThrough);
     const issues = [];
     if (missingSummaryFloors.length) {
-        const labels = currentIssues.slice(0, 8).map(item => `第${item.floor}层：${item.label}`);
-        issues.push(`Summary 待处理 ${missingSummaryFloors.length} 层（${labels.join('；')}）；对应 Checkpoint 需先修复来源。`);
+        issues.push(`当前正文缺少有效 Summary：${missingSummaryFloors.length} 层（${currentIssues.slice(0, 8).map(item => `第${item.floor}层`).join('、')}）。`);
     }
     const aggregateDetails = [];
     for (const [type, ranges, list] of [['Checkpoint', missingCheckpointRanges, safeStore.checkpoints], ['Long Memory', missingLongRanges, safeStore.longMemories]]) {
@@ -297,6 +296,8 @@ function managerPanelTemplate() {
             <div class="cache-memory-actions cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-validate-memory>检查记忆状态</button>
                 <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
+                <button type="button" class="menu_button" data-pending-backup hidden>下载待保存副本</button>
+                <button type="button" class="menu_button" data-replacement-backup>下载清理前备份</button>
                 <button type="button" class="menu_button" data-reinject>重新注入</button>
                 <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
             </div><p data-memory-diagnostics></p>
@@ -514,7 +515,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.3', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.4', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -525,9 +526,13 @@ export class CacheMemoryUI {
             this.themeQuery.addListener(changeTheme);
             this.controller.signal.addEventListener('abort', () => this.themeQuery.removeListener(changeTheme), { once: true });
         }
-        this.root.addEventListener('resize', () => {
-            for (const input of this.doc.querySelectorAll('.cache-memory-inline-editor textarea, .cache-memory-modal-panel textarea, .cache-memory-tracked-form textarea, #cache-memory-config textarea')) resizeMemoryTextarea(input);
-        }, { signal: this.controller.signal });
+        let textareaFrame = null;
+        const resizeEditors = () => {
+            textareaFrame = null;
+            for (const input of this.doc.querySelectorAll('.cache-memory-inline-editor textarea, .cache-memory-modal-panel textarea, .cache-memory-tracked-form textarea, #cache-memory-config textarea')) if (input !== this.doc.activeElement) resizeMemoryTextarea(input);
+        };
+        this.root.addEventListener('resize', () => { if (textareaFrame === null) textareaFrame = this.root.requestAnimationFrame(resizeEditors); }, { signal: this.controller.signal });
+        this.controller.signal.addEventListener('abort', () => { if (textareaFrame !== null) this.root.cancelAnimationFrame(textareaFrame); }, { once: true });
     }
 
     mountSettings() {
@@ -650,6 +655,9 @@ export class CacheMemoryUI {
         }
         const resize = () => {
             if (overlay.hidden || !overlay.isConnected) return;
+            // Keyboard/visualViewport scrolling must not reset desktop drag or
+            // permanently clamp the user's saved size to the keyboard height.
+            if (viewportSize(root).width <= 650 || root.matchMedia?.('(pointer: coarse)')?.matches) return;
             reset();
             const b = limits();
             if (width !== null) { width = Math.min(width, b.right - b.left); panel.style.width = `${width}px`; }
@@ -662,7 +670,6 @@ export class CacheMemoryUI {
         };
         root.addEventListener('resize', queueResize, { signal: this.controller.signal });
         root.visualViewport?.addEventListener('resize', queueResize, { signal: this.controller.signal });
-        root.visualViewport?.addEventListener('scroll', queueResize, { passive: true, signal: this.controller.signal });
         this.controller.signal.addEventListener('abort', () => { if (viewportFrame !== null) root.cancelAnimationFrame(viewportFrame); }, { once: true });
         this.controller.signal.addEventListener('abort', stop, { once: true });
         return reset;
@@ -1623,6 +1630,8 @@ export class CacheMemoryUI {
         if (upload) upload.disabled = Boolean(this.uploadingMemory || this.restoringServerMemory || this.importingMemory);
         const backup = this.manager.querySelector('[data-upload-backup]');
         if (backup) backup.hidden = !this.persistence?.uploadBackup?.(this.store.current().chatId);
+        const pendingBackup = this.manager.querySelector('[data-pending-backup]');
+        if (pendingBackup) pendingBackup.hidden = !this.persistence?.pending?.has(current.chatId);
         const conflictActions = this.manager.querySelector('[data-memory-conflict-actions]');
         if (conflictActions) conflictActions.hidden = status.state !== 'conflict';
         const details = this.manager.querySelector('[data-conflict-details]');
@@ -1737,7 +1746,7 @@ export class CacheMemoryUI {
     renderTrackedPage(kind) {
         const root = this.element('div', 'cache-memory-manager-page');
         root.append(this.element('p', '', '来源变更的记录标为待核对，不参与当前状态整理。结束事项保留历史；长时间未提及不会自动结束。手动操作不调用模型，原冻结快照在下个既有边界更新。'));
-        const rows = projectActiveState(this.store.current()).filter(item => item.kind === kind);
+        const rows = projectActiveState(this.store.effectiveStore(this.getChat())).filter(item => item.kind === kind);
         const active = rows.filter(item => isTrackedActive(item));
         const archived = rows.filter(item => !isTrackedActive(item));
         const formFor = (item = {}) => {
@@ -2448,8 +2457,20 @@ export class CacheMemoryUI {
             this.renderManager();
             return;
         }
+        if (event.target.closest('[data-replacement-backup]')) {
+            const backup = await this.persistence?.readReplacementBackup?.(this.store.current().chatId);
+            if (!backup?.store) throw new Error('当前浏览器没有此聊天的清理前备份');
+            downloadJson('cache-memory-before-cleanup.json', backup.store, this.doc);
+            return;
+        }
+        if (event.target.closest('[data-pending-backup]')) {
+            const pending = this.persistence?.pending.get(this.store.current().chatId);
+            if (!pending) throw new Error('没有待保存副本');
+            downloadJson('cache-memory-pending.json', pending.snapshot, this.doc);
+            return;
+        }
         if (event.target.closest('[data-upload-backup]')) {
-            const backup = this.persistence?.uploadBackup?.(this.store.current().chatId);
+            const backup = await (this.persistence?.readUploadBackup?.(this.store.current().chatId) ?? this.persistence?.uploadBackup?.(this.store.current().chatId));
             if (!backup) throw new Error('当前浏览器没有此聊天的上传前备份');
             downloadJson(`cache-memory-before-upload-${backup.revision}.json`, backup.store, this.doc);
             return;
@@ -2462,10 +2483,9 @@ export class CacheMemoryUI {
             const assertActive = () => {
                 if (!chatId || this.store.current().chatId !== chatId) throw new Error('聊天身份已变化，未上传');
                 if (!sources().length || JSON.stringify(sources()) !== expected) throw new Error('当前聊天有效消息尚未加载或已发生变化，未上传');
-                for (const entry of getAssistantMessages(this.getChat())) {
-                    const record = this.store.getSummaryForEntry(entry);
-                    if (record && currentSummaryHealth(record, entry).code === 'body-mismatch') throw new Error(`第 ${entry.floor} 层记忆与当前正文不匹配，未上传`);
-                }
+                // The current chat/body list is the source identity check.
+                // Archived swipe records are handled by the effective projection;
+                // they must not veto the user's explicit selection of this copy.
             };
             assertActive();
             this.uploadingMemory = true;
