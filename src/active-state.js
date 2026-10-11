@@ -1,9 +1,9 @@
-import { fnv1a } from './utils.js?v=1.24.6';
+import { fnv1a } from './utils.js?v=1.24.7';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
 const clean = value => String(value ?? '').trim();
-const validSummary = item => item && !item.sourceInvalidated && item.frozen !== false && !['failed', 'orphaned'].includes(item.status);
+const validSummary = item => item && item.frozen !== false && item.status !== 'failed';
 
 export function threadKey(value) {
     const key = clean(value);
@@ -58,13 +58,12 @@ export function parseStateChanges(text, source, known = [], { advanced = false }
 
 export function projectActiveState(store, throughFloor = Infinity) {
     const records = new Map();
-    const aggregateSources = new Set();
     const replay = (change, source) => {
         if (!change?.id || !['thread', 'state'].includes(change.kind)) return;
         const recordKey = stateId(change);
         const old = records.get(recordKey);
-        // A frozen Long may be the only retained, verified settlement after a
-        // Summary version switch. Use its explicit structured result only as
+        // A frozen Long may retain an explicit settlement absent from the
+        // Summary records. Use its explicit structured result only as
         // a fallback, preserving a real Summary result and manual correction.
         if (source.aggregate && old && !old.needsReview && (old.manual || !isTrackedActive(old))) return;
         if (!change.manual && old && !old.needsReview) {
@@ -80,32 +79,28 @@ export function projectActiveState(store, throughFloor = Infinity) {
     for (const summary of Object.values(store.summaries ?? {}).filter(item => item.floor <= throughFloor)) {
         for (const change of summary.stateChanges ?? []) events.push({ change, floor: summary.floor, sequence: 0, source: {
             sourceId: summary.messageId, sourceFloor: summary.floor, sourceFingerprint: summary.sourceFingerprint,
-            needsReview: !validSummary(summary) || Boolean(summary.stateChangesNeedsReview),
+            needsReview: !validSummary(summary),
         } });
     }
     for (const override of Object.values(store.stateOverrides ?? {}).sort((a, b) => a.sourceFloor - b.sourceFloor || a.sequence - b.sequence)) {
         if (override.sourceFloor > throughFloor) continue;
-        const source = store.summaries?.[override.sourceId];
         events.push({ change: override, floor: override.sourceFloor, sequence: override.sequence || 1,
-            source: { needsReview: Boolean(override.sourceInvalidated) || !validSummary(source) || source.sourceFingerprint !== override.sourceFingerprint } });
+            source: { needsReview: false } });
     }
     for (const memory of store.longMemories ?? []) {
-        if (!validSummary(memory) || !['frozen', 'manual-edited', 'stale'].includes(memory.status ?? 'frozen')
-            || memory.sourceReplaced || !(memory.endFloor <= throughFloor)) continue;
+        if (!validSummary(memory) || !['frozen', 'manual-edited', 'stale', 'orphaned'].includes(memory.status ?? 'frozen')
+            || !(memory.endFloor <= throughFloor)) continue;
         for (const line of String(memory.continuityState ?? '').split('\n')) {
             const match = line.match(/^\s*-\s*已结束\s+([^·\n]+)\s·\s((?:(?:新手|突发)?任务\s*[:：]\s*)?[^：:\n]+)[：:]\s*(.+)\s\((completed|failed|cancelled)，(?:仅作)?历史结果\)\s*$/u);
             if (!match) continue;
             const [, entity, key, value, status] = match;
             const change = { kind: 'thread', entity: entity.trim(), key: key.trim(), value: value.trim(), status, evidence: line.trim() };
             change.id = stateId(change);
-            aggregateSources.add(memory.id);
             events.push({ change, floor: memory.endFloor, sequence: 0, source: { sourceId: memory.id, sourceFloor: memory.endFloor, needsReview: false, aggregate: true } });
         }
     }
     events.sort((a, b) => a.floor - b.floor || a.sequence - b.sequence);
     for (const event of events) replay(event.change, event.source);
-    // A later progress report cannot repair an erased/edited task announcement.
-    for (const item of records.values()) if (!aggregateSources.has(item.originSourceId) && !validSummary(store.summaries?.[item.originSourceId])) item.needsReview = true;
     return [...records.values()];
 }
 
@@ -137,6 +132,29 @@ export function matchesTrackedFact(fact, item) {
     return item.category === 'attribute' && new RegExp(`${prefix}${escape(attributeKey(item.key))}(?:\\s*[/／]\\s*红字数值)?(?:[：:】\\s]|$)`).test(text);
 }
 
+// Exact complete state entries only. A shared subject or a substring of a
+// value cannot justify deleting a compound fact, secret or historical cause.
+export function matchesTrackedValue(text, item, value, key = item.key) {
+    if (!value) return false;
+    const body = String(text ?? '').replace(/^\s*[-*•]\s*/, '').trim();
+    const keys = [...new Set([key || item.key, subjectKey({ ...item, key: key || item.key })])];
+    const suffix = `${item.acquisition === 'pending' ? '（尚未领取）' : ''}${item.condition ? `；条件：${item.condition}` : ''}`;
+    return keys.some(name => [`${item.entity} · ${name}：${value}`, `【${item.entity}｜${name}】${value}`,
+        `${item.entity}：${name}：${value}`].some(rendered => body === rendered || body === rendered + suffix));
+}
+
+export function isAtomicTrackedEntry(text, item) {
+    if (!item.evidence || !matchesTrackedFact({ text }, item)) return false;
+    const body = String(text).replace(/^\s*[-*•]\s*/, '').trim();
+    // A complete, explicitly named task field is its current progress. Numeric
+    // fields have a closed grammar; prose with independent consequences stays.
+    if (/^已结束\s/u.test(body)) return false;
+    const value = body.match(/[：:】]([^：:】]+)$/u)?.[1]?.trim();
+    if (!value) return false;
+    return item.kind === 'thread' ? !/[，,；;。\n]/u.test(value)
+        : /^(?:Lv\.?\s*\d+|\d+(?:\.\d+)?(?:点|级|枚|个|金币|银币|%|％)?)$/i.test(value);
+}
+
 export function reconcileTrackedCheckpoint(content, store, throughFloor, startFloor = 1) {
     let result = String(content);
     const rows = projectActiveState(store, throughFloor).filter(item => !item.needsReview);
@@ -148,11 +166,14 @@ export function reconcileTrackedCheckpoint(content, store, throughFloor, startFl
         if (!rows.length) continue;
         const marker = new RegExp(`(^|\\n)\\[${section}\\]\\s*\\n([\\s\\S]*?)(?=\\n\\[[^\\]\\n]+\\]|$)`);
         const existing = result.match(marker);
-        const retained = (existing?.[2] ?? '').split('\n').filter(line => !rows.some(item => matchesTrackedFact({ text: line }, item)));
+        const retained = (existing?.[2] ?? '').split('\n').filter(line => !rows.some(item =>
+            isAtomicTrackedEntry(line, item) && (item.sourceFloor >= throughFloor || item.kind === 'thread' && !isTrackedActive(item))
+            || [...item.history, item].some(old => matchesTrackedValue(line, item, old.value, old.key))));
         const lines = rows.filter(item => sectionFor(item) === section && isTrackedActive(item)
+            && !(item.kind === 'state' && item.sourceFloor < throughFloor && retained.some(line => matchesTrackedFact({ text: line }, item) && !/[，,；;。]/u.test(line)))
             && !(item.category === 'knowledge' && item.sourceFloor < startFloor && retained.some(line => line.trim() && !/^无[。.]?$/.test(line.trim()))))
             .map(item => `- ${item.entity} · ${item.key}：${item.value}${item.acquisition === 'pending' ? '（尚未领取）' : ''}${item.condition ? `；条件：${item.condition}` : ''}`);
-        lines.push(...rows.filter(item => sectionFor(item) === section && !isTrackedActive(item) && item.sourceFloor >= startFloor)
+        lines.push(...rows.filter(item => sectionFor(item) === section && !isTrackedActive(item))
             .map(item => `- 已结束 ${item.entity} · ${item.key}：${item.value} (${item.status}，仅作历史结果)`));
         if (!existing && !lines.length) continue;
         const replacement = `[${section}]\n${[...retained.filter(line => line.trim() && !/^无[。.]?$/.test(line.trim())), ...lines].join('\n') || '无'}`;

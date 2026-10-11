@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.6';
-import { generationPrompt } from './generation-prompts.js?v=1.24.6';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.6';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.6';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.6';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.6';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.6';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.6';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.6';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.6';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.6';
-import { parseFloorSummary } from './summarizer.js?v=1.24.6';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.6';
+import { applyUITheme } from './ui-theme.js?v=1.24.7';
+import { generationPrompt } from './generation-prompts.js?v=1.24.7';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.7';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.7';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.7';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.7';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.7';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.7';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.7';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.7';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.7';
+import { parseFloorSummary } from './summarizer.js?v=1.24.7';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.7';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.6';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.6';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.7';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.7';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -89,8 +89,8 @@ export function summaryHealthDetails(store, assistants) {
         const related = entries.find(entry => entry.relatedMessageIds?.includes(key)
             || record.sourceMessageKey && record.sourceMessageKey === entry.sourceMessageKey
             || entry.messageId === id);
-        const reason = record?.status === 'orphaned' ? 'orphaned' : related ? 'old-version' : 'source-unloaded';
-        const label = reason === 'orphaned' ? '旧消息 / 旧版本来源已失效（orphaned），摘要仍保留' : reason === 'old-version'
+        const reason = related ? 'old-version' : 'source-unloaded';
+        const label = reason === 'old-version'
             ? '当前消息的旧版本 / 重复存储记录，未参与整理' : '来源消息当前未加载；摘要保留且不自动判定 orphaned';
         details.push({ floor: Number(record?.floor) || 0, messageId: id, reason, label, current: false });
     }
@@ -124,7 +124,7 @@ export function memoryOverviewStats(store, assistants, settings) {
     const checkpointGapsBlockingLong = missingCheckpointRanges.filter(([, end]) => end <= longDueThrough);
     const issues = [];
     if (missingSummaryFloors.length) {
-        issues.push(`当前正文缺少有效 Summary：${missingSummaryFloors.length} 层（${currentIssues.slice(0, 8).map(item => `第${item.floor}层`).join('、')}）。`);
+        issues.push(`Summary 待处理：${missingSummaryFloors.length} 层（${currentIssues.slice(0, 8).map(item => `第${item.floor}层：${item.label}`).join('；')}）。`);
     }
     const aggregateDetails = [];
     for (const [type, ranges, list] of [['Checkpoint', missingCheckpointRanges, safeStore.checkpoints], ['Long Memory', missingLongRanges, safeStore.longMemories]]) {
@@ -516,7 +516,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.6', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.7', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2450,16 +2450,15 @@ export class CacheMemoryUI {
         if (!this.persistence?.commitReplacement) throw new Error('记忆保存尚未就绪，请稍后重试');
         const removed = await this.persistence.commitReplacement(this.store, () => {
             const current = this.store.current();
-            const before = { summaries: Object.keys(current.summaries).length, aggregates: current.checkpoints.length + current.longMemories.length };
+            const before = Object.keys(current.summaries).length;
             this.store.cleanupSuperseded(this.getChat());
             refreshSnapshot(current, this.getSettings(), 'manual reinject', this.store.effectiveStore(this.getChat()));
-            return { summaries: before.summaries - Object.keys(current.summaries).length,
-                aggregates: before.aggregates - current.checkpoints.length - current.longMemories.length };
+            return before - Object.keys(current.summaries).length;
         }, assertActive);
         assertActive();
         this.updateInjection('manual reinject');
         this.renderManager(); this.renderMessageMemories();
-        this.setManagerActionStatus('success', `清理完成：删除 ${removed.summaries} 条旧版／重复摘要${removed.aggregates ? `、${removed.aggregates} 条重复阶段／长期记忆` : ''}，已由服务器保存并读回确认。未加载或归属不明、尚无当前摘要的记录保留；未调用模型。`);
+        this.setManagerActionStatus('success', `清理完成：删除 ${removed} 条旧版／重复摘要，已由服务器保存并读回确认。未加载或归属不明、尚无当前摘要的记录保留；未调用模型。`);
     }
 
     async performManagerClick(event) {

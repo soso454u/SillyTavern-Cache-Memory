@@ -172,11 +172,11 @@ test('message sync keeps identity and frozen status through array shifts and sou
     assistant.mes = 'edited body';
     fixture.store.syncMessages([assistant]);
     const stored = fixture.store.getSummary(entry.messageId);
-    assert.equal(stored.messageIndex, 0);
+    assert.equal(stored.messageIndex, 1);
     assert.equal(stored.status, 'frozen');
 });
 
-test('message sync rebinds a restored summary by stable assistant fingerprint', () => {
+test('message sync does not rename or move restored memory based on source fingerprints', () => {
     const metadata = { cache_memory: { version: 5, chatId: 'chat-a', summaries: {}, checkpoints: [], longMemories: [], keepRegistry: {} } };
     const restoredMessage = { is_user: false, is_system: false, mes: 'same', send_date: 1, gen_started: 2, gen_finished: 3 };
     const entry = getAssistantMessages([restoredMessage])[0];
@@ -184,8 +184,8 @@ test('message sync rebinds a restored summary by stable assistant fingerprint', 
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'chat-a', saveMetadata: () => {} });
     store.syncMessages([restoredMessage]);
     const reboundId = getAssistantMessages([restoredMessage])[0].messageId;
-    assert.equal(store.current().summaries[reboundId]?.raw, 'saved');
-    assert.equal(store.current().summaries.old_id, undefined);
+    assert.equal(store.current().summaries[reboundId], undefined);
+    assert.equal(store.current().summaries.old_id.raw, 'saved');
 });
 
 test('injection is deterministic, ordered and excludes checkpoints covered by long memory', () => {

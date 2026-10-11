@@ -253,10 +253,10 @@ test('legacy swipe-only validation cannot invalidate unchanged frozen summaries 
     chat[0].swipe_id = 3;
     f.store.syncMessages(chat);
     assert.equal(source.event, 'summary 1');
-    assert.equal(source.status, 'frozen'); assert.equal(source.sourceValidity, 'unverified');
+    assert.equal(source.status, 'stale'); assert.equal(source.sourceValidity, 'changed');
     assert.equal(source.sourceContentFingerprint, undefined); // Do not invent historic evidence.
-    assert.equal(f.store.current().checkpoints[0].status, 'frozen');
-    assert.equal(f.store.current().longMemories[0].status, 'frozen');
+    assert.equal(f.store.current().checkpoints[0].status, 'stale');
+    assert.equal(f.store.current().longMemories[0].status, 'stale');
     assert.equal(f.store.current().injectionSnapshot.value, 'do not rebuild frozen injection');
     await f.p.flush();
 });

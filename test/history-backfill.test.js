@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { HistoryBackfill, isRetryableSummaryError, waitForRetry } from '../src/history-backfill.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { MemoryStore } from '../src/memory-store.js';
@@ -354,7 +355,7 @@ test('retry filtering, interruptible delay and three error UI categories preserv
 
 test('default prompts adopt user-provided formats, new budgets apply and custom prompts survive and obsolete request timeouts are ignored', () => {
     const settings = normalizeSettings();
-    assert.equal(PLUGIN_VERSION, '1.24.2');
+    assert.equal(PLUGIN_VERSION, JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url))).version);
     assert.equal(Object.hasOwn(settings, 'timeoutMs'), false);
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);

@@ -12,17 +12,17 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.24.6';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.6';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.6';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.6';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.6';
-import { getAssistantMessages } from './src/utils.js?v=1.24.6';
-import { MemoryStore } from './src/memory-store.js?v=1.24.6';
-import { MemorySummarizer } from './src/summarizer.js?v=1.24.6';
-import { CacheMemoryUI } from './src/ui.js?v=1.24.6';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.6';
-import { MemoryServerClient } from './src/memory-server.js?v=1.24.6';
+import { SummaryApiClient } from './src/api-client.js?v=1.24.7';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.7';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.7';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.7';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.7';
+import { getAssistantMessages } from './src/utils.js?v=1.24.7';
+import { MemoryStore } from './src/memory-store.js?v=1.24.7';
+import { MemorySummarizer } from './src/summarizer.js?v=1.24.7';
+import { CacheMemoryUI } from './src/ui.js?v=1.24.7';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.7';
+import { MemoryServerClient } from './src/memory-server.js?v=1.24.7';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -199,7 +199,10 @@ function updateInjection(reason = 'manual edit') {
     const current = store.current();
     const sourceStore = store.effectiveStore(chat);
     const result = refreshSnapshot(current, settings, reason, sourceStore);
-    const readOnly = ['chat changed', 'history metadata changed', 'store migration'].includes(reason);
+    // Publish this format migration once through the existing confirmed save
+    // queue; ordinary reloads still never upload an unchanged window snapshot.
+    const migration = reason === 'chat changed' && result.migrated;
+    const readOnly = !migration && ['chat changed', 'history metadata changed', 'store migration'].includes(reason);
     if (readOnly) persistence.noteReadOnlySnapshot(current);
     if (result.changed && !readOnly) store.persist('injection snapshot', { notify: false });
     const placement = injectionPublisher.publish(result.value, { forceRelocate: reason === 'manual reinject' });
@@ -220,21 +223,6 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     store.persistMigration();
     store.syncMessages(chat);
-    // Delete only versions whose loaded message and current saved Summary prove
-    // ownership. Use the same server-confirmed transaction, without an archive.
-    if (store.hasSupersededRecords(chat, { aggregates: false }) && !persistence.replacementRuns.has(chatId)
-        && !['failed', 'conflict'].includes(persistence.getState(chatId).state)) {
-        const sources = () => JSON.stringify(getAssistantMessages(chat).map(({ messageId, fingerprint }) => [messageId, fingerprint]));
-        const expected = sources();
-        try {
-            await persistence.commitReplacement(store, () => store.cleanupSuperseded(chat, { aggregates: false }), () => {
-                if (memoryChatId() !== chatId || sources() !== expected) throw Object.assign(new Error('聊天来源已变化'), { code: 'SOURCE_CHANGED' });
-            });
-        } catch (error) {
-            if (!['SOURCE_CHANGED', 'CHAT_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) throw error;
-        }
-        if (revision !== refreshRevision || memoryChatId() !== chatId) return;
-    }
     await persistence.clearReplacementBackup(chatId).catch(() => {});
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     const switched = chatId !== activeChatId;
@@ -284,7 +272,6 @@ function bindEvents() {
             if (pendingSwipeIndex !== Number(messageIndex) || isGenerating()) return;
             store.rebindSummaryAtMessageIndex(messageIndex, chat);
             store.syncMessages(chat);
-            updateInjection('manual edit');
             pendingSwipeIndex = null;
             refreshChatState();
             if (settings.enabled && settings.autoSummarize && settings.independentApi) {
@@ -303,7 +290,7 @@ function bindEvents() {
             schedule(() => {
                 if (memoryChatId() !== chatId) return;
                 store.rebindSummaryAtMessageIndex(messageIndex, chat);
-                store.syncMessages(chat); updateInjection('manual edit'); refreshChatState();
+                store.syncMessages(chat); refreshChatState();
                 if (!isGenerating() && settings.enabled && settings.autoSummarize && settings.independentApi) {
                     const entry = getAssistantMessages(chat).find(item => item.messageIndex === Number(messageIndex));
                     if (entry) summarizer.summarizeMessage(entry.messageId).catch(error => console.warn(LOG_PREFIX, error.message));

@@ -1,5 +1,5 @@
-import { withGlobalPrompt } from './defaults.js?v=1.24.6';
-import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.24.6';
+import { withGlobalPrompt } from './defaults.js?v=1.24.7';
+import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.24.7';
 
 // Complete ensemble defaults already contain the extraction/aggregation contract.
 // Custom Summary templates without Changes still receive the original parser contract.

@@ -138,7 +138,7 @@ test('partial message loading never marks a healthy Summary orphaned', () => {
     store.syncMessages([]);
     assert.equal(store.getSummary('message-known').status, 'frozen');
     store.markSummaryOrphanedAtMessageIndex(12);
-    assert.equal(store.getSummary('message-known').status, 'orphaned');
+    assert.equal(store.getSummary('message-known').status, 'frozen');
 });
 
 test('remote reader rejects ambiguous HTTP 200 objects and reads verified chat metadata arrays', async () => {

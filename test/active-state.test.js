@@ -46,14 +46,15 @@ test('skill upgrade and numeric attribute replacement keep one current value per
     assert.equal(projectLongFacts(store, Infinity, { includeTracked: true }).facts.length, 3);
 });
 
-test('old source flags keep frozen state usable; explicit deletion remains excluded', () => {
+test('old source and orphaned flags keep saved state usable; actual deletion removes only that record', () => {
     const store = createEmptyStore('a'); put(store, 1, [task, skill]); put(store, 2, [{ ...skill, value: 'Lv.3' }]);
     store.summaries.m2.status = 'stale'; store.summaries.m2.sourceValidity = 'changed';
     assert.equal(projectActiveState(store).find(item => item.kind === 'state').needsReview, false);
     assert.match(stateContext(store), /Lv.3/);
     store.summaries.m2.status = 'orphaned';
-    store.summaries.m1.status = 'orphaned'; assert.ok(projectActiveState(store).every(item => item.needsReview));
-    assert.equal(stateContext(store), '无');
+    store.summaries.m1.status = 'orphaned'; assert.ok(projectActiveState(store).every(item => !item.needsReview));
+    assert.match(stateContext(store), /Lv.3/);
+    delete store.summaries.m2; assert.match(stateContext(store), /Lv.2/);
 });
 
 test('manual corrections and completion persist without generating or refreshing frozen injection', () => {

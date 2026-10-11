@@ -27,7 +27,8 @@ test('beginner task wrappers share one identity and ended results match plain or
     const change = { ...task, key: '归还书本', confirmed: true };
     assert.equal(parseStateChanges(JSON.stringify([change]), task.evidence, rows)[0].id, rows[0].id);
     const result = reconcileTrackedCheckpoint('[Story So Far]\n过去归还书本引发误会\n[Open Threads]\n- 角色甲 · 归还书本：尚未领取\n- 角色甲 · 任务：【归还书本】：尚未领取\n- 角色丙 · 归还书本：尚未领取\n- 角色甲 · 归还书本（第二次）：新任务', store, 205, 201);
-    assert.doesNotMatch(result, /角色甲 · (?:归还书本：|任务：【归还书本】)/);
+    assert.doesNotMatch(result, /角色甲 · (?:归还书本：|任务：【归还书本】)：?尚未领取/);
+    assert.match(result, /已完成并领取奖励/);
     assert.match(result, /过去归还书本引发误会/); assert.match(result, /角色丙 · 归还书本/); assert.match(result, /第二次/);
 });
 
@@ -45,11 +46,11 @@ test('the displayed numeric alias inherits the latest evidenced value without me
     assert.notEqual(stateId({ ...attribute, key: '生命/魔力' }), stateId({ ...attribute, key: '生命' }));
 });
 
-test('orphaned deltas cannot replace a verified current value or task settlement', () => {
+test('legacy orphaned flags do not exclude saved state; completed tasks stay ended', () => {
     const store = createEmptyStore('a'); put(store, 1, [attribute, { ...task, status: 'completed' }]);
     put(store, 2, [{ ...attribute, value: '999' }, task], { status: 'orphaned' });
     const rows = projectActiveState(store);
-    assert.equal(rows.find(x => x.kind === 'state').value, '46');
+    assert.equal(rows.find(x => x.kind === 'state').value, '999');
     assert.equal(rows.find(x => x.kind === 'thread').status, 'completed');
     assert.ok(rows.every(x => !x.needsReview));
 });
@@ -61,7 +62,7 @@ test('a verified structured Long settlement closes a task whose old completion S
     assert.equal(projectActiveState(store, 205)[0].status, 'completed');
     assert.equal(projectActiveState(store, 205)[0].needsReview, false);
     store.longMemories[0].sourceReplaced = true;
-    assert.equal(projectActiveState(store, 205)[0].status, 'active');
+    assert.equal(projectActiveState(store, 205)[0].status, 'completed');
     store.longMemories[0] = longResult('completed', { continuityState: '据说任务可能已经完成' });
     assert.equal(projectActiveState(store, 205)[0].status, 'active');
 });
@@ -77,7 +78,7 @@ test('failed and cancelled tasks also stay ended; explicit manual corrections ke
     assert.equal(projectActiveState(store)[0].value, '人工纠正：仍未完成');
 });
 
-test('manual reinjection uses matching Summary deltas and Long settlements while background publication stays frozen', () => {
+test('manual reinjection uses saved Summary deltas regardless of source fingerprints; ordinary publication stays frozen', () => {
     const chat = Array.from({ length: 205 }, (_, i) => ({ name: 'A', mes: `合成正文${i + 1}`, gen_started: `g${i}` }));
     const metadata = {}, store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
     const data = store.current(), entries = getAssistantMessages(chat);
@@ -96,7 +97,7 @@ test('manual reinjection uses matching Summary deltas and Long settlements while
     const sourceView = { ...data, summaries: Object.fromEntries(store.currentSummaries(chat).map(row => [row.messageId, row])) };
     const before = JSON.stringify({ summaries: data.summaries, longMemories: data.longMemories, checkpoints: data.checkpoints });
     const output = refreshSnapshot(data, settings, 'manual reinject', sourceView).value;
-    assert.doesNotMatch(output, /尚未领取|警戒值：46|999/); assert.match(output, /历史警戒值46造成误会/); assert.match(output, /警戒值\/红字数值：100%/);
+    assert.doesNotMatch(output, /尚未领取|警戒值：46/); assert.match(output, /历史警戒值46造成误会/); assert.match(output, /警戒值：999/);
     assert.equal(JSON.stringify({ summaries: data.summaries, longMemories: data.longMemories, checkpoints: data.checkpoints }), before);
 });
 

@@ -1,9 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.6';
-import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.6';
-import { collectKeepItems, formatKeepItems, isUsableMemory, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.6';
-import { fnv1a } from './utils.js?v=1.24.6';
-import { stripStructuredSections } from './summary-format.js?v=1.24.6';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.6';
+import { INJECTION_MODES } from './defaults.js?v=1.24.7';
+import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.7';
+import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.24.7';
+import { fnv1a } from './utils.js?v=1.24.7';
+import { stripStructuredSections } from './summary-format.js?v=1.24.7';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.7';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -34,16 +34,13 @@ function frozenBlocks(store, mode, settings) {
         blocks.push({ id: `${type}:${record.id}`, type, startFloor: record.startFloor, endFloor: record.endFloor,
             text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}` });
     };
-    for (const record of [...store.longMemories].filter(item => !item.sourceReplaced && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'long');
+    for (const record of [...store.longMemories].filter(item => isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'long');
     if (mode === INJECTION_MODES.CHECKPOINT_BOUNDARY) {
-        for (const record of [...store.checkpoints].filter(item => !item.sourceReplaced && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'checkpoint');
+        for (const record of [...store.checkpoints].filter(item => isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'checkpoint');
     }
-    for (const record of mode === INJECTION_MODES.CHECKPOINT_BOUNDARY ? sourceFallbackSummaries(store) : []) blocks.push({ id: `summary:${record.messageId}`, type: 'summary', startFloor: record.floor, endFloor: record.floor,
-        sourceContentFingerprint: record.sourceContentFingerprint,
-        text: `[RECENT_SUMMARY_${String(record.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(record), ['KEEP'])}` });
     const keepItems = collectKeepItems(store), keeps = formatKeepItems(keepItems);
     if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: 0,
-        keepIds: keepItems.filter(item => item.status === 'active' && !item.sourceInvalidated).map(item => item.id), text: `[KEEP]\n${keeps}` });
+        keepIds: keepItems.filter(item => item.status === 'active').map(item => item.id), text: `[KEEP]\n${keeps}` });
     return blocks;
 }
 
@@ -53,29 +50,16 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
     if (!shouldRefreshInjection(settings, reason)) return { value: store.injectionSnapshot?.value ?? '', changed: false, skipped: true };
     const mode = effectiveInjectionMode(settings);
     // One-time migration discards snapshots inflated by the old cascade path.
-    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 2]);
+    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 3]);
     const previous = store.injectionSnapshot;
-    // Wait for chat loading before reading or migrating a frozen snapshot. An incomplete
-    // source projection cannot establish which legacy Longs should be restored.
-    // Explicit actions and proven body changes still rebuild immediately.
-    if (reason === 'chat changed' && previous && sourceStore.sourceSlotsLoaded === false
-        && !sourceStore.excludedSourceIds?.some(id => id.startsWith('summary:'))) return { value: previous.value, changed: false, skipped: true };
-    const invalidPublishedSource = previous?.blocks?.some(block => {
-        if (block.type === 'keep') return block.keepIds?.some(id => !sourceStore.keepRegistry[id]);
-        if (!['long', 'checkpoint', 'summary'].includes(block.type)) return false;
-        if (sourceStore.excludedSourceIds?.includes(block.id)) return true;
-        const records = block.type === 'long' ? sourceStore.longMemories : block.type === 'summary' ? Object.values(store.summaries) : sourceStore.checkpoints;
-        return !records.some(item => `${block.type}:${item.id ?? item.messageId}` === block.id && !item.sourceReplaced && isUsableMemory(item)
-            && (block.type !== 'summary' || !block.sourceContentFingerprint || item.sourceContentFingerprint === block.sourceContentFingerprint));
-    });
-    if (reason === 'chat changed' && previous?.signature === signature && !invalidPublishedSource) return { value: previous.value, changed: false };
+    if (reason === 'chat changed' && previous?.signature === signature) return { value: previous.value, changed: false };
     let blocks = [];
     let value = '';
     if (settings.enabled && mode !== INJECTION_MODES.NONE) {
         if (!settings.strictCacheMode) value = buildInjection(sourceStore, settings);
         else {
             const fresh = frozenBlocks(sourceStore, mode, settings);
-            const rebuild = !previous || previous.signature !== signature || (previous.needsRebuild || invalidPublishedSource || previous.budget?.clipped || previous.budget?.omitted) && ['new checkpoint', 'new long memory'].includes(reason) || ['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason);
+            const rebuild = !previous || previous.signature !== signature || (previous.needsRebuild || previous.budget?.clipped || previous.budget?.omitted) && ['new checkpoint', 'new long memory'].includes(reason) || ['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason);
             blocks = rebuild ? fresh : [...(previous.blocks ?? [])];
             if (!rebuild) {
                 const ids = new Set(blocks.map(block => block.id));
@@ -99,7 +83,7 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
     }
     const changed = value !== (previous?.value ?? '');
     store.injectionSnapshot = { signature, mode, blocks, value, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
-    return { value, changed };
+    return { value, changed, migrated: Boolean(previous && previous.signature !== signature) };
 }
 
 export class CacheDiagnostics {

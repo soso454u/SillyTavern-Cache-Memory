@@ -21,7 +21,7 @@ test('overview reports expected memory counts, injection size and broken chains 
     assert.equal(stats.activeKeeps, 1);
     assert.equal(stats.injectedCheckpoints, 1);
     assert.ok(stats.estimatedTokens > 0);
-    assert.match(stats.issues.join('\n'), /当前正文缺少有效 Summary[\s\S]*第8层/);
+    assert.match(stats.issues.join('\n'), /Summary 待处理[\s\S]*第8层/);
     assert.match(stats.issues.join('\n'), /Checkpoint 待处理[\s\S]*第6–10层[\s\S]*尚未生成/);
     assert.equal(estimateTokenCount(''), 0);
 });
@@ -54,7 +54,7 @@ test('summary health ignores old source flags and separates missing, failed, del
         unloaded: { messageId: 'unloaded', floor: 5, status: 'frozen' },
         'orphaned-hidden': { messageId: 'orphaned-hidden', floor: 6, status: 'orphaned' },
     } }, assistants);
-    assert.deepEqual(details.map(item => item.reason), ['missing', 'failed', 'orphaned', 'source-unloaded', 'orphaned']);
+    assert.deepEqual(details.map(item => item.reason), ['missing', 'failed', 'empty', 'source-unloaded', 'source-unloaded']);
     assert.match(details.find(item => item.messageId === 'unloaded').label, /当前未加载/);
 });
 

@@ -134,7 +134,7 @@ test('same-ID timestamps and missing validation metadata alone never choose fact
 });
 
 test('checkpoint cleanup removes exact repeats and superseded tracked values while preserving knowledge differences', () => {
-    const store = createEmptyStore('a'), item = { kind: 'state', entity: '甲', key: '洞察', value: 'Lv.3', status: 'active' };
+    const store = createEmptyStore('a'), item = { kind: 'state', entity: '甲', key: '洞察', value: 'Lv.3', status: 'active', evidence: '系统明确升级洞察至三级' };
     store.summaries.m = { ...row('m'), stateChanges: [{ ...item, id: stateId(item) }] };
     const text = reconcileTrackedCheckpoint('[CHECKPOINT]\n[Current State]\n- 甲 · 洞察：Lv.2\n- 地图仍在乙手中\n- 地图仍在乙手中\n[Secrets & Knowledge]\n乙不知道甲的洞察升级', store, 1);
     assert.doesNotMatch(text, /Lv.2/); assert.match(text, /Lv.3/);

@@ -48,7 +48,7 @@ test('the reported six source flags keep all 205 summaries usable and floor 14 c
     assert.equal(f.store.current().checkpoints[0].content, '冻结阶段 1');
 });
 
-test('legacy flags restore frozen/manual records without changing content, failed records or injection bytes', () => {
+test('legacy flags remain inert metadata without changing records, failed status or frozen bytes', () => {
     const data = createEmptyStore('a');
     data.summaries.a = { messageId: 'a', floor: 1, event: '用户的原文', status: 'stale', previousStatus: 'manual-edited', frozen: true, sourceValidity: 'changed' };
     data.summaries.b = { messageId: 'b', floor: 2, status: 'failed', frozen: false, error: 'Unauthorized', sourceValidity: 'changed' };
@@ -57,11 +57,11 @@ test('legacy flags restore frozen/manual records without changing content, faile
     data.injectionSnapshot = { value: '严格缓存冻结字节', blocks: [] };
     data.recovery = { obsolete: { snapshot: structuredClone(data) } };
     const normalized = normalizeStore(data, 'a');
-    assert.equal(normalized.summaries.a.status, 'manual-edited'); assert.equal(normalized.summaries.a.event, '用户的原文');
+    assert.equal(normalized.summaries.a.status, 'stale'); assert.equal(normalized.summaries.a.event, '用户的原文');
     assert.equal(memoryHealth(normalized.summaries.a).code, 'valid');
     assert.equal(isUsableMemory(normalized.summaries.b), false); assert.equal(normalized.summaries.b.error, 'Unauthorized');
     assert.equal(isUsableMemory(normalized.summaries.c), false);
-    assert.equal(normalized.checkpoints[0].content, '阶段原文'); assert.equal(normalized.checkpoints[0].invalidSourceVersions, undefined);
+    assert.equal(normalized.checkpoints[0].content, '阶段原文'); assert.deepEqual(normalized.checkpoints[0].invalidSourceVersions, { a: 'v1' });
     assert.equal(normalized.injectionSnapshot.value, '严格缓存冻结字节'); assert.equal(normalized.recovery, undefined);
     assert.equal(memoryContentDigest(normalizeStore(structuredClone(normalized), 'a')), memoryContentDigest(normalized));
 });

@@ -49,7 +49,7 @@ test('first observed explicit settlement is recorded; an unconfirmed closure is 
     assert.equal(parseStateChanges(JSON.stringify([{ ...row, evidence: '归途任务尚未完成' }]), '归途任务尚未完成').length, 0);
 });
 
-test('a later evidenced knowledge change retires its old sourced KEEP and retains other observer secrets', () => {
+test('untyped knowledge prose and independent observer secrets survive; exact typed old state can be superseded', () => {
     const store = createEmptyStore('a');
     const secret = { kind: 'state', entity: '角色甲', key: '藏匿信件秘密', category: 'knowledge', status: 'active', actors: ['角色甲', '角色乙'], value: '角色甲藏匿蓝色信件，角色乙不知情', evidence: '蓝色信件藏在衣柜' };
     put(store, 1, [secret]);
@@ -60,11 +60,13 @@ test('a later evidenced knowledge change retires its old sourced KEEP and retain
     const original = structuredClone(store);
     assert.equal(collectKeepItems(store, 1)[0].status, 'active');
     const keeps = collectKeepItems(store);
-    assert.equal(keeps[0].status, 'superseded'); assert.equal(keeps[1].status, 'active'); assert.equal(keeps[2].status, 'active');
-    assert.doesNotMatch(formatKeepItems(keeps), /蓝色信件/); assert.match(formatKeepItems(keeps), /红色信件/);
+    assert.equal(keeps[0].status, 'active'); assert.equal(keeps[1].status, 'active'); assert.equal(keeps[2].status, 'active');
+    assert.match(formatKeepItems(keeps), /蓝色信件/); assert.match(formatKeepItems(keeps), /红色信件/);
     assert.deepEqual(store, original);
+    store.keepRegistry['KEEP-0004'] = { text: `角色甲 · 藏匿信件秘密：${secret.value}`, sourceFloor: 1, status: 'active' };
     store.summaries.m2.status = 'orphaned';
     assert.equal(collectKeepItems(store)[0].status, 'active');
+    assert.equal(collectKeepItems(store)[3].status, 'superseded');
 });
 
 test('skills and attributes have one latest keyed value across current sections; history survives', () => {
@@ -78,21 +80,21 @@ test('skills and attributes have one latest keyed value across current sections;
     assert.deepEqual(trackedFactUpdates([], store, 5, facts), []);
 });
 
-test('counts distinguish 244 stored records from 225/226 valid summaries without deletion', () => {
+test('counts select one usable saved Summary per floor regardless of legacy source flags', () => {
     const store = createEmptyStore('a');
     const entries = Array.from({ length: 226 }, (_, i) => ({ messageId: `m${i + 1}`, floor: i + 1, contentFingerprint: `body${i + 1}` }));
     for (let floor = 1; floor <= 225; floor++) put(store, floor);
     for (let i = 0; i < 19; i++) store.summaries[`old${i}`] = { messageId: `old${i}`, floor: i === 18 ? 226 : 204 + i, status: 'orphaned', event: '旧版本' };
     const before = structuredClone(store);
     const stats = memoryOverviewStats(store, entries, normalizeSettings());
-    assert.equal(stats.storedSummaryRecords, 244); assert.equal(stats.summaries.actual, 225); assert.equal(stats.summaries.expected, 226);
-    assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => [row.floor, row.reason]), [[226, 'missing']]);
-    assert.equal(stats.summaryDetails.filter(row => !row.current && row.reason === 'orphaned').length, 19);
+    assert.equal(stats.storedSummaryRecords, 244); assert.equal(stats.summaries.actual, 226); assert.equal(stats.summaries.expected, 226);
+    assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => [row.floor, row.reason]), []);
+    assert.equal(stats.summaryDetails.filter(row => !row.current && row.reason === 'source-unloaded').length, 18);
     assert.deepEqual(store, before);
     put(store, 226); assert.equal(memoryOverviewStats(store, entries, normalizeSettings()).summaries.actual, 226);
 });
 
-test('body mismatches, empty, deleted and unverifiable summaries share the same counting and generation eligibility', () => {
+test('only genuinely empty or failed summaries affect eligibility; body and source flags do not', () => {
     const data = createEmptyStore('a');
     const chat = Array.from({ length: 6 }, (_, i) => ({ name: 'A', mes: `正文${i + 1}`, gen_started: `g${i}` }));
     const entries = getAssistantMessages(chat);
@@ -105,20 +107,20 @@ test('body mismatches, empty, deleted and unverifiable summaries share the same 
     const metadata = { cache_memory: data };
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
     const stats = memoryOverviewStats(store.current(), entries, normalizeSettings());
-    assert.equal(stats.summaries.actual, 2); assert.equal(store.currentSummaries(chat).length, stats.summaries.actual);
-    assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => row.reason), ['body-mismatch', 'unverified', 'orphaned', 'empty']);
+    assert.equal(stats.summaries.actual, 5); assert.equal(store.currentSummaries(chat).length, stats.summaries.actual);
+    assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => row.reason), ['empty']);
     assert.equal(summaryMatchesEntry(data.summaries[entries[2].messageId], entries[2]), false);
 });
 
-test('legacy missing fingerprints stay frozen without automatic regeneration and cannot enter CP inputs', async () => {
+test('saved legacy summaries need no fingerprints to generate a user-requested CP', async () => {
     const chat = [{ name: 'A', mes: '正文', gen_started: 'g' }], metadata = {};
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
     const entry = getAssistantMessages(chat)[0];
     store.addSummary({ messageId: entry.messageId, floor: 1, event: '旧摘要', status: 'frozen' });
     let calls = 0;
-    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings(), apiClient: { complete: async () => { calls++; } } });
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings(), apiClient: { complete: async () => { calls++; return { content: '[CHECKPOINT]\n[Current State]\n完整阶段剧情' }; } } });
     await summarizer.summarizeLatest(); assert.equal(calls, 0);
-    assert.equal(await summarizer.generateCheckpoint(1, 1), null); assert.equal(calls, 0);
+    assert.equal((await summarizer.generateCheckpoint(1, 1)).status, 'frozen'); assert.equal(calls, 1);
     assert.equal(store.getSummary(entry.messageId).event, '旧摘要');
 });
 

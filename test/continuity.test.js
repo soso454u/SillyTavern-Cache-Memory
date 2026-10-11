@@ -400,7 +400,7 @@ test('KEEP and stable facts survive 100 incremental checkpoints through floor 10
     const output = buildInjection(memory, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT }));
     assert.match(output, /陆雾不知道姜梨看过那封邮件/);
     assert.match(output, /十二月前陪陆雾回巴黎见外婆/);
-    assert.match(output, /截至第1000层/);
+    assert.doesNotMatch(output, /LATEST_CHECKPOINT|RECENT_SUMMARY/); // Long1–1000 covers all CPs.
 });
 
 test('Long Memory section edits preserve separate tracked state and untouched historical updates', () => {
