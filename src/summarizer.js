@@ -1,13 +1,13 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.7';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.7';
-import { generationPrompt } from './generation-prompts.js?v=1.24.7';
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.7';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.7';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.7';
-import { extractSummarySource } from './summary-source.js?v=1.24.7';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.7';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.7';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.7';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.8';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.8';
+import { generationPrompt } from './generation-prompts.js?v=1.24.8';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.8';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.8';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.8';
+import { extractSummarySource } from './summary-source.js?v=1.24.8';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.8';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.8';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.8';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -161,8 +161,9 @@ export class MemorySummarizer {
     }
 
     async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal } = {}) {
-        const existing = this.store.getSummaryForEntry(entry) ?? this.store.summaryCandidates(entry).map(([, item]) => item).find(isUsableMemory);
-        // Existing memory stays usable until the user requests replacement.
+        const existing = this.store.getSummary(entry.messageId);
+        // A same-floor legacy/Swipe record may still be used for injection, but
+        // it must not make generation for the current message ID a no-op.
         if (isUsableMemory(existing) && !overwrite) return existing;
         overwrite ||= Boolean(this.store.getSummary(entry.messageId));
         const flightKey = `${this.store.current().chatId}:${entry.messageId}`;
@@ -321,7 +322,7 @@ export class MemorySummarizer {
         };
         const longMemories = missingRanges(store.longMemories, longSpan);
         const needed = floor => !onlyLong || longMemories.some(range => floor >= range.startFloor && floor <= range.endFloor);
-        return { latestFloor, summaries: assistants.filter(entry => needed(entry.floor) && (!isUsableMemory(this.store.getSummaryForEntry(entry)))),
+        return { latestFloor, summaries: assistants.filter(entry => needed(entry.floor) && (!isUsableMemory(this.store.getSummary(entry.messageId)))),
             checkpoints: missingRanges(store.checkpoints, checkpointInterval).filter(range => needed(range.startFloor)), longMemories };
     }
 

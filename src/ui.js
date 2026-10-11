@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.7';
-import { generationPrompt } from './generation-prompts.js?v=1.24.7';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.7';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.7';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.7';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.7';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.7';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.7';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.7';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.7';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.7';
-import { parseFloorSummary } from './summarizer.js?v=1.24.7';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.7';
+import { applyUITheme } from './ui-theme.js?v=1.24.8';
+import { generationPrompt } from './generation-prompts.js?v=1.24.8';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.8';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.8';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.8';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.8';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.8';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.8';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.8';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.8';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.8';
+import { parseFloorSummary } from './summarizer.js?v=1.24.8';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.8';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.7';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.7';
+import { memoryHealth, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.8';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.8';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -78,7 +78,9 @@ export function summaryHealthDetails(store, assistants) {
     const matched = new Set();
     const details = [];
     for (const entry of entries) {
-        const record = summaryForEntry(store, entry);
+        // Diagnostics and generation readiness describe the current message
+        // slot. Same-floor legacy records remain available to injection only.
+        const record = summaries[entry.messageId] ?? null;
         if (record) matched.add(record);
         const health = currentSummaryHealth(record, entry);
         if (health.code !== 'valid') details.push({ floor: entry.floor, messageId: entry.messageId, reason: health.code, label: health.label, current: true });
@@ -112,9 +114,9 @@ export function memoryOverviewStats(store, assistants, settings) {
     const longRanges = completedRanges(latestFloor, longMemoryInterval);
     const summaryDetails = summaryHealthDetails(safeStore, entries);
     const currentIssues = summaryDetails.filter(item => item.current);
-    const usableSummaries = entries.filter(entry => currentSummaryHealth(summaryForEntry(safeStore, entry), entry).code === 'valid');
+    const usableSummaries = entries.filter(entry => currentSummaryHealth(safeStore.summaries[entry.messageId], entry).code === 'valid');
     const generatedSummaries = entries.filter(entry => {
-        const row = summaryForEntry(safeStore, entry);
+        const row = safeStore.summaries[entry.messageId];
         return row && row.status !== 'failed' && row.frozen !== false && ['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(row[key] ?? '').trim());
     });
     const missingCheckpointRanges = checkpointRanges.filter(([start, end]) => !checkpoints.some(item => item.startFloor === start && item.endFloor === end));
@@ -516,7 +518,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.7', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.8', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();

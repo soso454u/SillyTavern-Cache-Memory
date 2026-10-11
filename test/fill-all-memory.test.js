@@ -55,6 +55,21 @@ test('missing and failed summaries precede aggregates; earlier holes are filled 
     assert.ok(f.store.current().longMemories.some(item => item.startFloor === 1 && item.endFloor === 50));
 });
 
+test('a same-floor old Swipe summary does not hide a missing current record or skip generation', async () => {
+    const f = fixture(1), entry = getAssistantMessages(f.chat)[0];
+    const old = f.store.current().summaries[entry.messageId];
+    delete f.store.current().summaries[entry.messageId];
+    f.store.current().summaries['old-swipe'] = { ...old, messageId: 'old-swipe', event: '旧 Swipe 摘要' };
+
+    assert.deepEqual(f.summarizer.getMissingMemoryPlan().summaries.map(item => item.messageId), [entry.messageId]);
+    const result = await f.summarizer.fillMissingMemories();
+
+    assert.equal(result.created, 1);
+    assert.deepEqual(f.calls, ['Summary']);
+    assert.equal(f.store.getSummary(entry.messageId).event, '补齐内容');
+    assert.equal(f.store.getSummary('old-swipe'), null);
+});
+
 test('209 floors with complete checkpoints can explicitly generate all four missing long memories', async () => {
     const f = fixture(209);
     for (let start = 1; start <= 205; start += 5) f.checkpoint(start);

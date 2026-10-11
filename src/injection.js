@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.7';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, summaryText } from './continuity.js?v=1.24.7';
-import { stripStructuredSections } from './summary-format.js?v=1.24.7';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.7';
+import { INJECTION_MODES } from './defaults.js?v=1.24.8';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, summaryText } from './continuity.js?v=1.24.8';
+import { stripStructuredSections } from './summary-format.js?v=1.24.8';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.8';
 
 // A projection only: never edit retained records or guess from age/fuzzy prose.
 // Published blocks can be compacted at a Long boundary or explicit rebuild;
