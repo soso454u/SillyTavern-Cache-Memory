@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.4';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.4';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.4';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.5';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.5';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.5';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -11,11 +11,12 @@ export function summaryMatchesEntry(record, entry) {
 
 export function summaryForEntry(store, entry, byFloor = null) {
     const summaries = store?.summaries ?? {};
-    if (summaries[entry.messageId]) return summaries[entry.messageId];
+    const direct = summaries[entry.messageId];
+    if (isUsableMemory(direct) && summaryMatchesEntry(direct, entry)) return direct;
     const rows = byFloor?.get(entry.floor) ?? Object.values(summaries).filter(item => item.floor === entry.floor);
     const matching = rows.filter(item => isUsableMemory(item) && summaryMatchesEntry(item, entry));
-    if (matching.length === 1) return matching[0];
-    return rows.length === 1 && isUsableMemory(rows[0]) && rows[0].messageIndex === undefined && !rows[0].sourceFingerprint && !rows[0].sourceContentFingerprint ? rows[0] : null;
+    if (matching.length) return matching.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')) || String(a.messageId).localeCompare(String(b.messageId)))[0];
+    return direct ?? (rows.length === 1 && isUsableMemory(rows[0]) && rows[0].messageIndex === undefined && !rows[0].sourceFingerprint && !rows[0].sourceContentFingerprint ? rows[0] : null);
 }
 
 export function currentSummaryHealth(record, entry) {
@@ -117,8 +118,9 @@ function normalizedKeepRecord(item, id, fallbackTime) {
     };
 }
 
-function nextKeepId(registry) {
-    const maximum = Object.keys(registry).reduce((current, id) => Math.max(current, Number(String(id).match(/^KEEP-(\d+)$/i)?.[1]) || 0), 0);
+function nextKeepId(registry, tombstones = {}) {
+    const ids = [...Object.keys(registry), ...Object.keys(tombstones).filter(key => key.startsWith('KEEP:')).map(key => key.slice(5))];
+    const maximum = ids.reduce((current, id) => Math.max(current, Number(String(id).match(/^KEEP-(\d+)$/i)?.[1]) || 0), 0);
     return `KEEP-${String(maximum + 1).padStart(4, '0')}`;
 }
 
@@ -193,11 +195,13 @@ export class MemoryStore {
         const needsMigration = Number(old?.version) < STORE_VERSION || !old?.keepRegistry || Boolean(old?.recovery)
             || [...Object.values(old?.summaries ?? {}), ...(Array.isArray(old?.checkpoints) ? old.checkpoints : []), ...(Array.isArray(old?.longMemories) ? old.longMemories : [])].some(hasAutomaticInvalidation);
         const normalized = normalizeStore(metadata.cache_memory, this.getChatId());
-        if (metadata.cache_memory !== normalized) {
-            metadata.cache_memory = normalized;
-            if (needsMigration) this.pendingMigrations.add(normalized.chatId);
-        }
-        return normalized;
+        // Projection reads must not detach the object receiving refreshSnapshot.
+        // Otherwise the rebuilt bytes never reach the metadata being saved.
+        const current = old && typeof old === 'object' && !Array.isArray(old) ? Object.assign(old, normalized) : normalized;
+        delete current.recovery;
+        metadata.cache_memory = current;
+        if (needsMigration) this.pendingMigrations.add(current.chatId);
+        return current;
     }
 
     setSummaryMode(mode) {
@@ -353,37 +357,48 @@ export class MemoryStore {
     }
 
     rewriteSummaryReferences(store, oldId, newId, changedBody = false) {
-        for (const section of [store.keepRegistry, store.stateOverrides]) for (const item of Object.values(section)) if (item.sourceId === oldId) {
-            item.sourceId = newId;
-            if (changedBody) item.sourceInvalidated = true;
+        for (const name of ['keepRegistry', 'stateOverrides']) for (const [id, item] of Object.entries(store[name])) if (item.sourceId === oldId) {
+            if (changedBody) {
+                delete store[name][id];
+                store.tombstones[`${name === 'keepRegistry' ? 'KEEP' : name}:${id}`] = { sourceFloor: item.sourceFloor };
+            } else item.sourceId = newId;
         }
         for (const item of [...store.checkpoints, ...store.longMemories]) {
             const source = store.summaries[newId] ?? store.summaries[oldId];
             const referenced = item.summaryIds?.includes(oldId) || Object.hasOwn(item.sourceVersions ?? {}, oldId)
                 || changedBody && source?.floor >= item.startFloor && source.floor <= item.endFloor;
             if (referenced && !item.summaryIds) item.summaryIds = Object.keys(item.sourceVersions ?? {});
-            if (item.summaryIds) item.summaryIds = [...new Set(item.summaryIds.map(id => id === oldId ? newId : id))];
-            if (Object.hasOwn(item.sourceVersions ?? {}, oldId) && oldId !== newId) {
+            if (item.summaryIds) item.summaryIds = [...new Set(item.summaryIds.flatMap(id => id === oldId ? changedBody ? [] : [newId] : [id]))];
+            if (changedBody) delete item.sourceVersions?.[oldId];
+            else if (Object.hasOwn(item.sourceVersions ?? {}, oldId) && oldId !== newId) {
                 item.sourceVersions[newId] ??= item.sourceVersions[oldId]; delete item.sourceVersions[oldId];
             }
-            if (changedBody && referenced) item.sourceReplaced = true;
+            if (changedBody && referenced) {
+                item.sourceReplaced = true;
+                item.replacedSourceFloors = [...new Set([...(item.replacedSourceFloors ?? []), source.floor])];
+            }
         }
         if (changedBody) this.markReplacementDependents(store);
     }
 
     markReplacementDependents(store) {
-        let changed;
-        do {
-            changed = false;
-            const replaced = new Set([...store.checkpoints, ...store.longMemories].filter(item => item.sourceReplaced).map(item => item.id));
-            for (const item of [...store.checkpoints, ...store.longMemories]) {
-                if (item.sourceReplaced) continue;
-                if (replaced.has(item.previousCheckpointId) || item.checkpointIds?.some(id => replaced.has(id))
-                    || Object.keys(item.checkpointVersions ?? {}).some(id => replaced.has(id))) {
-                    item.sourceReplaced = true; changed = true;
-                }
-            }
-        } while (changed);
+        // previousCheckpointId is context, not ownership of every later event.
+        // Recover legacy cascading flags only when the CP's own sources verify.
+        for (const item of store.checkpoints) {
+            const versions = Object.entries(item.sourceVersions ?? {});
+            if (item.sourceReplaced && item.previousCheckpointId && !item.replacedSourceFloors?.length && versions.length
+                && versions.every(([id, version]) => store.summaries[id] && summaryVersionMatches(store.summaries[id], version))) delete item.sourceReplaced;
+        }
+        const replaced = new Set(store.checkpoints.filter(item => item.sourceReplaced).map(item => item.id));
+        for (const item of store.longMemories) {
+            const ids = [...new Set([...(item.checkpointIds ?? []), ...Object.keys(item.checkpointVersions ?? {})])];
+            if (ids.some(id => replaced.has(id))) item.sourceReplaced = true;
+            else if (item.sourceReplaced && !item.replacedSourceFloors?.length && ids.length
+                && ids.every(id => {
+                    const cp = store.checkpoints.find(row => row.id === id);
+                    return cp && isUsableMemory(cp) && (!item.checkpointVersions?.[id] || item.checkpointVersions[id] === aggregateVersion(cp));
+                }) && Object.entries(item.sourceVersions ?? {}).every(([id, version]) => store.summaries[id] && summaryVersionMatches(store.summaries[id], version))) delete item.sourceReplaced;
+        }
     }
 
     summaryCandidates(entry, store = this.current()) {
@@ -432,13 +447,26 @@ export class MemoryStore {
             longMemories: store.longMemories.map(item => ({ ...item })) };
         for (const item of [...projected.checkpoints, ...projected.longMemories]) {
             const refs = [...(item.summaryIds ?? []), ...Object.keys(item.sourceVersions ?? {})];
-            if (refs.some(id => invalid.has(id))
-                || !refs.length && [...invalid].some(id => store.summaries[id]?.floor >= item.startFloor && store.summaries[id]?.floor <= item.endFloor)) item.sourceReplaced = true;
+            const floors = [...invalid].filter(id => refs.includes(id)
+                || !refs.length && store.summaries[id]?.floor >= item.startFloor && store.summaries[id]?.floor <= item.endFloor).map(id => store.summaries[id].floor);
+            if (item.sourceReplaced) for (const [id, version] of Object.entries(item.sourceVersions ?? {})) {
+                if (summaries[id] && !summaryVersionMatches(summaries[id], version)) floors.push(summaries[id].floor);
+            }
+            if (floors.length) {
+                item.sourceReplaced = true;
+                item.replacedSourceFloors = [...new Set([...(item.replacedSourceFloors ?? []), ...floors])];
+            }
         }
-        this.markReplacementDependents(projected);
+        // Repair inherited legacy flags using the stored source versions;
+        // the effective Summary projection may be incomplete during chat loading.
+        this.markReplacementDependents({ ...projected, summaries: store.summaries });
         const excluded = [...projected.checkpoints, ...projected.longMemories].filter(item => item.sourceReplaced);
         const invalidSources = new Set([...invalid, ...excluded.map(item => item.id)]);
-        projected.sourceFallbackRanges = excluded.map(({ startFloor, endFloor }) => ({ startFloor, endFloor }));
+        // Only the directly affected CP needs its unaffected current sources.
+        // A discarded Long must never expand this into its whole 50-floor range.
+        projected.summaryRepairRanges = projected.checkpoints.filter(item => item.sourceReplaced && item.replacedSourceFloors?.length)
+            .map(({ startFloor, endFloor }) => ({ startFloor, endFloor }));
+        projected.excludedSourceIds = [...invalid].map(id => `summary:${id}`).concat(excluded.map(item => `${projected.checkpoints.includes(item) ? 'checkpoint' : 'long'}:${item.id}`));
         projected.checkpoints = projected.checkpoints.filter(item => !item.sourceReplaced);
         projected.longMemories = projected.longMemories.filter(item => !item.sourceReplaced);
         projected.keepRegistry = Object.fromEntries(Object.entries(store.keepRegistry).filter(([, item]) => !item.sourceInvalidated && !invalidSources.has(item.sourceId)));
@@ -453,16 +481,23 @@ export class MemoryStore {
     retireSummaries(entry, record, store = this.current()) {
         for (const [key, old] of this.summaryCandidates(entry, store)) {
             if (key === record.messageId) continue;
-            this.rewriteSummaryReferences(store, key, record.messageId, !summaryMatchesEntry(old, entry)
-                || JSON.stringify(summaryFields(old).slice(1)) !== JSON.stringify(summaryFields(record).slice(1)));
+            this.rewriteSummaryReferences(store, key, record.messageId, !summaryMatchesEntry(old, entry));
             store.tombstones[`Summary:${key}`] = { replacedBy: record.messageId, sourceFloor: entry.floor };
             delete store.summaries[key];
         }
     }
 
-    hasSupersededRecords(chat) {
-        return getAssistantMessages(chat).some(entry => isUsableMemory(this.getSummary(entry.messageId)) && summaryMatchesEntry(this.getSummary(entry.messageId), entry)
-            && this.summaryCandidates(entry).some(([key]) => key !== entry.messageId)) || this.supersededAggregates().length > 0;
+    hasSupersededRecords(chat, { aggregates = true } = {}) {
+        const store = this.current(), sourceFor = this.summarySourceIndex(chat);
+        const invalidReferences = [store.keepRegistry, store.stateOverrides].some(section => Object.values(section).some(item => {
+            const entry = item.sourceInvalidated && sourceFor(item.sourceId, item);
+            return entry && summaryMatchesEntry(this.getSummaryForEntry(entry), entry);
+        }));
+        return getAssistantMessages(chat).some(entry => {
+            const record = this.getSummaryForEntry(entry);
+            return isUsableMemory(record) && summaryMatchesEntry(record, entry)
+                && (record.messageId !== entry.messageId || this.summaryCandidates(entry).some(([key]) => key !== entry.messageId));
+        }) || invalidReferences || aggregates && this.supersededAggregates().length > 0;
     }
 
     supersededAggregates() {
@@ -491,16 +526,29 @@ export class MemoryStore {
 
     cleanupSuperseded(chat, { persist = true, aggregates = true } = {}) {
         const store = this.current();
+        for (const entry of getAssistantMessages(chat)) {
+            const current = this.getSummaryForEntry(entry, store);
+            if (isUsableMemory(current) && summaryMatchesEntry(current, entry) && current.messageId !== entry.messageId) {
+                this.addSummary({ ...current, messageId: entry.messageId, floor: entry.floor, messageIndex: entry.messageIndex,
+                    sourceMessageKey: entry.sourceMessageKey }, { overwrite: true, entry, background: true });
+            }
+        }
         const sourceFor = this.summarySourceIndex(chat);
         for (const [key, old] of Object.entries(store.summaries)) {
             const entry = sourceFor(key, old), record = entry && store.summaries[entry.messageId];
             if (!entry || key === entry.messageId || !isUsableMemory(record) || !summaryMatchesEntry(record, entry)) continue;
-            this.rewriteSummaryReferences(store, key, record.messageId, !summaryMatchesEntry(old, entry)
-                || JSON.stringify(summaryFields(old).slice(1)) !== JSON.stringify(summaryFields(record).slice(1)));
+            this.rewriteSummaryReferences(store, key, record.messageId, !summaryMatchesEntry(old, entry));
             store.tombstones[`Summary:${key}`] = { replacedBy: record.messageId, sourceFloor: entry.floor };
             delete store.summaries[key];
         }
+        for (const name of ['keepRegistry', 'stateOverrides']) for (const [id, item] of Object.entries(store[name])) {
+            const entry = item.sourceInvalidated && sourceFor(item.sourceId, item);
+            if (!entry || !summaryMatchesEntry(store.summaries[entry.messageId], entry)) continue;
+            delete store[name][id];
+            store.tombstones[`${name === 'keepRegistry' ? 'KEEP' : name}:${id}`] = { sourceFloor: item.sourceFloor };
+        }
         if (aggregates) for (const { section, winner } of this.supersededAggregates()) this.addAggregate(section, section === 'checkpoints' ? 'Checkpoint' : 'Long Memory', winner, true);
+        this.markReplacementDependents(store);
         if (persist) this.persist('memory replacement');
     }
 
@@ -569,7 +617,7 @@ export class MemoryStore {
             const previous = Object.values(store.keepRegistry).find(item => normalizeKeepText(item.text) === normalized);
             if (previous?.sourceInvalidated) Object.assign(previous, { sourceId: record.messageId, sourceFloor: record.floor, sourceInvalidated: false });
             if (existing.has(normalized)) continue;
-            const id = nextKeepId(store.keepRegistry);
+            const id = nextKeepId(store.keepRegistry, store.tombstones);
             const now = new Date().toISOString();
             store.keepRegistry[id] = normalizedKeepRecord({
                 text, sourceFloor: record.floor, sourceId: record.messageId, sourceStoryTime: record.storyTime,
@@ -727,9 +775,10 @@ export class MemoryStore {
             }
         }
         if (section === 'checkpoints' && old.some(item => aggregateVersion({ ...item, id: record.id }) !== aggregateVersion(record))) {
-            for (const memory of store.longMemories) if (memory.startFloor <= record.endFloor && memory.endFloor >= record.startFloor) memory.sourceReplaced = true;
-            for (const target of store.checkpoints) if (target !== existing && (old.some(item => item.id === target.previousCheckpointId)
-                || Object.keys(target.checkpointVersions ?? {}).some(id => old.some(item => item.id === id)))) target.sourceReplaced = true;
+            for (const memory of store.longMemories) if (memory.startFloor <= record.endFloor && memory.endFloor >= record.startFloor) {
+                memory.sourceReplaced = true;
+                memory.replacedSourceFloors = [...new Set([...(memory.replacedSourceFloors ?? []), record.startFloor])];
+            }
         }
         store[section] = store[section].filter(item => !sameRange(item));
         store[section].push(structuredClone(record));

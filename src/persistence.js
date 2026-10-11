@@ -1,5 +1,5 @@
-import { LocalMemoryStorage } from './local-memory-storage.js?v=1.24.4';
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.4';
+import { LocalMemoryStorage } from './local-memory-storage.js?v=1.24.5';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.5';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -553,7 +553,7 @@ export class MemoryPersistenceCoordinator {
             restore: reason === 'memory import' || Boolean(previous?.restore),
             sequence: ++this.sequence,
             queuedAt: new Date().toISOString(),
-            ...(replacementFallback ? { replacementFallback, backupRequired: previous?.backupRequired } : {}),
+            ...(replacementFallback ? { replacementFallback } : {}),
             ...(this.conflicts.has(chatId) ? { conflict: clone(this.conflicts.get(chatId)) } : {}),
         };
         this.pending.set(chatId, entry);
@@ -573,9 +573,10 @@ export class MemoryPersistenceCoordinator {
         } catch { return null; }
     }
 
-    async readReplacementBackup(chatId = this.getChatId()) {
+    async clearReplacementBackup(chatId = this.getChatId()) {
         const key = `cache_memory_replacement_backup_v1:${encodeURIComponent(chatId)}`;
-        return this.durableStorage ? this.durableStorage.read(key) : JSON.parse(this.storage?.getItem(key) || 'null');
+        if (this.durableStorage) await this.durableStorage.remove(key);
+        this.storage?.removeItem?.(key);
     }
 
     async readUploadBackup(chatId = this.getChatId()) {
@@ -796,8 +797,6 @@ export class MemoryPersistenceCoordinator {
             const pending = this.pending.get(chatId);
             if (pending) {
                 pending.replacementFallback = previous;
-                pending.backupRequired = reason === 'memory replacement' || Object.entries(previous.summaries).some(([id, old]) => !candidate.summaries[id]
-                    || summaryVersion(old) !== summaryVersion(candidate.summaries[id]));
                 if (!await this.persistPending()) {
                     this.getMetadata().cache_memory = previous;
                     this.setState(chatId, MEMORY_SAVE_STATES.FAILED, '本机待提交数据写入失败；原记忆和生成结果仍保留在当前窗口，请导出后重试');
@@ -899,12 +898,6 @@ export class MemoryPersistenceCoordinator {
             entry.snapshot = clone(desired);
             this.pending.set(chatId, entry);
             if (!await this.persistPending()) return this.setState(chatId, MEMORY_SAVE_STATES.FAILED, '本机待保存副本写入失败；未写入服务器，数据仍在当前窗口，请导出后重试');
-            if (entry.backupRequired) {
-                try {
-                    await this.retainBackup(`cache_memory_replacement_backup_v1:${encodeURIComponent(chatId)}`,
-                        { chatId, savedAt: new Date().toISOString(), store: entry.replacementFallback });
-                } catch (error) { return this.setState(chatId, MEMORY_SAVE_STATES.FAILED, `清理前备份保存失败，未替换服务器记忆：${error.message}`); }
-            }
             if (!stillActive() || this.pending.get(chatId)?.sequence !== entry.sequence) continue;
             try {
                 if (useAuthority) {
@@ -958,7 +951,8 @@ export class MemoryPersistenceCoordinator {
                         latest.baseDigest = memoryContentDigest(committed);
                         latest.baseSnapshot = clone(committed);
                     }
-                    this.persistPending();
+                    await this.persistPending();
+                    await this.clearReplacementBackup(chatId).catch(() => {});
                     this.setState(chatId, MEMORY_SAVE_STATES.CONFIRMED, '已提交到服务器权威记忆库并读回确认');
                     continue;
                 }
@@ -1007,7 +1001,8 @@ export class MemoryPersistenceCoordinator {
             const latest = this.pending.get(chatId);
             if (latest?.sequence === entry.sequence) this.pending.delete(chatId);
             else if (latest) { latest.baseDigest = verifiedDigest; latest.baseSnapshot = clone(verified); }
-            this.persistPending();
+            await this.persistPending();
+            await this.clearReplacementBackup(chatId).catch(() => {});
             this.setState(chatId, MEMORY_SAVE_STATES.CONFIRMED, '已从服务器读回并确认保存');
         }
         return this.getState(chatId);

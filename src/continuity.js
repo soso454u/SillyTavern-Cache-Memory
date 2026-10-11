@@ -1,7 +1,7 @@
-import { fnv1a } from './utils.js?v=1.24.4';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.4';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.24.4';
-import { isTrackedActive, matchesTrackedFact, projectActiveState } from './active-state.js?v=1.24.4';
+import { fnv1a } from './utils.js?v=1.24.5';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.5';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.24.5';
+import { isTrackedActive, matchesTrackedFact, projectActiveState } from './active-state.js?v=1.24.5';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
@@ -209,11 +209,11 @@ export function parseFactUpdates(output, projection, newSummaries) {
     });
 }
 
-// Retain unaffected story from a quarantined aggregate using its original,
-// currently valid Summaries. No model rewrite, guessed sentence deletion or cap.
+// Only current sources from a directly affected CP can fill that local gap.
+// Never expand a Long's range or replay the history of later CPs.
 export function sourceFallbackSummaries(store, throughFloor = Infinity) {
     return Object.values(store.summaries ?? {}).filter(item => isUsableMemory(item) && item.floor <= throughFloor
-        && store.sourceFallbackRanges?.some(range => item.floor >= range.startFloor && item.floor <= range.endFloor)
+        && store.summaryRepairRanges?.some(range => item.floor >= range.startFloor && item.floor <= range.endFloor)
         && ![...store.checkpoints, ...store.longMemories].some(memory => !memory.sourceReplaced && isUsableMemory(memory)
             && item.floor >= memory.startFloor && item.floor <= memory.endFloor)).sort((a, b) => a.floor - b.floor);
 }

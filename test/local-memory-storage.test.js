@@ -86,15 +86,16 @@ test('legacy pending journal migrates only after durable commit and restores its
     assert.equal(reload.pending.size, 1);
 });
 
-test('cleanup cannot bypass a failed permanent backup on a later flush', async () => {
+test('cleanup commits without a permanent backup and removes the obsolete archive after confirmation', async () => {
     const f = fixture(); await activate(f); f.failBackup = true;
-    await assert.rejects(f.persistence.commitReplacement(f.store, () => {
+    f.disk.set('cache_memory_replacement_backup_v1:a', { store: clone(f.remote) });
+    await f.persistence.commitReplacement(f.store, () => {
         f.store.deleteSummary('large'); f.store.persist('memory replacement');
-    }), { code: 'SAVE_UNCONFIRMED' });
-    assert.equal((await f.persistence.flush()).state, 'failed'); assert.equal(f.writes, 0); assert.ok(f.remote.summaries.large);
-    f.failBackup = false; assert.equal((await f.persistence.flush()).state, 'confirmed');
+    });
+    assert.equal(f.persistence.getState().state, 'confirmed'); assert.equal(f.writes, 1);
     assert.equal(f.remote.summaries.large, undefined);
-    assert.ok((await f.persistence.readReplacementBackup()).store.summaries.large);
+    assert.equal(f.disk.has('cache_memory_replacement_backup_v1:a'), false);
+    assert.equal(f.disk.has(f.persistence.storageKey), false);
 });
 
 test('an unread durable journal blocks automatic adoption and can recover on explicit verification', async () => {

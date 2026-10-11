@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.4';
-import { generationPrompt } from './generation-prompts.js?v=1.24.4';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.4';
-import { effectiveInjectionMode } from './cache-control.js?v=1.24.4';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.4';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.4';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.4';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.4';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.4';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.4';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.4';
-import { parseFloorSummary } from './summarizer.js?v=1.24.4';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.4';
+import { applyUITheme } from './ui-theme.js?v=1.24.5';
+import { generationPrompt } from './generation-prompts.js?v=1.24.5';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.5';
+import { effectiveInjectionMode } from './cache-control.js?v=1.24.5';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.5';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.5';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.5';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.5';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.5';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.5';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.5';
+import { parseFloorSummary } from './summarizer.js?v=1.24.5';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.5';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.4';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.4';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.5';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.5';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -297,7 +297,6 @@ function managerPanelTemplate() {
                 <button type="button" class="menu_button" data-validate-memory>检查记忆状态</button>
                 <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
                 <button type="button" class="menu_button" data-pending-backup hidden>下载待保存副本</button>
-                <button type="button" class="menu_button" data-replacement-backup>下载清理前备份</button>
                 <button type="button" class="menu_button" data-reinject>重新注入</button>
                 <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
             </div><p data-memory-diagnostics></p>
@@ -515,7 +514,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.4', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.5', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2455,12 +2454,6 @@ export class CacheMemoryUI {
         if (event.target.closest('[data-view-summary-health]')) {
             this.showSummaryHealthDetails = !this.showSummaryHealthDetails;
             this.renderManager();
-            return;
-        }
-        if (event.target.closest('[data-replacement-backup]')) {
-            const backup = await this.persistence?.readReplacementBackup?.(this.store.current().chatId);
-            if (!backup?.store) throw new Error('当前浏览器没有此聊天的清理前备份');
-            downloadJson('cache-memory-before-cleanup.json', backup.store, this.doc);
             return;
         }
         if (event.target.closest('[data-pending-backup]')) {

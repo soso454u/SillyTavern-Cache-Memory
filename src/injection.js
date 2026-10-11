@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.4';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.4';
-import { stripStructuredSections } from './summary-format.js?v=1.24.4';
-import { isTrackedActive, matchesTrackedFact, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.4';
+import { INJECTION_MODES } from './defaults.js?v=1.24.5';
+import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, previousState, projectLongFacts, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.5';
+import { stripStructuredSections } from './summary-format.js?v=1.24.5';
+import { isTrackedActive, matchesTrackedFact, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.5';
 
 // A projection only: never edit retained records or guess from age/fuzzy prose.
 // Published blocks can be compacted at a Long boundary or explicit rebuild;
@@ -51,9 +51,9 @@ export function compactInjectionBlocks(blocks, store, { published = new Set(), c
         return text === block.text ? block : { ...block, text };
     });
 }
-function fullInjection(blocks, store) {
+function fullInjection(blocks, store, settings) {
     if (store) {
-        const fallback = sourceFallbackSummaries(store);
+        const fallback = [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode) ? sourceFallbackSummaries(store) : [];
         blocks = [...blocks, ...fallback.map(item => `[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}`)];
         const through = Math.max(0, ...fallback.map(item => item.floor), ...store.checkpoints.map(item => item.endFloor), ...store.longMemories.map(item => item.endFloor));
         blocks = compactInjectionBlocks(blocks.map((text, id) => ({ id, text, endFloor: through })), store, { compactPublished: true }).map(block => block.text);
@@ -80,7 +80,7 @@ export function buildInjection(store, settings) {
         const keeps = formatKeepItems(collectKeepItems(store));
         if (keeps !== '无') blocks.push(`[KEEP]\n${keeps}`);
         if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode) && stateEnd) {
-            let state = latest?.content ?? previousState({ ...store, sourceFallbackRanges: [] }, stateEnd + 1).content;
+            let state = latest?.content ?? previousState({ ...store, summaryRepairRanges: [] }, stateEnd + 1).content;
             if (settings.activeStateEnabled) state = reconcileTrackedCheckpoint(state, store, stateEnd, latest?.startFloor ?? 1);
             blocks.push(`[LATEST_CHECKPOINT | 截至第${stateEnd}层]\n${stripStructuredSections(state, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP'])}`);
         }
@@ -90,7 +90,7 @@ export function buildInjection(store, settings) {
                 .sort((a, b) => a.floor - b.floor);
             for (const item of summaries) blocks.push(`[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}`);
         }
-        return fullInjection(blocks, store);
+        return fullInjection(blocks, store, settings);
     }
     const blocks = [];
     const longs = [...store.longMemories]
@@ -108,8 +108,9 @@ export function buildInjection(store, settings) {
     }
 
     if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {
+        const coveredThrough = Math.max(0, ...store.checkpoints.filter(item => !item.sourceReplaced && isUsableMemory(item)).map(item => item.endFloor), ...longs.map(item => item.endFloor));
         const summaries = Object.values(store.summaries)
-            .filter(item => !fallbackIds.has(item.messageId) && ['frozen', 'manual-edited'].includes(item.status))
+            .filter(item => item.floor > coveredThrough && !fallbackIds.has(item.messageId) && isUsableMemory(item))
             .sort((a, b) => a.floor - b.floor)
             .slice(-settings.recentSummaryCount);
         for (const item of summaries) {
@@ -117,5 +118,5 @@ export function buildInjection(store, settings) {
         }
     }
 
-    return fullInjection(blocks, store);
+    return fullInjection(blocks, store, settings);
 }

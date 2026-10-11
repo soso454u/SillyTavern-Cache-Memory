@@ -57,9 +57,10 @@ test('floor 207 swipe replaces its old versions after readback; CP-042 uses only
     await f.summarizer.summarizeMessage(entry.messageId, { deferAggregates: true });
     assert.equal(f.store.getSummary(old.messageId), null); assert.equal(f.remote.summaries[old.messageId], undefined);
     assert.equal(Object.values(f.remote.summaries).filter(row => row.floor === 207).length, 1);
-    assert.equal(f.store.current().checkpoints[0].summaryIds[0], entry.messageId);
-    assert.equal(f.store.current().keepRegistry['KEEP-0001'].sourceId, entry.messageId);
-    assert.equal(f.store.current().stateOverrides.override.sourceId, entry.messageId);
+    assert.deepEqual(f.store.current().checkpoints[0].summaryIds, []);
+    assert.equal(f.store.current().checkpoints[0].sourceVersions[old.messageId], undefined);
+    assert.equal(f.store.current().keepRegistry['KEEP-0001'], undefined);
+    assert.equal(f.store.current().stateOverrides.override, undefined);
     f.duringWrite = () => {};
     const cp = await f.summarizer.generateCheckpoint(206, 210, { overwrite: true });
     const input = f.requests.at(-1).userContent.split('[NEW_SUMMARIES]')[1];
@@ -221,25 +222,27 @@ test('a replaced source is quarantined without automatic historical regeneration
     const f = fixture(10), entries = getAssistantMessages(f.chat);
     f.store.current().checkpoints = [
         { id: 'cp-1', startFloor: 1, endFloor: 5, memoryKind: 'state', content: '旧第一阶段剧情', status: 'frozen', summaryIds: entries.slice(0, 5).map(e => e.messageId) },
-        { id: 'cp-2', startFloor: 6, endFloor: 10, memoryKind: 'state', content: '旧后续阶段剧情', status: 'frozen', previousCheckpointId: 'cp-1' },
+        { id: 'cp-2', startFloor: 6, endFloor: 10, memoryKind: 'state', content: '有效后续阶段剧情', status: 'frozen', previousCheckpointId: 'cp-1' },
     ];
     f.store.current().longMemories = [{ id: 'long-1', startFloor: 1, endFloor: 10, content: '旧长期剧情', checkpointIds: ['cp-1', 'cp-2'], status: 'frozen' }];
     f.seed(); f.chat[0].mes = '第一层明确的新剧情';
     await f.summarizer.summarizeMessage(entries[0].messageId, { deferAggregates: true });
-    assert.ok(f.store.current().checkpoints.every(row => row.sourceReplaced));
+    assert.equal(f.store.current().checkpoints[0].sourceReplaced, true);
+    assert.equal(f.store.current().checkpoints[1].sourceReplaced, undefined);
     await assert.rejects(f.summarizer.generateLongMemory(f.store.current().checkpoints, { overwrite: true }), /来源 Checkpoint/);
     const calls = f.requests.length;
     const result = await f.summarizer.fillMissingMemories();
     assert.equal(result.failed, 0); assert.equal(result.created, 0); assert.equal(f.requests.length, calls);
-    assert.ok(f.store.current().checkpoints.every(row => row.sourceReplaced));
+    assert.equal(f.store.current().checkpoints[1].sourceReplaced, undefined);
     const effective = f.store.effectiveStore(f.chat);
-    assert.equal(effective.checkpoints.length, 0); assert.equal(effective.longMemories.length, 0);
+    assert.deepEqual(effective.checkpoints.map(row => row.id), ['cp-2']); assert.equal(effective.longMemories.length, 0);
     for (let i = 10; i < 15; i++) f.chat.push({ name: 'A', mes: `有效后续正文${i + 1}`, send_date: `d${i}`, gen_started: `g${i}` });
     for (const entry of getAssistantMessages(f.chat).slice(10)) f.store.current().summaries[entry.messageId] = {
         messageId: entry.messageId, floor: entry.floor, messageIndex: entry.messageIndex,
         sourceFingerprint: entry.fingerprint, sourceContentFingerprint: entry.contentFingerprint, event: `有效后续摘要${entry.floor}`, status: 'frozen' };
     f.seed(); await f.summarizer.generateCheckpoint(11, 15);
-    assert.doesNotMatch(f.requests.at(-1).userContent, /旧第一阶段剧情|旧后续阶段剧情|旧长期剧情/);
+    assert.doesNotMatch(f.requests.at(-1).userContent, /旧第一阶段剧情|旧长期剧情/);
+    assert.match(f.requests.at(-1).userContent, /有效后续阶段剧情/);
     assert.match(f.requests.at(-1).userContent, /当前摘要2/);
     assert.match(f.requests.at(-1).userContent, /新版摘要正文/);
 });
@@ -293,18 +296,131 @@ test('effective source projection excludes old swipe facts, KEEP and state while
     assert.match(nonStrict, /乙尚不知道/); assert.doesNotMatch(nonStrict, /废弃|旧 Swipe/);
     for (let n = 0; n < 10; n++) assert.equal(refreshSnapshot(f.store.current(), settings, 'new summary', f.store.effectiveStore(f.chat)).value, value);
     await f.summarizer.summarizeMessage(entries[0].messageId, { deferAggregates: true });
-    assert.equal(f.store.current().keepRegistry['KEEP-0001'].sourceInvalidated, true);
+    assert.equal(f.store.current().keepRegistry['KEEP-0001'], undefined);
     assert.equal(f.store.effectiveStore(f.chat).keepRegistry['KEEP-0001'], undefined);
     assert.equal(f.store.current().checkpoints[1].sourceReplaced, undefined);
     assert.match(f.store.current().summaries[entries[1].messageId].event, /城门永久毁坏/);
 });
 
-test('verified duplicate summaries with alternate keys are removed only with a durable pre-cleanup backup and readback', async () => {
+test('verified duplicates are removed after readback without retaining a permanent replacement backup', async () => {
     const f = fixture(), entry = getAssistantMessages(f.chat)[0];
     f.store.current().summaries.duplicate = { ...structuredClone(f.store.getSummary(entry.messageId)), messageId: 'duplicate' };
     f.seed();
     await f.summarizer.summarizeMessage(getAssistantMessages(f.chat)[1].messageId, { overwrite: true, deferAggregates: true });
     assert.equal(f.remote.summaries.duplicate, undefined);
-    assert.ok((await f.persistence.readReplacementBackup()).store.summaries.duplicate);
+    assert.equal(f.persistence.storage.getItem('cache_memory_replacement_backup_v1:a'), undefined);
+    assert.equal(f.persistence.pending.size, 0);
+    assert.equal(f.persistence.replacementStores.size, 0);
     assert.equal(Object.values(f.remote.summaries).filter(row => row.floor === 1).length, 1);
+});
+
+test('238 floors repair the legacy cascade locally: no 207-summary replay, valid Long/CP history and frozen bytes survive', async () => {
+    const { refreshSnapshot } = await import('../src/cache-control.js');
+    const { buildInjection } = await import('../src/injection.js');
+    const { aggregateVersion } = await import('../src/memory-store.js');
+    const f = fixture(238), entries = getAssistantMessages(f.chat), settings = normalizeSettings();
+    for (let start = 1; start <= 235; start += 5) {
+        const sources = entries.slice(start - 1, start + 4);
+        f.store.current().checkpoints.push({ id: `cp-${start}`, startFloor: start, endFloor: start + 4,
+            content: start === 11 ? '废弃 Swipe 事实' : `重大阶段历史${start}；甲知道秘密，乙尚不知道`, memoryKind: 'state', status: 'frozen',
+            summaryIds: sources.map(e => e.messageId), sourceVersions: Object.fromEntries(sources.map(e => [e.messageId, summaryVersion(f.store.getSummary(e.messageId))])),
+            previousCheckpointId: start > 1 ? `cp-${start - 5}` : '', ...(start >= 11 ? { sourceReplaced: true } : {}) });
+    }
+    for (let start = 1; start <= 151; start += 50) {
+        const cps = f.store.current().checkpoints.filter(cp => cp.startFloor >= start && cp.endFloor < start + 50);
+        f.store.current().longMemories.push({ id: `long-${start}`, startFloor: start, endFloor: start + 49,
+            content: start === 1 ? '旧 Swipe 的长期事实' : `不可逆重大历史${start}；人物认知差保留`, status: 'frozen', sourceReplaced: true,
+            checkpointIds: cps.map(cp => cp.id), checkpointVersions: Object.fromEntries(cps.map(cp => [cp.id, aggregateVersion(cp)])) });
+    }
+    f.store.current().summaries[entries[11].messageId].event = '当前有效重大事件：城门永久毁坏；甲知情，乙未知';
+    // Refresh the matching CP version after changing this synthetic fixture.
+    f.store.current().checkpoints[2].sourceVersions[entries[11].messageId] = summaryVersion(f.store.getSummary(entries[11].messageId));
+    const legacyBlocks = entries.slice(0, 207).map(e => ({ id: `summary:${e.messageId}`, type: 'summary', startFloor: e.floor, endFloor: e.floor,
+        text: `[RECENT_SUMMARY_${e.floor}]\n历史膨胀内容${'合成剧情'.repeat(140)}` }));
+    f.store.current().injectionSnapshot = { signature: JSON.stringify([true, true, INJECTION_MODES.CHECKPOINT_BOUNDARY]),
+        blocks: legacyBlocks, value: `<CACHE_MEMORY>\n${legacyBlocks.map(b => b.text).join('\n')}\n</CACHE_MEMORY>`, needsRebuild: true };
+    f.chat[13].mes = '当前选中的全新正文14';
+    const originalChat = structuredClone(f.chat), raw = structuredClone(f.store.current());
+    const effective = f.store.effectiveStore(f.chat);
+    assert.equal(Object.keys(effective.summaries).length, 237);
+    assert.equal(effective.checkpoints.length, 46); assert.equal(effective.longMemories.length, 3);
+    assert.deepEqual(effective.summaryRepairRanges, [{ startFloor: 11, endFloor: 15 }]);
+    assert.deepEqual(f.store.current(), raw);
+    const value = refreshSnapshot(f.store.current(), settings, 'chat changed', effective).value;
+    assert.equal(f.store.current().injectionSnapshot.value, value);
+    assert.equal((value.match(/RECENT_SUMMARY_/g) ?? []).length, 4);
+    assert.doesNotMatch(value, /废弃 Swipe|旧 Swipe|历史膨胀内容/);
+    assert.match(value, /城门永久毁坏/); assert.match(value, /乙未知/);
+    assert.match(value, /不可逆重大历史51/); assert.match(value, /重大阶段历史231/);
+    assert.ok(value.length < raw.injectionSnapshot.value.length / 10);
+    for (let n = 0; n < 10; n++) {
+        assert.equal(refreshSnapshot(f.store.current(), settings, 'new summary', f.store.effectiveStore(f.chat)).value, value);
+        assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore(f.chat)).value, value);
+    }
+    const dynamic = buildInjection(effective, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT }));
+    assert.equal((dynamic.match(/RECENT_SUMMARY_/g) ?? []).length, 7); // Four local sources + the three newest uncovered floors.
+    assert.match(dynamic, /不可逆重大历史51/); assert.doesNotMatch(dynamic, /废弃 Swipe|旧 Swipe/);
+    assert.deepEqual(f.chat, originalChat); assert.equal(f.requests.length, 0);
+    // Unverifiable legacy cascade flags are never permission to replay every
+    // Summary, even when the old broad range was persisted/imported.
+    const unknown = structuredClone(raw);
+    unknown.sourceFallbackRanges = [{ startFloor: 1, endFloor: 238 }];
+    for (const cp of unknown.checkpoints) { delete cp.summaryIds; delete cp.sourceVersions; }
+    const metadata = { cache_memory: unknown };
+    const legacy = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
+    const { sourceFallbackSummaries } = await import('../src/continuity.js');
+    assert.equal(sourceFallbackSummaries(unknown).length, 0);
+    assert.equal(sourceFallbackSummaries(legacy.effectiveStore(f.chat)).length, 4);
+});
+
+test('confirmed matching alternate becomes the sole current Summary; unrelated partial-load records remain untouched', async () => {
+    const f = fixture(), entry = getAssistantMessages(f.chat)[0], current = structuredClone(f.store.getSummary(entry.messageId));
+    f.store.current().summaries[entry.messageId].sourceContentFingerprint = 'old-body';
+    f.store.current().summaries[entry.messageId].event = '废弃正文摘要';
+    f.store.current().summaries['matching-copy'] = { ...current, messageId: 'matching-copy' };
+    f.store.current().summaries.unknown = { messageId: 'unknown', floor: 1, messageIndex: 0, event: '未确认的导入记录', status: 'frozen' };
+    f.seed();
+    assert.equal(f.store.currentSummaries(f.chat)[0].event, current.event);
+    assert.equal(f.store.hasSupersededRecords(f.chat, { aggregates: false }), true);
+    await f.persistence.commitReplacement(f.store, () => f.store.cleanupSuperseded(f.chat, { aggregates: false }));
+    assert.equal(f.remote.summaries[entry.messageId].event, current.event);
+    assert.equal(f.remote.summaries['matching-copy'], undefined); assert.ok(f.remote.summaries.unknown);
+    assert.equal(f.store.hasSupersededRecords(f.chat, { aggregates: false }), false);
+    assert.equal(f.store.hasSupersededRecords([], { aggregates: false }), false);
+});
+
+test('same-ID edit immediately leaves effective memory even when the replacement save fails', async () => {
+    const { refreshSnapshot } = await import('../src/cache-control.js');
+    const f = fixture(), entries = getAssistantMessages(f.chat), entry = entries[0], settings = normalizeSettings();
+    f.store.current().checkpoints = [{ id: 'cp', startFloor: 1, endFloor: 5, content: '仅属于旧正文的剧情', status: 'frozen',
+        summaryIds: entries.map(e => e.messageId), sourceVersions: Object.fromEntries(entries.map(e => [e.messageId, summaryVersion(f.store.getSummary(e.messageId))])) }];
+    refreshSnapshot(f.store.current(), settings, 'manual reinject', f.store.effectiveStore(f.chat));
+    f.seed(); f.chat[0].mes = '完全不同的当前正文';
+    const value = refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore(f.chat)).value;
+    assert.doesNotMatch(value, /仅属于旧正文|当前摘要1\b/);
+    f.seed(); // The immediate injection invalidation has already been saved.
+    f.fail = true;
+    await assert.rejects(f.summarizer.summarizeMessage(entry.messageId, { deferAggregates: true }), { code: 'SAVE_UNCONFIRMED' });
+    assert.equal(f.store.currentSummaries(f.chat).some(row => row.floor === 1), false);
+    assert.ok(f.persistence.pending.get('a').replacementFallback.summaries[entry.messageId]);
+    assert.equal(f.persistence.storage.getItem('cache_memory_replacement_backup_v1:a'), undefined);
+    f.fail = false; await f.persistence.flush();
+    assert.equal(Object.values(f.remote.summaries).filter(row => row.floor === 1).length, 1);
+    assert.equal(f.remote.summaries[entry.messageId].event, '新版摘要正文');
+    assert.equal(f.persistence.pending.size, 0); assert.equal(f.persistence.replacementStores.size, 0);
+});
+
+test('a KEEP-only frozen snapshot drops a proven old source, but a partial load does not erase published memory', async () => {
+    const { refreshSnapshot } = await import('../src/cache-control.js');
+    const f = fixture(), entry = getAssistantMessages(f.chat)[0], settings = normalizeSettings();
+    f.store.current().keepRegistry['KEEP-0001'] = { text: '只属于当前正文的秘密', sourceId: entry.messageId, sourceFloor: 1, status: 'active' };
+    const value = refreshSnapshot(f.store.current(), settings, 'manual reinject', f.store.effectiveStore(f.chat)).value;
+    assert.match(value, /只属于当前正文的秘密/);
+    assert.equal(f.store.current().injectionSnapshot.value, value);
+    const partial = f.store.effectiveStore([]);
+    assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', partial).value, value);
+    f.chat[0].mes = 'Swipe 改变了第一层正文';
+    const next = refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore(f.chat)).value;
+    assert.doesNotMatch(next, /只属于当前正文的秘密/);
+    assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore(f.chat)).changed, false);
 });

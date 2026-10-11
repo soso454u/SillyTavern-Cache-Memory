@@ -1,9 +1,9 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.4';
-import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.4';
-import { collectKeepItems, formatKeepItems, isUsableMemory, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.4';
-import { fnv1a } from './utils.js?v=1.24.4';
-import { stripStructuredSections } from './summary-format.js?v=1.24.4';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.4';
+import { INJECTION_MODES } from './defaults.js?v=1.24.5';
+import { buildInjection, compactInjectionBlocks } from './injection.js?v=1.24.5';
+import { collectKeepItems, formatKeepItems, isUsableMemory, sourceFallbackSummaries, summaryText } from './continuity.js?v=1.24.5';
+import { fnv1a } from './utils.js?v=1.24.5';
+import { stripStructuredSections } from './summary-format.js?v=1.24.5';
+import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.5';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -38,10 +38,12 @@ function frozenBlocks(store, mode, settings) {
     if (mode === INJECTION_MODES.CHECKPOINT_BOUNDARY) {
         for (const record of [...store.checkpoints].filter(item => !item.sourceReplaced && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'checkpoint');
     }
-    for (const record of sourceFallbackSummaries(store)) blocks.push({ id: `summary:${record.messageId}`, type: 'summary', startFloor: record.floor, endFloor: record.floor,
+    for (const record of mode === INJECTION_MODES.CHECKPOINT_BOUNDARY ? sourceFallbackSummaries(store) : []) blocks.push({ id: `summary:${record.messageId}`, type: 'summary', startFloor: record.floor, endFloor: record.floor,
+        sourceContentFingerprint: record.sourceContentFingerprint,
         text: `[RECENT_SUMMARY_${String(record.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(record), ['KEEP'])}` });
-    const keeps = formatKeepItems(collectKeepItems(store));
-    if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: 0, text: `[KEEP]\n${keeps}` });
+    const keepItems = collectKeepItems(store), keeps = formatKeepItems(keepItems);
+    if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: 0,
+        keepIds: keepItems.filter(item => item.status === 'active' && !item.sourceInvalidated).map(item => item.id), text: `[KEEP]\n${keeps}` });
     return blocks;
 }
 
@@ -50,14 +52,18 @@ function frozenBlocks(store, mode, settings) {
 export function refreshSnapshot(store, settings, reason = 'manual edit', sourceStore = store) {
     if (!shouldRefreshInjection(settings, reason)) return { value: store.injectionSnapshot?.value ?? '', changed: false, skipped: true };
     const mode = effectiveInjectionMode(settings);
-    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode]);
+    // One-time migration discards snapshots inflated by the old cascade path.
+    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 1]);
     const previous = store.injectionSnapshot;
     const invalidPublishedSource = previous?.blocks?.some(block => {
+        if (block.type === 'keep') return block.keepIds?.some(id => !sourceStore.keepRegistry[id]);
         if (!['long', 'checkpoint', 'summary'].includes(block.type)) return false;
-        const records = block.type === 'long' ? sourceStore.longMemories : block.type === 'summary' ? Object.values(sourceStore.summaries) : sourceStore.checkpoints;
-        return !records.some(item => `${block.type}:${item.id ?? item.messageId}` === block.id && isUsableMemory(item));
+        if (sourceStore.excludedSourceIds?.includes(block.id)) return true;
+        const records = block.type === 'long' ? sourceStore.longMemories : block.type === 'summary' ? Object.values(store.summaries) : sourceStore.checkpoints;
+        return !records.some(item => `${block.type}:${item.id ?? item.messageId}` === block.id && !item.sourceReplaced && isUsableMemory(item)
+            && (block.type !== 'summary' || !block.sourceContentFingerprint || item.sourceContentFingerprint === block.sourceContentFingerprint));
     });
-    if (reason === 'chat changed' && previous?.signature === signature && (!invalidPublishedSource || previous.needsRebuild && !sourceStore.sourceFallbackRanges?.length)) return { value: previous.value, changed: false };
+    if (reason === 'chat changed' && previous?.signature === signature && !invalidPublishedSource) return { value: previous.value, changed: false };
     let blocks = [];
     let value = '';
     if (settings.enabled && mode !== INJECTION_MODES.NONE) {
