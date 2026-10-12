@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.8';
-import { generationPrompt } from './generation-prompts.js?v=1.24.8';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.8';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.8';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.8';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.8';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.8';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.8';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.8';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.8';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.8';
-import { parseFloorSummary } from './summarizer.js?v=1.24.8';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.8';
+import { applyUITheme } from './ui-theme.js?v=1.24.9';
+import { generationPrompt } from './generation-prompts.js?v=1.24.9';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.9';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.9';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.9';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.9';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.9';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.9';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.9';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.9';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.9';
+import { parseFloorSummary } from './summarizer.js?v=1.24.9';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.9';
 
-import { memoryHealth, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.8';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.8';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.9';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.9';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -78,9 +78,7 @@ export function summaryHealthDetails(store, assistants) {
     const matched = new Set();
     const details = [];
     for (const entry of entries) {
-        // Diagnostics and generation readiness describe the current message
-        // slot. Same-floor legacy records remain available to injection only.
-        const record = summaries[entry.messageId] ?? null;
+        const record = summaryForEntry(store, entry);
         if (record) matched.add(record);
         const health = currentSummaryHealth(record, entry);
         if (health.code !== 'valid') details.push({ floor: entry.floor, messageId: entry.messageId, reason: health.code, label: health.label, current: true });
@@ -114,9 +112,9 @@ export function memoryOverviewStats(store, assistants, settings) {
     const longRanges = completedRanges(latestFloor, longMemoryInterval);
     const summaryDetails = summaryHealthDetails(safeStore, entries);
     const currentIssues = summaryDetails.filter(item => item.current);
-    const usableSummaries = entries.filter(entry => currentSummaryHealth(safeStore.summaries[entry.messageId], entry).code === 'valid');
+    const usableSummaries = entries.filter(entry => currentSummaryHealth(summaryForEntry(safeStore, entry), entry).code === 'valid');
     const generatedSummaries = entries.filter(entry => {
-        const row = safeStore.summaries[entry.messageId];
+        const row = summaryForEntry(safeStore, entry);
         return row && row.status !== 'failed' && row.frozen !== false && ['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(row[key] ?? '').trim());
     });
     const missingCheckpointRanges = checkpointRanges.filter(([start, end]) => !checkpoints.some(item => item.startFloor === start && item.endFloor === end));
@@ -518,7 +516,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.8', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.9', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -1364,7 +1362,8 @@ export class CacheMemoryUI {
                 const anchor = message.querySelector('.mes_text');
                 let widget = message.querySelector('.cache-memory-message');
                 if (!entry || !anchor) { widget?.remove(); continue; }
-                const record = store.summaries[entry.messageId];
+                const record = summaryForEntry(store, entry);
+                const summaryId = Object.keys(store.summaries).find(id => store.summaries[id] === record) ?? entry.messageId;
                 const busy = this.summarizer.isSummarizing(entry.messageId, store.chatId);
                 if (widget && (widget.dataset.messageId !== entry.messageId || widget.dataset.chatId !== store.chatId)) {
                     widget.remove(); widget = null;
@@ -1375,6 +1374,7 @@ export class CacheMemoryUI {
                     widget.dataset.chatId = store.chatId;
                     widget.open = this.messageExpanded.has(entry.messageId);
                 }
+                widget.dataset.summaryId = summaryId;
                 if (widget.cacheMemoryOwner !== this) {
                     widget.cacheMemoryOwner = this;
                     widget.addEventListener('toggle', () => {
@@ -1442,15 +1442,15 @@ export class CacheMemoryUI {
             else if (button.hasAttribute('data-message-edit-cancel')) this.messageEditing = null;
             else if (button.dataset.memoryAction === 'delete') {
                 const confirmed = await this.showPluginDialog({ title: '删除楼层摘要', message: '删除这条小总结？历史 assistant 正文不会被修改。', confirmLabel: '确认删除', danger: true });
-                if (confirmed && widget.dataset.chatId === this.store.current().chatId) this.store.deleteSummary(messageId);
+                if (confirmed && widget.dataset.chatId === this.store.current().chatId) this.store.deleteSummary(widget.dataset.summaryId || messageId);
             } else if (button.dataset.memoryAction === 'edit') {
                 this.editSummary(messageId);
             } else if (button.dataset.memoryAction === 'regenerate') {
-                const record = this.store.getSummary(messageId);
+                const record = this.store.getSummary(widget.dataset.summaryId || messageId);
                 if (record && record.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成楼层摘要', message: '重新生成会替换这条摘要，但不会修改原始 assistant 正文。', confirmLabel: '确认重新生成' })) return;
                 if (widget.dataset.chatId !== this.store.current().chatId) return;
                 button.disabled = true;
-                try { await this.summarizer.summarizeMessage(messageId, { overwrite: Boolean(record) }); } catch {}
+                try { await this.summarizer.summarizeMessage(messageId, { overwrite: true }); } catch {}
                 button.disabled = false;
             } else return;
             this.renderMessageMemories();
@@ -1536,10 +1536,11 @@ export class CacheMemoryUI {
     }
 
     editSummary(messageId) {
-        const record = this.store.getSummary(messageId);
         const entry = getAssistantMessages(this.getChat()).find(item => item.messageId === messageId);
+        const record = entry && this.store.getSummaryForEntry(entry);
         if (!record || !entry || record.status === 'failed') return;
-        this.messageEditing = { chatId: this.store.current().chatId, messageId,
+        const summaryId = Object.keys(this.store.current().summaries).find(id => this.store.getSummary(id) === record);
+        this.messageEditing = { chatId: this.store.current().chatId, messageId, summaryId,
             source: entry.contentFingerprint, version: JSON.stringify([summaryVersion(record), record.quote]),
             values: Object.fromEntries(this.summaryEditorFields(record).map(field => [field.key, String(field.value ?? '')])),
         };
@@ -1551,15 +1552,16 @@ export class CacheMemoryUI {
     saveMessageEdit(widget) {
         const draft = this.messageEditing;
         if (!draft || draft.messageId !== widget.dataset.messageId || draft.chatId !== this.store.current().chatId) return;
-        const record = this.store.getSummary(draft.messageId);
+        const record = this.store.getSummary(draft.summaryId || draft.messageId);
         const entry = getAssistantMessages(this.getChat()).find(item => item.messageId === draft.messageId);
-        if (!entry || entry.contentFingerprint !== draft.source || !record || JSON.stringify([summaryVersion(record), record.quote]) !== draft.version) {
+        if (!entry || entry.contentFingerprint !== draft.source || !record || this.store.getSummaryForEntry(entry) !== record
+            || JSON.stringify([summaryVersion(record), record.quote]) !== draft.version) {
             notify('warning', '该消息或摘要已发生变化，请取消编辑后重新打开。草稿尚未保存。');
             return;
         }
         const values = this.inlineEditValues(widget);
         this.messageEditing = null;
-        this.saveSummaryValues(draft.messageId, values);
+        this.saveSummaryValues(draft.summaryId || draft.messageId, values);
     }
 
     saveSummaryValues(id, values) {
@@ -2001,7 +2003,7 @@ export class CacheMemoryUI {
         controls.querySelector('[data-summary-query]').value = this.managerState.summaryQuery;
         root.append(controls);
         const store = this.store.current();
-        let items = getAssistantMessages(this.getChat()).map(entry => ({ entry, record: store.summaries[entry.messageId] })).reverse();
+        let items = getAssistantMessages(this.getChat()).map(entry => ({ entry, record: summaryForEntry(store, entry) })).reverse();
         items = items.filter(({ record }) => this.managerState.summaryStatus === 'all'
             || (this.managerState.summaryStatus === 'missing' && !record)
             || (this.managerState.summaryStatus === 'failed' && record?.status === 'failed')
@@ -2237,24 +2239,28 @@ export class CacheMemoryUI {
     }
 
     summaryCard({ entry, record }, limit = this.generationSettings().summaryMaxLength) {
+        const summaries = this.store.current().summaries;
+        const summaryId = Object.keys(summaries).find(id => summaries[id] === record) ?? entry.messageId;
         const baseStatus = this.statusLabel(record);
         const count = record && record.status !== 'failed' ? [record.title, record.characters, record.event, record.state, record.open, record.quote, record.keep]
             .map(value => String(value ?? '').trim()).filter(Boolean).join('\n').length : 0;
         const status = count ? `${baseStatus} · ${count}/${limit} 字${count > limit * 1.15 ? ' · 偏长' : ''}` : baseStatus;
-        return this.foldCard({ key: entry.messageId, group: 'summaries', type: 'summary', id: entry.messageId,
+        const card = this.foldCard({ key: summaryId, group: 'summaries', type: 'summary', id: summaryId,
             title: `第${entry.floor}层｜${record?.title ?? status}`, status, renderBody: body => {
                 if (!record) body.append(this.element('p', '', '该楼层尚未生成 Summary。'));
                 else if (record.status === 'failed') body.append(this.element('pre', '', formatSummaryFailure(record)));
-                else if (this.isEditing('summary', entry.messageId)) this.inlineEditor(body, this.summaryEditorFields(record));
+                else if (this.isEditing('summary', summaryId)) this.inlineEditor(body, this.summaryEditorFields(record));
                 else {
                     body.append(this.line('标题', record.title), this.line('剧情日期/时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`), this.line('人物', record.characters), this.line('事件', record.event),
                         this.line('状态', record.state), this.line('Open', record.open), this.line('原话', record.quote), this.line('KEEP', record.keep));
                 }
-                if (this.isEditing('summary', entry.messageId)) return;
+                if (this.isEditing('summary', summaryId)) return;
                 const actions = this.element('div', 'cache-memory-actions');
                 actions.innerHTML = `<button type="button" class="menu_button" data-manager-action="regenerate">${record?.status === 'failed' ? '重试' : record ? '重新生成' : '生成本层记忆'}</button>${record && record.status !== 'failed' ? '<button type="button" class="menu_button" data-manager-action="edit">编辑</button>' : ''}${record ? '<button type="button" class="menu_button" data-manager-action="delete">删除</button>' : ''}`;
                 body.append(actions);
             } });
+        card.dataset.messageId = entry.messageId;
+        return card;
     }
 
     checkpointCard(item) {
@@ -2388,7 +2394,7 @@ export class CacheMemoryUI {
                 : action === 'cancel' ? !['running', 'pausing', 'paused'].includes(s.status) : this.backfill.active || this.isMissingCheckpointBackfillActive() || !latest;
         }
         for (const button of this.manager.querySelectorAll('[data-manager-action], [data-fill-missing], [data-continue-checkpoint], [data-import-merge], [data-fill-missing-checkpoints], [data-aggregate-continue]')) {
-            const messageId = button.closest('[data-memory-type="summary"]')?.dataset.memoryId;
+            const messageId = button.closest('[data-memory-type="summary"]')?.dataset.messageId;
             button.disabled = this.backfill.active || this.isMissingCheckpointBackfillActive() || Boolean(messageId && this.summarizer.isSummarizing(messageId));
         }
     }
@@ -2739,10 +2745,10 @@ export class CacheMemoryUI {
             const latest = getAssistantMessages(this.getChat()).at(-1);
             if (!latest || this.backfill.active || this.isMissingCheckpointBackfillActive()) return;
             if (action === 'latest') {
-                const record = this.store.getSummary(latest.messageId);
+                const record = this.store.getSummaryForEntry(latest);
                 if (record && record.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成最新摘要', message: '重新生成当前最新层摘要？', confirmLabel: '确认重新生成' })) return;
                 batchButton.disabled = true;
-                try { await this.summarizer.summarizeMessage(latest.messageId, { overwrite: Boolean(record) }); }
+                try { await this.summarizer.summarizeMessage(latest.messageId, { overwrite: true }); }
                 catch (error) { notify('error', error.message); }
                 this.renderManager();
                 return;
@@ -2787,7 +2793,7 @@ export class CacheMemoryUI {
             const existing = type === 'summary' ? this.store.getSummary(id) : true;
             if (existing && existing.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成记忆', message: '仅按该条记忆的固定来源重新生成并替换它。继续？', confirmLabel: '确认重新生成' })) return;
             button.disabled = true;
-            try { await this.regenerate(type, id); } catch (error) { notify('error', error.message); }
+            try { await this.regenerate(type, type === 'summary' ? card.dataset.messageId || id : id); } catch (error) { notify('error', error.message); }
         }
         this.renderMessageMemories();
         this.renderManager();

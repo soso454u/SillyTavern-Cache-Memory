@@ -80,16 +80,16 @@ test('skills and attributes have one latest keyed value across current sections;
     assert.deepEqual(trackedFactUpdates([], store, 5, facts), []);
 });
 
-test('overview reports the current message record while injection may retain a same-floor legacy fallback', () => {
+test('overview counts saved floor memory regardless of stored message ID or obsolete flags', () => {
     const store = createEmptyStore('a');
     const entries = Array.from({ length: 226 }, (_, i) => ({ messageId: `m${i + 1}`, floor: i + 1, contentFingerprint: `body${i + 1}` }));
     for (let floor = 1; floor <= 225; floor++) put(store, floor);
     for (let i = 0; i < 19; i++) store.summaries[`old${i}`] = { messageId: `old${i}`, floor: i === 18 ? 226 : 204 + i, status: 'orphaned', event: '旧版本' };
     const before = structuredClone(store);
     const stats = memoryOverviewStats(store, entries, normalizeSettings());
-    assert.equal(stats.storedSummaryRecords, 244); assert.equal(stats.summaries.actual, 225); assert.equal(stats.summaries.expected, 226);
-    assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => [row.floor, row.reason]), [[226, 'missing']]);
-    assert.equal(stats.summaryDetails.filter(row => !row.current && row.reason === 'source-unloaded').length, 19);
+    assert.equal(stats.storedSummaryRecords, 244); assert.equal(stats.summaries.actual, 226); assert.equal(stats.summaries.expected, 226);
+    assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => [row.floor, row.reason]), []);
+    assert.equal(stats.summaryDetails.filter(row => !row.current && row.reason === 'source-unloaded').length, 18);
     assert.deepEqual(store, before);
     put(store, 226); assert.equal(memoryOverviewStats(store, entries, normalizeSettings()).summaries.actual, 226);
 });

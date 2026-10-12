@@ -1,13 +1,13 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.8';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.8';
-import { generationPrompt } from './generation-prompts.js?v=1.24.8';
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.8';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.8';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.8';
-import { extractSummarySource } from './summary-source.js?v=1.24.8';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.8';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.8';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.8';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.9';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.9';
+import { generationPrompt } from './generation-prompts.js?v=1.24.9';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.9';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.9';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.9';
+import { extractSummarySource } from './summary-source.js?v=1.24.9';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.9';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.9';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.9';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -161,9 +161,9 @@ export class MemorySummarizer {
     }
 
     async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal } = {}) {
-        const existing = this.store.getSummary(entry.messageId);
-        // A same-floor legacy/Swipe record may still be used for injection, but
-        // it must not make generation for the current message ID a no-op.
+        const existing = this.store.getSummaryForEntry(entry);
+        // Reuse saved floor memory regardless of identity/source drift. Only
+        // an explicit overwrite regenerates it; missing-floor scans do not.
         if (isUsableMemory(existing) && !overwrite) return existing;
         overwrite ||= Boolean(this.store.getSummary(entry.messageId));
         const flightKey = `${this.store.current().chatId}:${entry.messageId}`;
@@ -322,7 +322,7 @@ export class MemorySummarizer {
         };
         const longMemories = missingRanges(store.longMemories, longSpan);
         const needed = floor => !onlyLong || longMemories.some(range => floor >= range.startFloor && floor <= range.endFloor);
-        return { latestFloor, summaries: assistants.filter(entry => needed(entry.floor) && (!isUsableMemory(this.store.getSummary(entry.messageId)))),
+        return { latestFloor, summaries: assistants.filter(entry => needed(entry.floor) && (!isUsableMemory(this.store.getSummaryForEntry(entry)))),
             checkpoints: missingRanges(store.checkpoints, checkpointInterval).filter(range => needed(range.startFloor)), longMemories };
     }
 
@@ -355,7 +355,7 @@ export class MemorySummarizer {
                         onProgress({ ...result });
                         let record;
                         if (phase === 'Summary') {
-                            const existing = this.store.getSummary(entry.messageId);
+                            const existing = this.store.getSummaryForEntry(entry);
                             if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
                             record = await this.summarizeMessage(entry.messageId, { overwrite: Boolean(existing), deferAggregates: true, signal, expectedFingerprint: entry.fingerprint });
                         } else {
@@ -409,7 +409,7 @@ export class MemorySummarizer {
             const missingFloors = [];
             for (let floor = startFloor; floor <= endFloor; floor += 1) {
                 const entry = byFloor.get(floor);
-                const summary = entry ? store.summaries[entry.messageId] : null;
+                const summary = entry ? this.store.getSummaryForEntry(entry) : null;
                 if (!summary || !isUsableMemory(summary)) missingFloors.push(floor);
             }
             if (missingFloors.length) blocked.push({ ...range, missingFloors });

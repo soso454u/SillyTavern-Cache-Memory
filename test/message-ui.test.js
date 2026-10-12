@@ -56,3 +56,16 @@ test('unsaved message drafts do not modify memory and cannot overwrite a changed
         assert.equal(f.ui.messageEditing.values.event, '未保存草稿');
     }
 });
+
+test('message editing uses the saved record key when the current message ID differs', () => {
+    const f = fixture(), original = f.store.getSummary(f.entry.messageId);
+    delete f.store.current().summaries[f.entry.messageId];
+    f.store.current().summaries['legacy-key'] = { ...original, messageId: 'legacy-key' };
+    f.ui.editSummary(f.entry.messageId);
+    assert.equal(f.ui.messageEditing.summaryId, 'legacy-key');
+    f.ui.messageEditing.values.event = '手动编辑已存摘要';
+    f.ui.saveMessageEdit(f.widget);
+    assert.equal(f.store.getSummary('legacy-key').event, '手动编辑已存摘要');
+    assert.equal(f.store.getSummary(f.entry.messageId), null);
+    assert.equal(Object.keys(f.store.current().summaries).length, 1);
+});

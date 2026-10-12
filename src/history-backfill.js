@@ -1,4 +1,4 @@
-import { getAssistantMessages } from './utils.js?v=1.24.8';
+import { getAssistantMessages } from './utils.js?v=1.24.9';
 
 export function isRetryableSummaryError(error) {
     if (['REQUEST_ABORTED', 'CHAT_CHANGED', 'SOURCE_CHANGED', 'ST_PROXY_ROUTE_MISSING'].includes(error.code)) return false;
@@ -100,7 +100,7 @@ export class HistoryBackfill {
             for (const entry of entries) {
                 await this.boundary();
                 this.publish({ currentFloor: entry.floor }, runId);
-                const existing = this.store.getSummary(entry.messageId);
+                const existing = this.store.getSummaryForEntry(entry);
                 const selected = mode === 'all' || (!existing && ['missing', 'missing-failed'].includes(mode))
                     || (existing?.status === 'failed' && ['failed', 'missing-failed'].includes(mode));
                 if (!selected) this.state.skipped++;

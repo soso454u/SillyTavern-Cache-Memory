@@ -55,16 +55,20 @@ test('missing and failed summaries precede aggregates; earlier holes are filled 
     assert.ok(f.store.current().longMemories.some(item => item.startFloor === 1 && item.endFloor === 50));
 });
 
-test('a same-floor old Swipe summary does not hide a missing current record or skip generation', async () => {
+test('saved floor memory survives ID drift, while explicit regeneration still replaces it', async () => {
     const f = fixture(1), entry = getAssistantMessages(f.chat)[0];
     const old = f.store.current().summaries[entry.messageId];
     delete f.store.current().summaries[entry.messageId];
     f.store.current().summaries['old-swipe'] = { ...old, messageId: 'old-swipe', event: '旧 Swipe 摘要' };
 
-    assert.deepEqual(f.summarizer.getMissingMemoryPlan().summaries.map(item => item.messageId), [entry.messageId]);
+    const before = structuredClone(f.store.current());
+    assert.deepEqual(f.summarizer.getMissingMemoryPlan().summaries, []);
     const result = await f.summarizer.fillMissingMemories();
-
-    assert.equal(result.created, 1);
+    assert.equal(result.created, 0);
+    await f.summarizer.summarizeLatest();
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(f.store.current(), before);
+    await f.summarizer.summarizeMessage(entry.messageId, { overwrite: true, deferAggregates: true });
     assert.deepEqual(f.calls, ['Summary']);
     assert.equal(f.store.getSummary(entry.messageId).event, '补齐内容');
     assert.equal(f.store.getSummary('old-swipe'), null);

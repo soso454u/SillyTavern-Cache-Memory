@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.8';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.8';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.8';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.9';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.9';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.9';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -12,7 +12,9 @@ export function summaryMatchesEntry(record, entry) {
 export function summaryForEntry(store, entry, byFloor = null) {
     const summaries = store?.summaries ?? {};
     const direct = summaries[entry.messageId];
-    if (isUsableMemory(direct)) return direct;
+    // Prefer the actual current record, including a real generation failure.
+    // A different stored ID alone does not make a saved floor Summary missing.
+    if (direct) return direct;
     const rows = byFloor?.get(entry.floor) ?? Object.values(summaries).filter(item => item.floor === entry.floor);
     const usable = rows.filter(isUsableMemory);
     return usable.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')) || String(a.messageId).localeCompare(String(b.messageId)))[0] ?? direct ?? null;
