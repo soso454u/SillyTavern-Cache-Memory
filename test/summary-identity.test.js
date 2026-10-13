@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { MemoryStore } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { HistoryBackfill } from '../src/history-backfill.js';
-import { CacheMemoryUI, memoryOverviewStats } from '../src/ui.js';
+import { CacheMemoryUI, memoryOverviewStats, summarySourceAudit } from '../src/ui.js';
 import { normalizeSettings } from '../src/defaults.js';
 import { getAssistantMessages } from '../src/utils.js';
 
@@ -67,4 +67,19 @@ test('explicit latest-summary UI action regenerates a saved different-ID record'
     assert.equal(f.store.getSummary(entry.messageId).event, '当前正文的新摘要');
     assert.equal(f.store.getSummary('latestLegacy'), null);
     assert.deepEqual([f.store.current().checkpoints, f.store.current().longMemories], aggregates);
+});
+
+test('source review is read only and distinguishes matching, changed, unknown, and missing floors', () => {
+    const f = fixture(), sums = f.store.current().summaries;
+    sums[f.entries[0].messageId] = { ...sums['legacy-1'], messageId: f.entries[0].messageId, sourceContentFingerprint: f.entries[0].contentFingerprint };
+    delete sums['legacy-1'];
+    delete sums['legacy-3'].sourceContentFingerprint;
+    delete sums['legacy-3'].sourceFingerprint;
+    delete sums['legacy-4'];
+    const before = structuredClone(f.store.current());
+    const result = summarySourceAudit(f.store.current(), f.entries);
+    assert.deepEqual(result.slice(0, 4).map(row => row.status), ['matched', 'changed', 'unknown', 'missing']);
+    assert.equal(result[0].entry.message.mes, '正文0');
+    assert.deepEqual(f.store.current(), before);
+    assert.equal(f.calls, 0);
 });

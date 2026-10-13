@@ -2,7 +2,7 @@ import { applyUITheme } from './ui-theme.js?v=1.24.9';
 import { generationPrompt } from './generation-prompts.js?v=1.24.9';
 import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.9';
 import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.9';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.10';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.11';
 import { HistoryBackfill } from './history-backfill.js?v=1.24.9';
 import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.9';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.9';
@@ -57,6 +57,25 @@ export function estimateTokenCount(value) {
     }
     flushAscii();
     return tokens;
+}
+
+// Diagnostics only. Matching source fingerprints cannot prove factual fidelity.
+export function summarySourceAudit(store, assistants) {
+    return (assistants ?? []).map(entry => {
+        const record = summaryForEntry(store, entry);
+        let status = 'matched', label = '正文版本一致';
+        if (!record) { status = 'missing'; label = '没有已保存摘要'; }
+        else if (record.status === 'failed') { status = 'failed'; label = '摘要生成失败'; }
+        else if (!isUsableMemory(record)) { status = 'unknown'; label = '摘要状态待核对'; }
+        else if (record.sourceContentFingerprint) {
+            if (record.sourceContentFingerprint !== entry.contentFingerprint) {
+                status = 'changed'; label = '当前正文与摘要来源版本不同';
+            }
+        } else if (!record.sourceFingerprint || record.sourceFingerprint !== entry.fingerprint) {
+            status = 'unknown'; label = '来源无法确认（旧记录或消息身份变化）';
+        }
+        return { floor: entry.floor, entry, record, status, label };
+    });
 }
 
 function completedRanges(latestFloor, interval) {
@@ -296,12 +315,14 @@ function managerPanelTemplate() {
             <details class="cache-memory-backup"><summary>保存与诊断</summary>
             <div class="cache-memory-actions cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-validate-memory>检查记忆状态</button>
+                <button type="button" class="menu_button" data-audit-open>按楼层查看原文／摘要</button>
                 <button type="button" class="menu_button" data-cleanup-summaries title="清理已确认归属且已有当前摘要的旧 Swipe 和重复记录；服务器确认后生效，不调用模型">清理旧摘要</button>
                 <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
                 <button type="button" class="menu_button" data-pending-backup hidden>下载待保存副本</button>
                 <button type="button" class="menu_button" data-reinject>重新注入</button>
                 <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
             </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p><p data-memory-diagnostics></p>
+            <div class="cache-memory-summary-audit" data-summary-audit hidden></div>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
             </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
@@ -499,6 +520,9 @@ export class CacheMemoryUI {
         this.settingInputTimer = null;
         this.pendingSettingInput = null;
         this.showSummaryHealthDetails = false;
+        this.summaryAuditVisible = false;
+        this.summaryAuditFloor = 0;
+        this.summaryAuditChatId = null;
         this.lastMergeReport = null;
         this.missingCheckpointController = null;
         this.missingCheckpointRunId = 0;
@@ -516,7 +540,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.9', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.11', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -1610,7 +1634,69 @@ export class CacheMemoryUI {
         else if (this.managerView === 'facts') content.append(this.renderFactPage());
         else if (['threads', 'states'].includes(this.managerView)) content.append(this.renderTrackedPage(this.managerView === 'threads' ? 'thread' : 'state'));
         else content.append(this.renderKeepPage());
+        this.renderSummaryAudit();
         this.renderBackfillProgress();
+    }
+
+    renderSummaryAudit() {
+        const panel = this.manager?.querySelector('[data-summary-audit]');
+        if (!panel) return;
+        panel.hidden = !this.summaryAuditVisible;
+        panel.replaceChildren();
+        if (!this.summaryAuditVisible) return;
+        const rows = summarySourceAudit(this.store.current(), getAssistantMessages(this.getChat()));
+        if (!rows.length) { panel.append(this.element('p', '', '当前没有已加载的 assistant 正文。')); return; }
+        const chatId = this.store.current().chatId;
+        if (this.summaryAuditChatId !== chatId) {
+            this.summaryAuditChatId = chatId;
+            this.summaryAuditFloor = rows.at(-1).floor;
+        }
+        const selected = rows.find(row => row.floor === this.summaryAuditFloor) ?? rows.at(-1);
+        this.summaryAuditFloor = selected.floor;
+        const needsReview = rows.filter(row => row.status !== 'matched');
+        panel.append(this.element('h4', '', '按楼层查看原文与摘要'),
+            this.element('p', '', `已检查 ${rows.length} 层；${needsReview.length} 层需要人工核对。只读对照来源版本，不能自动判断剧情事实是否准确。`));
+        const toolbar = this.element('div', 'cache-memory-audit-controls');
+        const label = this.element('label', '', '查看第几层');
+        const input = this.element('input');
+        input.type = 'number'; input.min = '1'; input.max = String(rows.at(-1).floor);
+        input.value = String(selected.floor); input.dataset.auditFloor = '';
+        label.append(input); toolbar.append(label);
+        const show = this.element('button', 'menu_button', '查看本层');
+        show.type = 'button'; show.dataset.auditGo = '';
+        toolbar.append(show); panel.append(toolbar);
+        if (needsReview.length) {
+            const choices = this.element('div', 'cache-memory-audit-choices');
+            choices.append(this.element('p', '', '点击待核对楼层：'));
+            for (const item of needsReview.slice(0, 30)) {
+                const button = this.element('button', 'menu_button', `第${item.floor}层 · ${item.label}`);
+                button.type = 'button'; button.dataset.auditSelectFloor = String(item.floor);
+                choices.append(button);
+            }
+            if (needsReview.length > 30) choices.append(this.element('p', '', `另有 ${needsReview.length - 30} 层，可以输入楼层号查看。`));
+            panel.append(choices);
+        }
+        panel.append(this.element('strong', '', `第 ${selected.floor} 层 · ${selected.label}`));
+        const columns = this.element('div', 'cache-memory-audit-columns');
+        const left = this.element('section', 'cache-memory-audit-column');
+        left.append(this.element('h5', '', '当前选中版本的完整原文'),
+            this.element('pre', 'cache-memory-audit-text', String(selected.entry.message?.mes ?? '')));
+        const right = this.element('section', 'cache-memory-audit-column');
+        right.append(this.element('h5', '', '当前保存的 Summary'));
+        const record = selected.record;
+        const saved = record ? String(record.raw ?? '').trim() || [
+            `标题：${record.title ?? ''}`, `人物：${record.characters ?? ''}`,
+            `事件：${record.event ?? ''}`, `状态：${record.state ?? ''}`,
+            `未解决：${record.open ?? ''}`, `原话：${record.quote ?? ''}`, `KEEP：${record.keep ?? ''}`
+        ].join('\n') : '当前楼层没有已保存摘要。';
+        right.append(this.element('pre', 'cache-memory-audit-text', saved));
+        columns.append(left, right); panel.append(columns);
+        panel.append(this.element('p', '', '只有你确认修正，才会调用现有摘要模型重新生成本层。CP、Long、KEEP、原文和冻结注入不变。'));
+        const fix = this.element('button', 'menu_button cache-memory-primary', '修正本层摘要（重新生成）');
+        fix.type = 'button'; fix.dataset.auditRegenerate = String(selected.floor);
+        fix.disabled = Boolean(this.summarizer?.isSummarizing?.(selected.entry.messageId)
+            || this.importingMemory || this.restoringServerMemory);
+        panel.append(fix);
     }
 
     renderMemorySaveState() {
@@ -2409,7 +2495,7 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
-        const button = event.target.closest('[data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
+        const button = event.target.closest('[data-audit-open], [data-audit-go], [data-audit-select-floor], [data-audit-regenerate], [data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
         if (!button) return this.performManagerClick(event);
         if (this.activeManagerAction) return;
         this.activeManagerAction = button;
@@ -2470,6 +2556,44 @@ export class CacheMemoryUI {
     }
 
     async performManagerClick(event) {
+        if (event.target.closest('[data-audit-open]')) {
+            this.summaryAuditVisible = true;
+            this.renderSummaryAudit();
+            this.setManagerActionStatus('success', '已打开逐层原文／摘要对照。仅检查，不调用模型。');
+            return;
+        }
+        if (event.target.closest('[data-audit-go], [data-audit-select-floor]')) {
+            const selected = event.target.closest('[data-audit-select-floor]');
+            const value = selected?.dataset.auditSelectFloor ?? this.manager.querySelector('[data-audit-floor]')?.value;
+            const floor = Number(value);
+            if (!Number.isInteger(floor) || !getAssistantMessages(this.getChat()).some(entry => entry.floor === floor)) throw new Error('请输入当前聊天中已有的 assistant 楼层号');
+            this.summaryAuditFloor = floor;
+            this.summaryAuditVisible = true;
+            this.renderSummaryAudit();
+            this.setManagerActionStatus('success', `已显示第 ${floor} 层原文与摘要，未修改记忆。`);
+            return;
+        }
+        if (event.target.closest('[data-audit-regenerate]')) {
+            const floor = Number(event.target.closest('[data-audit-regenerate]').dataset.auditRegenerate);
+            const chatId = this.store.current().chatId;
+            const entry = getAssistantMessages(this.getChat()).find(row => row.floor === floor);
+            if (!entry) throw new Error('本层正文尚未加载，无法修正');
+            const confirmed = await this.showPluginDialog({
+                title: `修正第 ${floor} 层摘要`,
+                message: '点击确认后，只调用一次现有摘要模型重做本层 Summary（可能产生模型费用）。服务器确认后替换本层摘要；不会修改原始正文、CP、Long、KEEP 或注入。',
+                confirmLabel: '确认重新生成'
+            });
+            if (!confirmed) { this.setManagerActionStatus('warning', '已取消修正，没有调用模型。'); return; }
+            if (chatId !== this.store.current().chatId
+                || getAssistantMessages(this.getChat()).find(row => row.floor === floor)?.fingerprint !== entry.fingerprint)
+                throw new Error('聊天或正文已变化，取消本次修正');
+            await this.summarizer.summarizeMessage(entry.messageId,
+                { overwrite: true, deferAggregates: true, expectedFingerprint: entry.fingerprint });
+            this.summaryAuditFloor = floor;
+            this.renderManager(); this.renderMessageMemories();
+            this.setManagerActionStatus('success', `第 ${floor} 层摘要重新生成完成，其他层及 CP、Long、KEEP 未改动。`);
+            return;
+        }
         if (event.target.closest('[data-fill-long-memories]')) return this.startMissingMemoryBackfill({ onlyLong: true });
         if (event.target.closest('[data-fill-all-memories]')) return this.startMissingMemoryBackfill();
         if (event.target.closest('[data-read-server]')) {
@@ -2498,8 +2622,15 @@ export class CacheMemoryUI {
             }
         }
         if (event.target.closest('[data-validate-memory]')) {
-            const rows = this.store.revalidate(this.getChat()); this.renderManager();
-            this.setManagerActionStatus('success', `本地校验完成：${rows.length} 条阶段记忆仍需处理；没有调用模型。`); return;
+            const rows = this.store.revalidate(this.getChat());
+            this.summaryAuditVisible = true;
+            this.renderManager();
+            const audit = summarySourceAudit(this.store.current(), getAssistantMessages(this.getChat()));
+            const changed = audit.filter(row => row.status === 'changed').length;
+            const unknown = audit.filter(row => row.status === 'unknown').length;
+            const missing = audit.filter(row => ['missing', 'failed'].includes(row.status)).length;
+            this.setManagerActionStatus('success', `检查完成：${changed} 层正文版本不同、${unknown} 层来源待确认、${missing} 层摘要缺失／失败；阶段待处理 ${rows.length} 条。已展开逐层查看，未调用模型或自动修复。`);
+            return;
         }
         if (event.target.closest('[data-cleanup-summaries]')) return this.cleanupOldSummaries();
         const update = event.target.closest('[data-update-checkpoints], [data-update-checkpoint]');
@@ -2847,6 +2978,15 @@ export class CacheMemoryUI {
     }
 
     handleManagerKeydown(event) {
+        if (event.key === 'Enter' && event.target.matches('[data-audit-floor]')) {
+            event.preventDefault();
+            const floor = Number(event.target.value);
+            if (Number.isInteger(floor) && getAssistantMessages(this.getChat()).some(row => row.floor === floor)) {
+                this.summaryAuditFloor = floor;
+                this.renderSummaryAudit();
+            }
+            return;
+        }
         if (event.key !== 'Enter' || !event.target.matches('[data-page-jump-key]')) return;
         event.preventDefault();
         this.jumpToManagerPage(event.target.dataset.pageJumpKey);
