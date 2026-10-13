@@ -344,6 +344,37 @@ export class MemoryStore {
         if (persist) this.persist('memory replacement');
     }
 
+    // Only an explicit assistant text change may retire the Summary of that floor.
+    // No source invalidation or changes to CP, Long, KEEP or frozen injection.
+    discardChangedSummary(entry, { previouslyDifferent = false } = {}) {
+        if (!entry?.contentFingerprint) return false;
+        const store = this.current();
+        const rows = Object.entries(store.summaries).filter(([, item]) => item?.floor === entry.floor);
+        if (!rows.length || !(previouslyDifferent || rows.some(([, item]) =>
+            item.sourceContentFingerprint && item.sourceContentFingerprint !== entry.contentFingerprint))) return false;
+        for (const [key, item] of rows) {
+            store.tombstones[`Summary:${key}`] = { deletedAt: new Date().toISOString(), sourceFloor: item.floor };
+            delete store.summaries[key];
+        }
+        this.persist('summary body changed');
+        return true;
+    }
+
+    discardDeletedSummary(prior) {
+        if (!prior) return false;
+        const store = this.current();
+        const ids = new Set([prior.messageId, ...(prior.relatedMessageIds ?? [])]);
+        const rows = Object.entries(store.summaries).filter(([key, item]) => item?.floor === prior.floor
+            && (ids.has(key) || ids.has(item.messageId) || item.messageIndex === prior.messageIndex));
+        if (!rows.length) return false;
+        for (const [key, item] of rows) {
+            store.tombstones[`Summary:${key}`] = { deletedAt: new Date().toISOString(), sourceFloor: item.floor };
+            delete store.summaries[key];
+        }
+        this.persist('summary body changed');
+        return true;
+    }
+
     getSummary(messageId) {
         return this.current().summaries[messageId] ?? null;
     }

@@ -529,3 +529,33 @@ test('upgrade rebuilds the old snapshot once without needing chat bodies', async
     assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore(f.chat)).changed, false);
     assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore([])).value, full.value);
 });
+
+test('changed assistant text clears only this Summary and replaces it after server confirmation', async () => {
+    const f = fixture(), e = getAssistantMessages(f.chat)[0];
+    f.store.current().checkpoints.push({ id: 'cp', startFloor: 1, endFloor: 5, content: '不变阶段', status: 'frozen' });
+    f.store.current().longMemories.push({ id: 'long', startFloor: 1, endFloor: 5, content: '不变长期', status: 'frozen' });
+    f.seed();
+    f.chat[0].mes = '重新生成的新正文';
+    const changed = getAssistantMessages(f.chat)[0];
+    assert.equal(f.store.discardChangedSummary(changed, { previouslyDifferent: true }), true);
+    assert.equal(f.store.getSummaryForEntry(changed), null);
+    await f.persistence.flush();
+    await f.summarizer.summarizeMessage(changed.messageId, { expectedFingerprint: changed.fingerprint, deferAggregates: true });
+    assert.equal(Object.values(f.remote.summaries).filter(s => s.floor === 1).length, 1);
+    assert.equal(f.remote.checkpoints[0].content, '不变阶段');
+    assert.equal(f.remote.longMemories[0].content, '不变长期');
+});
+test('metadata-only change does not clear saved Summary', () => {
+    const f = fixture(), prior = getAssistantMessages(f.chat)[0];
+    f.chat[0].swipe_id = 2;
+    assert.equal(getAssistantMessages(f.chat)[0].contentFingerprint, prior.contentFingerprint);
+    assert.equal(f.store.discardChangedSummary(getAssistantMessages(f.chat)[0]), false);
+});
+test('deletion retires only selected message Summary', async () => {
+    const f = fixture(), prior = getAssistantMessages(f.chat)[1];
+    f.seed(); f.chat.splice(1, 1);
+    assert.equal(f.store.discardDeletedSummary(prior), true);
+    await f.persistence.flush();
+    assert.equal(Object.keys(f.remote.summaries).length, 4);
+    assert.equal(f.remote.summaries[prior.messageId], undefined);
+});

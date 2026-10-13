@@ -6,7 +6,7 @@ import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.9';
 import { extractSummarySource } from './summary-source.js?v=1.24.9';
 import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.9';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.9';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.10';
 import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.9';
 
 function pad(value) {
@@ -100,8 +100,8 @@ export class MemorySummarizer {
     }
 
     isSummarizing(messageId, chatId = this.store.current().chatId) {
-        const key = `${chatId}:${messageId}`;
-        return this.inFlight.has(key) || this.pendingSummaries.has(key);
+        const prefix = `${chatId}:${messageId}:`;
+        return [...this.inFlight, ...this.pendingSummaries.keys()].some(key => key.startsWith(prefix));
     }
 
     enqueue(task) {
@@ -140,14 +140,17 @@ export class MemorySummarizer {
     async summarizeMessage(messageId, options = {}) {
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
-        const key = `${chatId}:${messageId}`;
+        const selected = getAssistantMessages(this.getChat()).find(item => item.messageId === messageId);
+        const fingerprint = options.expectedFingerprint ?? selected?.fingerprint ?? '';
+        // A pending old Swipe must not swallow the new current text.
+        const key = `${chatId}:${messageId}:${fingerprint}`;
         if (this.pendingSummaries.has(key)) return this.pendingSummaries.get(key);
         const pending = this.enqueue(() => {
             if (revision !== this.contextRevision || this.store.current().chatId !== chatId) throw chatChangedError('摘要');
             if (options.signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             const entry = getAssistantMessages(this.getChat()).find(item => item.messageId === messageId);
             if (!entry) throw new Error('原文不存在，无法生成');
-            if (options.expectedFingerprint && options.expectedFingerprint !== entry.fingerprint) {
+            if (fingerprint && fingerprint !== entry.fingerprint) {
                 throw Object.assign(new Error('原文已编辑或切换备选回复，请重新选择楼层'), { code: 'SOURCE_CHANGED' });
             }
             return this.summarizeEntry(entry, options);
@@ -166,7 +169,7 @@ export class MemorySummarizer {
         // an explicit overwrite regenerates it; missing-floor scans do not.
         if (isUsableMemory(existing) && !overwrite) return existing;
         overwrite ||= Boolean(this.store.getSummary(entry.messageId));
-        const flightKey = `${this.store.current().chatId}:${entry.messageId}`;
+        const flightKey = `${this.store.current().chatId}:${entry.messageId}:${entry.fingerprint}`;
         if (this.inFlight.has(flightKey)) return null;
         this.inFlight.add(flightKey);
         const settings = this.getSettings();

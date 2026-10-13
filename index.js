@@ -14,13 +14,14 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
 import { SummaryApiClient } from './src/api-client.js?v=1.24.9';
 import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.9';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.9';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.10';
 import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.9';
 import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.9';
 import { getAssistantMessages } from './src/utils.js?v=1.24.9';
-import { MemoryStore } from './src/memory-store.js?v=1.24.9';
-import { MemorySummarizer } from './src/summarizer.js?v=1.24.9';
-import { CacheMemoryUI } from './src/ui.js?v=1.24.9';
+import { isUsableMemory } from './src/continuity.js?v=1.24.9';
+import { MemoryStore } from './src/memory-store.js?v=1.24.10';
+import { MemorySummarizer } from './src/summarizer.js?v=1.24.10';
+import { CacheMemoryUI } from './src/ui.js?v=1.24.10';
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.9';
 import { MemoryServerClient } from './src/memory-server.js?v=1.24.9';
 
@@ -29,6 +30,8 @@ let settings;
 let initialized = false;
 let ui;
 let pendingSwipeIndex = null;
+let observedAssistantEntries = new Map();
+const pendingMessageChanges = new Set();
 let mountObserver = null;
 let runtimeController = new AbortController();
 const eventBindings = [];
@@ -223,6 +226,7 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     store.persistMigration();
     store.syncMessages(chat);
+    observedAssistantEntries = new Map(getAssistantMessages(chat).map(entry => [entry.messageIndex, entry]));
     await persistence.clearReplacementBackup(chatId).catch(() => {});
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     const switched = chatId !== activeChatId;
@@ -247,54 +251,75 @@ function cacheDebugSnapshot(messages) {
     ui?.setCacheDebug(snapshot);
 }
 
+// Actual assistant text changes affect only the selected floor's Summary.
+function reconcileMessageSummary(messageIndex) {
+    const index = Number(messageIndex);
+    if (!Number.isInteger(index) || index < 0) return;
+    const previous = observedAssistantEntries.get(index);
+    const entry = getAssistantMessages(chat).find(row => row.messageIndex === index);
+    if (!entry) {
+        if (previous && !String(chat[index]?.mes ?? '').trim()) store.discardDeletedSummary(previous);
+        observedAssistantEntries.delete(index);
+        ui?.queueMessageRender(); ui?.queueManagerRender();
+        return;
+    }
+    const changed = Boolean(previous && previous.contentFingerprint !== entry.contentFingerprint);
+    store.discardChangedSummary(entry, { previouslyDifferent: changed });
+    observedAssistantEntries.set(index, entry);
+    ui?.queueMessageRender(); ui?.queueManagerRender();
+    if (!settings?.enabled || !settings.autoSummarize || !settings.independentApi) return;
+    if (isUsableMemory(store.getSummaryForEntry(entry))) return;
+    summarizer.summarizeMessage(entry.messageId, { expectedFingerprint: entry.fingerprint })
+        .catch(error => console.warn(LOG_PREFIX, error.message));
+}
+
 function bindEvents() {
-    // ST emits this immediately before sending its final Chat Completion payload. Read only.
     if (event_types.CHAT_COMPLETION_SETTINGS_READY) {
         bindEvent(event_types.CHAT_COMPLETION_SETTINGS_READY, data => cacheDebugSnapshot(data?.messages));
     } else {
         bindEvent(event_types.GENERATION_STARTED, () => cacheDebugSnapshot());
     }
     bindEvent(event_types.GENERATION_ENDED, () => {
-        if (pendingSwipeIndex !== null) {
-            store.rebindSummaryAtMessageIndex(pendingSwipeIndex, chat);
-            pendingSwipeIndex = null;
-        }
-        if (!settings.enabled || !settings.autoSummarize || !settings.independentApi) return;
-        schedule(() => summarizer.enqueueLatest(), 100);
+        const indices = new Set(pendingMessageChanges);
+        pendingMessageChanges.clear();
+        if (pendingSwipeIndex !== null) indices.add(pendingSwipeIndex);
+        pendingSwipeIndex = null;
+        schedule(() => {
+            const latest = getAssistantMessages(chat).at(-1);
+            if (latest) indices.add(latest.messageIndex);
+            for (const index of indices) reconcileMessageSummary(index);
+        }, 100);
     });
     bindEvent(event_types.CHAT_CHANGED, () => schedule(() => refreshChatState({ serverLoaded: true })));
     bindEvent(event_types.CHAT_LOADED, () => schedule(() => refreshChatState({ serverLoaded: true })));
     bindEvent(event_types.CHARACTER_MESSAGE_RENDERED, () => nextFrame(() => { store.syncMessages(chat); ui?.queueMessageRender(); }));
     bindEvent(event_types.MORE_MESSAGES_LOADED, () => nextFrame(() => { store.syncMessages(chat); ui?.queueMessageRender(); }));
     bindEvent(event_types.MESSAGE_SWIPED, messageIndex => {
-        pendingSwipeIndex = Number(messageIndex);
+        const index = Number(messageIndex);
+        if (!Number.isInteger(index)) return;
+        pendingSwipeIndex = index;
         schedule(() => {
-            if (pendingSwipeIndex !== Number(messageIndex) || isGenerating()) return;
-            store.rebindSummaryAtMessageIndex(messageIndex, chat);
-            store.syncMessages(chat);
+            if (pendingSwipeIndex !== index || isGenerating()) return;
             pendingSwipeIndex = null;
-            refreshChatState();
-            if (settings.enabled && settings.autoSummarize && settings.independentApi) {
-                const entry = getAssistantMessages(chat).find(item => item.messageIndex === Number(messageIndex));
-                if (entry) summarizer.summarizeMessage(entry.messageId).catch(error => console.warn(LOG_PREFIX, error.message));
-            }
+            reconcileMessageSummary(index);
         }, 50);
     });
     bindEvent(event_types.MESSAGE_DELETED, () => {
+        const current = getAssistantMessages(chat);
+        const ids = new Set(current.map(row => row.messageId));
+        for (const prior of observedAssistantEntries.values())
+            if (!ids.has(prior.messageId)) store.discardDeletedSummary(prior);
+        observedAssistantEntries = new Map(current.map(entry => [entry.messageIndex, entry]));
         store.reconcileDeletion(chat);
         schedule(refreshChatState);
     });
     for (const name of [event_types.MESSAGE_EDITED, event_types.MESSAGE_UPDATED]) {
         bindEvent(name, messageIndex => {
-            const chatId = memoryChatId();
+            const chatId = memoryChatId(), index = Number(messageIndex);
             schedule(() => {
-                if (memoryChatId() !== chatId) return;
-                store.rebindSummaryAtMessageIndex(messageIndex, chat);
-                store.syncMessages(chat); refreshChatState();
-                if (!isGenerating() && settings.enabled && settings.autoSummarize && settings.independentApi) {
-                    const entry = getAssistantMessages(chat).find(item => item.messageIndex === Number(messageIndex));
-                    if (entry) summarizer.summarizeMessage(entry.messageId).catch(error => console.warn(LOG_PREFIX, error.message));
-                }
+                if (memoryChatId() !== chatId || !Number.isInteger(index)) return;
+                if (isGenerating()) { pendingMessageChanges.add(index); return; }
+                reconcileMessageSummary(index);
             });
         });
     }
@@ -393,6 +418,8 @@ export function onHotUnload() {
     publishedMemoryValue = null;
     ui = undefined;
     pendingSwipeIndex = null;
+    pendingMessageChanges.clear();
+    observedAssistantEntries.clear();
     injectionPublisher.dispose();
     initialized = false;
 }
