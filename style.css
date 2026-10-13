@@ -549,7 +549,7 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-summary-audit h4,.cache-memory-summary-audit h5,.cache-memory-summary-audit p { margin:0; }
 .cache-memory-audit-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .cache-memory-audit-controls label { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-.cache-memory-audit-controls input { width:88px; min-height:40px; padding:8px; font-size:16px; box-sizing:border-box; background:var(--cm-panel); color:var(--cm-ink); border:1px solid var(--cm-border); border-radius:8px; }
+.cache-memory-audit-controls select { min-width:150px; max-width: min(72vw, 320px); min-height:42px; padding:8px; font-size:16px; box-sizing:border-box; background:var(--cm-panel); color:var(--cm-ink); border:1px solid var(--cm-border); border-radius:8px; }
 .cache-memory-audit-choices { display:flex; flex-wrap:wrap; gap:6px; max-height:180px; overflow-y:auto; }
 .cache-memory-audit-choices p { width:100%; }
 .cache-memory-audit-choices button { font-size:12px; }
@@ -557,3 +557,16 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-audit-column { min-width:0; }
 .cache-memory-config-panel .cache-memory-summary-audit .cache-memory-audit-text { padding:10px; max-height:360px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; background:var(--cm-soft); color:var(--cm-ink); border:1px solid var(--cm-line); border-radius:7px; font-family:inherit; font-size:12px; line-height:1.55; }
 @media(max-width:650px){.cache-memory-audit-columns{grid-template-columns:1fr;}}
+
+/* Audit lists and previews fold in the main panel; native floor select avoids the mobile number keyboard. */
+.cache-memory-audit-fold { min-width:0; border:1px solid var(--cm-line); border-radius:8px; padding:8px; background:var(--cm-panel); }
+.cache-memory-audit-fold > summary { cursor:pointer; font-weight:700; line-height:1.5; }
+.cache-memory-audit-fold .cache-memory-audit-choices { padding-top:9px; }
+.cache-memory-audit-columns .cache-memory-audit-fold { align-self:start; }
+.cache-memory-audit-progress { font-weight:650; padding:9px; background:var(--cm-accent-soft); border-radius:7px; }
+@media (max-width:650px), (pointer:coarse) {
+  .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-config-panel {
+      padding-bottom:calc(var(--cm-keyboard-inset, 0px) + 28px);
+      scroll-padding-bottom:24px;
+  }
+}

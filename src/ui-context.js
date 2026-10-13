@@ -27,7 +27,7 @@ export function bindDialogViewport(overlay, root, signal, anchor = null) {
         const bounds = scroller.getBoundingClientRect(), rect = input.getBoundingClientRect();
         const pinned = scroller.querySelector('.cache-memory-pinned');
         const top = Math.max(bounds.top, pinned?.getBoundingClientRect().bottom ?? bounds.top) + 8;
-        const bottom = bounds.bottom - 8;
+        const bottom = Math.min(bounds.bottom, viewportSize(root).top + viewportSize(root).height) - 8;
         // Scroll the plugin content only; scrolling the page moves fixed dialogs
         // a second time on browsers that already pan for the keyboard.
         if (rect.top < top) scroller.scrollTop += rect.top - top;
@@ -49,12 +49,16 @@ export function bindDialogViewport(overlay, root, signal, anchor = null) {
         overlay.dataset.keyboardOpen = String(keyboard);
         // A nested mobile editor uses the visible viewport directly. Intersecting
         // it with its keyboard-resized parent compounds the shrink/pan.
+        const stableMain = keyboard && overlay.classList?.contains('cache-memory-overlay');
         const rect = !mobile ? anchor?.getBoundingClientRect() : null;
         const left = rect ? Math.max(view.left, rect.left) : view.left;
         const top = rect ? Math.max(view.top, rect.top) : view.top;
         const right = rect ? Math.min(view.left + view.width, rect.right) : view.left + view.width;
         const bottom = rect ? Math.min(view.top + view.height, rect.bottom) : view.top + view.height;
-        const width = Math.max(0, right - left), height = Math.max(0, bottom - top);
+        const width = Math.max(0, right - left), height = stableMain ? fullHeight : Math.max(0, bottom - top);
+        // Keep the main settings window at its normal height when keyboard opens.
+        // Only the visible content area scrolls to reveal the focused field.
+        overlay.style.setProperty('--cm-keyboard-inset', stableMain ? `${Math.max(0, fullHeight - view.height)}px` : '0px');
         Object.assign(overlay.style, { top: `${top}px`, left: `${left}px`,
             width: `${width}px`, height: `${height}px`, right: 'auto', bottom: 'auto' });
         overlay.style.setProperty('--cm-dialog-height', `${height}px`);

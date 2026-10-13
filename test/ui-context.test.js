@@ -215,3 +215,27 @@ test('mobile visual viewport resize and pan keeps inputs visible without clippin
     assert.equal(style.height, '844px'); assert.equal(overlay.dataset.keyboardOpen, 'false');
     dispose(); assert.equal(Object.keys(vvListeners).length, 0); assert.equal(Object.keys(overlayListeners).length, 0);
 });
+
+test('main mobile settings keeps its height when keyboard opens and scrolls only content', () => {
+    const listeners = {}, frames = [];
+    const vv = { width:390, height:844, offsetLeft:0, offsetTop:0, addEventListener(n,f){ listeners[n]=f; }, removeEventListener(n){ delete listeners[n]; } };
+    const scroller = { scrollTop:0, getBoundingClientRect(){return {top:0,bottom:844};}, querySelector(){return {getBoundingClientRect(){return {bottom:55};}};} };
+    const input = { matches(){return true;}, closest(){return scroller;}, getBoundingClientRect(){return {top:720,bottom:760};} };
+    const style = {setProperty(k,v){this[k]=v;}};
+    const root = {innerWidth:390,innerHeight:844, visualViewport:vv,
+        document:{activeElement:null}, matchMedia:()=>({matches:true}),
+        requestAnimationFrame:f=>{frames.push(f);return frames.length;}, cancelAnimationFrame(){},
+        addEventListener(){},removeEventListener(){}};
+    const overlay = {style,dataset:{},classList:{contains:n=>n==='cache-memory-overlay'},
+        contains:el=>el===input,addEventListener(){},removeEventListener(){}};
+    const ctrl = new AbortController();
+    const stop = bindDialogViewport(overlay,root,ctrl.signal);
+    assert.equal(style.height,'844px');
+    root.document.activeElement = input; vv.height = 400; vv.offsetTop = 38;
+    listeners.resize(); frames.shift()();
+    assert.equal(style.height,'844px');
+    assert.equal(style['--cm-keyboard-inset'],'444px');
+    assert.equal(overlay.dataset.keyboardOpen,'true');
+    assert.ok(scroller.scrollTop > 0);
+    stop();
+});

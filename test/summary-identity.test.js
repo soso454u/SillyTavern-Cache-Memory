@@ -83,3 +83,14 @@ test('source review is read only and distinguishes matching, changed, unknown, a
     assert.deepEqual(f.store.current(), before);
     assert.equal(f.calls, 0);
 });
+
+test('only definite changed-source floors are eligible for explicit bulk correction', () => {
+    const f = fixture(), rows = summarySourceAudit(f.store.current(), f.entries);
+    assert.equal(rows.filter(row => row.status === 'changed').length, 273);
+    assert.equal(rows.filter(row => row.status === 'unknown').length, 0);
+    // Legacy rows without a fingerprint cannot safely be auto-selected.
+    delete f.store.current().summaries['legacy-2'].sourceContentFingerprint;
+    const updated = summarySourceAudit(f.store.current(), f.entries);
+    assert.equal(updated[1].status, 'unknown');
+    assert.equal(updated.filter(row => row.status === 'changed').length, 272);
+});

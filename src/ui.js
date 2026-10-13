@@ -2,7 +2,7 @@ import { applyUITheme } from './ui-theme.js?v=1.24.9';
 import { generationPrompt } from './generation-prompts.js?v=1.24.9';
 import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.9';
 import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.9';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.11';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.12';
 import { HistoryBackfill } from './history-backfill.js?v=1.24.9';
 import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.9';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.9';
@@ -523,6 +523,8 @@ export class CacheMemoryUI {
         this.summaryAuditVisible = false;
         this.summaryAuditFloor = 0;
         this.summaryAuditChatId = null;
+        this.summaryAuditSections = { issues: false, original: true, saved: true };
+        this.summaryAuditRun = null;
         this.lastMergeReport = null;
         this.missingCheckpointController = null;
         this.missingCheckpointRunId = 0;
@@ -540,7 +542,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.24.11', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.24.12', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -589,6 +591,10 @@ export class CacheMemoryUI {
         bindDialogViewport(this.config, this.root, this.controller.signal);
         this.resetConfigDrag = this.bindDialogDrag(this.config);
         this.manager.addEventListener('click', event => this.handleManagerClick(event).catch(error => notify('error', error.message)), { signal: this.controller.signal });
+        this.manager.addEventListener('toggle', event => {
+            const name = event.target?.dataset?.auditSection;
+            if (name && Object.hasOwn(this.summaryAuditSections, name)) this.summaryAuditSections[name] = event.target.open;
+        }, { capture: true, signal: this.controller.signal });
         this.manager.addEventListener('input', event => this.handleManagerInput(event), { signal: this.controller.signal });
         this.manager.addEventListener('change', event => this.handleManagerInput(event), { signal: this.controller.signal });
         this.manager.addEventListener('keydown', event => this.handleManagerKeydown(event), { signal: this.controller.signal });
@@ -1650,53 +1656,144 @@ export class CacheMemoryUI {
         if (this.summaryAuditChatId !== chatId) {
             this.summaryAuditChatId = chatId;
             this.summaryAuditFloor = rows.at(-1).floor;
+            this.summaryAuditSections = { issues: false, original: true, saved: true };
         }
         const selected = rows.find(row => row.floor === this.summaryAuditFloor) ?? rows.at(-1);
         this.summaryAuditFloor = selected.floor;
-        const needsReview = rows.filter(row => row.status !== 'matched');
+        const review = rows.filter(row => row.status !== 'matched');
+        // Only source-version mismatches are safe targets for the one-click
+        // correction. Missing/failed floors already have a separate backfill.
+        // Legacy/unknown source rows must be reviewed rather than guessed.
+        const correctable = rows.filter(row => row.status === 'changed');
         panel.append(this.element('h4', '', '按楼层查看原文与摘要'),
-            this.element('p', '', `已检查 ${rows.length} 层；${needsReview.length} 层需要人工核对。只读对照来源版本，不能自动判断剧情事实是否准确。`));
-        const toolbar = this.element('div', 'cache-memory-audit-controls');
-        const label = this.element('label', '', '查看第几层');
-        const input = this.element('input');
-        input.type = 'number'; input.min = '1'; input.max = String(rows.at(-1).floor);
-        input.value = String(selected.floor); input.dataset.auditFloor = '';
-        label.append(input); toolbar.append(label);
-        const show = this.element('button', 'menu_button', '查看本层');
-        show.type = 'button'; show.dataset.auditGo = '';
-        toolbar.append(show); panel.append(toolbar);
-        if (needsReview.length) {
+            this.element('p', '', `当前已加载 ${rows.length} 层 · ${review.length} 层待核对（其中 ${correctable.length} 层正文版本不一致）。检查只读，不自动修改任何记忆。`));
+        const controls = this.element('div', 'cache-memory-audit-controls');
+        const label = this.element('label', '', '查看楼层');
+        const picker = this.element('select');
+        picker.dataset.auditFloor = '';
+        picker.setAttribute('aria-label', '选择要查看的 assistant 楼层');
+        for (const row of rows) {
+            const option = this.element('option', '', `第 ${row.floor} 层${row.status === 'matched' ? '' : ' · ' + row.label}`);
+            option.value = String(row.floor);
+            picker.append(option);
+        }
+        picker.value = String(selected.floor);
+        label.append(picker);
+        controls.append(label);
+        for (const [delta, labelText] of [[-1, '上一层'], [1, '下一层']]) {
+            const button = this.element('button', 'menu_button', labelText);
+            button.type = 'button'; button.dataset.auditStep = String(delta);
+            button.disabled = !rows.some(row => row.floor === selected.floor + delta);
+            controls.append(button);
+        }
+        panel.append(controls);
+        if (review.length) {
+            const issues = this.element('details', 'cache-memory-audit-fold');
+            issues.dataset.auditSection = 'issues';
+            issues.open = this.summaryAuditSections.issues;
+            issues.append(this.element('summary', '', `待核对楼层（${review.length} 层，点击展开／收起）`));
             const choices = this.element('div', 'cache-memory-audit-choices');
-            choices.append(this.element('p', '', '点击待核对楼层：'));
-            for (const item of needsReview.slice(0, 30)) {
-                const button = this.element('button', 'menu_button', `第${item.floor}层 · ${item.label}`);
-                button.type = 'button'; button.dataset.auditSelectFloor = String(item.floor);
+            for (const row of review) {
+                const button = this.element('button', 'menu_button', `第${row.floor}层 · ${row.label}`);
+                button.type = 'button'; button.dataset.auditSelectFloor = String(row.floor);
                 choices.append(button);
             }
-            if (needsReview.length > 30) choices.append(this.element('p', '', `另有 ${needsReview.length - 30} 层，可以输入楼层号查看。`));
-            panel.append(choices);
+            issues.append(choices); panel.append(issues);
         }
+        const run = this.summaryAuditRun;
+        if (run?.chatId === chatId && run.running) {
+            panel.append(this.element('p', 'cache-memory-audit-progress', `正在逐层修正：${run.done}/${run.total} · 成功 ${run.success} · 失败 ${run.failed}${run.current ? ' · 第 ' + run.current + ' 层' : ''}`));
+            const stop = this.element('button', 'menu_button', run.stop ? '正在安全停止…' : '停止批量修正');
+            stop.type = 'button'; stop.dataset.auditStop = ''; stop.disabled = run.stop;
+            panel.append(stop);
+        } else if (run?.chatId === chatId && run.done) {
+            panel.append(this.element('p', 'cache-memory-audit-progress', `上次批量修正：完成 ${run.done}/${run.total}，成功 ${run.success}，失败 ${run.failed}${run.stop ? '（已停止）' : ''}。`));
+        }
+        const batch = this.element('button', 'menu_button', `一键修正摘要（${correctable.length} 层）`);
+        batch.type = 'button'; batch.dataset.auditBatch = '';
+        batch.disabled = !correctable.length || Boolean(run?.running || this.importingMemory || this.restoringServerMemory || this.uploadingMemory || this.backfill?.active || this.isMissingCheckpointBackfillActive());
+        panel.append(batch);
+        panel.append(this.element('p', '', '一键修正只针对明确记录了不同正文版本的楼层；来源无法确认的旧摘要不会自动重做。点击并确认后，逐层调用当前摘要模型，产生相应费用；不重算阶段记忆。'));
         panel.append(this.element('strong', '', `第 ${selected.floor} 层 · ${selected.label}`));
         const columns = this.element('div', 'cache-memory-audit-columns');
-        const left = this.element('section', 'cache-memory-audit-column');
-        left.append(this.element('h5', '', '当前选中版本的完整原文'),
-            this.element('pre', 'cache-memory-audit-text', String(selected.entry.message?.mes ?? '')));
-        const right = this.element('section', 'cache-memory-audit-column');
-        right.append(this.element('h5', '', '当前保存的 Summary'));
         const record = selected.record;
         const saved = record ? String(record.raw ?? '').trim() || [
             `标题：${record.title ?? ''}`, `人物：${record.characters ?? ''}`,
             `事件：${record.event ?? ''}`, `状态：${record.state ?? ''}`,
             `未解决：${record.open ?? ''}`, `原话：${record.quote ?? ''}`, `KEEP：${record.keep ?? ''}`
         ].join('\n') : '当前楼层没有已保存摘要。';
-        right.append(this.element('pre', 'cache-memory-audit-text', saved));
-        columns.append(left, right); panel.append(columns);
-        panel.append(this.element('p', '', '只有你确认修正，才会调用现有摘要模型重新生成本层。CP、Long、KEEP、原文和冻结注入不变。'));
+        for (const [name, heading, content] of [
+            ['original', '当前选中版本的完整原文', String(selected.entry.message?.mes ?? '')],
+            ['saved', '当前保存的 Summary', saved]
+        ]) {
+            const fold = this.element('details', 'cache-memory-audit-fold cache-memory-audit-column');
+            fold.dataset.auditSection = name; fold.open = this.summaryAuditSections[name];
+            fold.append(this.element('summary', '', `${heading}（点击展开／收起）`),
+                this.element('pre', 'cache-memory-audit-text', content));
+            columns.append(fold);
+        }
+        panel.append(columns);
         const fix = this.element('button', 'menu_button cache-memory-primary', '修正本层摘要（重新生成）');
         fix.type = 'button'; fix.dataset.auditRegenerate = String(selected.floor);
-        fix.disabled = Boolean(this.summarizer?.isSummarizing?.(selected.entry.messageId)
-            || this.importingMemory || this.restoringServerMemory);
+        fix.disabled = Boolean(run?.running || this.summarizer?.isSummarizing?.(selected.entry.messageId) || this.importingMemory || this.restoringServerMemory);
         panel.append(fix);
+    }
+
+    async correctAuditSummaries() {
+        if (this.summaryAuditRun?.running) return;
+        if (this.importingMemory || this.restoringServerMemory || this.uploadingMemory
+            || this.backfill?.active || this.isMissingCheckpointBackfillActive()
+            || this.summarizer?.inFlight?.size || this.summarizer?.pendingSummaries?.size) {
+            throw new Error('请先等待当前记忆生成、导入或同步结束，再开始批量修正');
+        }
+        const chatId = this.store.current().chatId;
+        const entries = summarySourceAudit(this.store.current(), getAssistantMessages(this.getChat()))
+            .filter(row => row.status === 'changed').map(row => ({ floor: row.floor, fingerprint: row.entry.fingerprint }));
+        if (!entries.length) {
+            this.setManagerActionStatus('success', '没有检测到明确的正文版本不一致；未调用模型。');
+            return;
+        }
+        const confirmation = await this.showPluginDialog({
+            title: '一键修正待核对摘要',
+            message: `将按楼层顺序重新生成 ${entries.length} 条「正文版本不同」的 Summary。每层会调用一次已配置的摘要模型，可能产生 ${entries.length} 次费用。来源未知及正常楼层不处理；CP、Long 不重新生成。确认开始？`,
+            confirmLabel: `开始修正 ${entries.length} 层`
+        });
+        if (!confirmation) { this.setManagerActionStatus('warning', '已取消批量修正，没有调用模型。'); return; }
+        if (this.store.current().chatId !== chatId) throw new Error('聊天已切换，取消批量修正');
+        const run = { chatId, total: entries.length, done: 0, success: 0, failed: 0, current: 0, running: true, stop: false };
+        this.summaryAuditRun = run;
+        try {
+            for (const target of entries) {
+                if (run.stop || this.store.current().chatId !== chatId) break;
+                const entry = getAssistantMessages(this.getChat()).find(row => row.floor === target.floor);
+                if (!entry || entry.fingerprint !== target.fingerprint) {
+                    run.failed++; run.done++; continue;
+                }
+                // Another window may already have repaired this row.
+                if (summarySourceAudit(this.store.current(), [entry])[0].status !== 'changed') {
+                    run.done++; continue;
+                }
+                run.current = target.floor;
+                this.renderSummaryAudit();
+                try {
+                    await this.summarizer.summarizeMessage(entry.messageId, {
+                        overwrite: true, deferAggregates: true, expectedFingerprint: entry.fingerprint
+                    });
+                    run.success++;
+                } catch (error) {
+                    run.failed++;
+                    console.warn('[Cache Memory] Summary audit correction failed', target.floor, error);
+                }
+                run.done++;
+                this.renderSummaryAudit();
+            }
+        } finally {
+            run.running = false; run.current = 0;
+            this.renderSummaryAudit(); this.renderManager(); this.renderMessageMemories();
+            const stopped = run.stop || this.store.current().chatId !== chatId;
+            this.setManagerActionStatus(run.failed ? 'warning' : 'success',
+                `批量修正${stopped ? '已停止' : '完成'}：成功 ${run.success} 层、失败／跳过 ${run.failed} 层；共处理 ${run.done}/${run.total} 层。其他历史与阶段记忆未重算。`);
+        }
     }
 
     renderMemorySaveState() {
@@ -2495,8 +2592,14 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
-        const button = event.target.closest('[data-audit-open], [data-audit-go], [data-audit-select-floor], [data-audit-regenerate], [data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
+        const button = event.target.closest('[data-audit-open], [data-audit-step], [data-audit-select-floor], [data-audit-regenerate], [data-audit-batch], [data-audit-stop], [data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
         if (!button) return this.performManagerClick(event);
+        if (button.matches('[data-audit-stop]')) {
+            if (this.summaryAuditRun?.running) this.summaryAuditRun.stop = true;
+            this.renderSummaryAudit();
+            this.setManagerActionStatus('warning', '已请求停止；正在执行的本层保存完成后停止。');
+            return;
+        }
         if (this.activeManagerAction) return;
         this.activeManagerAction = button;
         const label = button.textContent.trim(), html = button.innerHTML, disabled = button.disabled;
@@ -2562,17 +2665,18 @@ export class CacheMemoryUI {
             this.setManagerActionStatus('success', '已打开逐层原文／摘要对照。仅检查，不调用模型。');
             return;
         }
-        if (event.target.closest('[data-audit-go], [data-audit-select-floor]')) {
-            const selected = event.target.closest('[data-audit-select-floor]');
-            const value = selected?.dataset.auditSelectFloor ?? this.manager.querySelector('[data-audit-floor]')?.value;
-            const floor = Number(value);
-            if (!Number.isInteger(floor) || !getAssistantMessages(this.getChat()).some(entry => entry.floor === floor)) throw new Error('请输入当前聊天中已有的 assistant 楼层号');
+        if (event.target.closest('[data-audit-step], [data-audit-select-floor]')) {
+            const item = event.target.closest('[data-audit-select-floor]');
+            const floor = item ? Number(item.dataset.auditSelectFloor)
+                : this.summaryAuditFloor + Number(event.target.closest('[data-audit-step]').dataset.auditStep);
+            if (!getAssistantMessages(this.getChat()).some(row => row.floor === floor)) return;
             this.summaryAuditFloor = floor;
             this.summaryAuditVisible = true;
             this.renderSummaryAudit();
-            this.setManagerActionStatus('success', `已显示第 ${floor} 层原文与摘要，未修改记忆。`);
+            this.setManagerActionStatus('success', `正在查看第 ${floor} 层；未修改记忆。`);
             return;
         }
+        if (event.target.closest('[data-audit-batch]')) return this.correctAuditSummaries();
         if (event.target.closest('[data-audit-regenerate]')) {
             const floor = Number(event.target.closest('[data-audit-regenerate]').dataset.auditRegenerate);
             const chatId = this.store.current().chatId;
@@ -2938,9 +3042,19 @@ export class CacheMemoryUI {
         for (const expanded of Object.values(this.managerExpanded)) expanded.clear();
         this.managerEditing = null;
         this.backfillFormChatId = null;
+        if (this.summaryAuditRun?.running) this.summaryAuditRun.stop = true;
     }
 
     handleManagerInput(event) {
+        if (event.target.matches('[data-audit-floor]')) {
+            if (event.type !== 'change') return;
+            const floor = Number(event.target.value);
+            if (!getAssistantMessages(this.getChat()).some(row => row.floor === floor)) return;
+            this.summaryAuditFloor = floor;
+            this.renderSummaryAudit();
+            this.setManagerActionStatus('success', `已切换至第 ${floor} 层；未修改记忆。`);
+            return;
+        }
         if (event.target.matches('[data-keep-select]')) {
             if (event.target.checked) this.keepSelection.add(event.target.dataset.keepSelect);
             else this.keepSelection.delete(event.target.dataset.keepSelect);
@@ -2978,15 +3092,6 @@ export class CacheMemoryUI {
     }
 
     handleManagerKeydown(event) {
-        if (event.key === 'Enter' && event.target.matches('[data-audit-floor]')) {
-            event.preventDefault();
-            const floor = Number(event.target.value);
-            if (Number.isInteger(floor) && getAssistantMessages(this.getChat()).some(row => row.floor === floor)) {
-                this.summaryAuditFloor = floor;
-                this.renderSummaryAudit();
-            }
-            return;
-        }
         if (event.key !== 'Enter' || !event.target.matches('[data-page-jump-key]')) return;
         event.preventDefault();
         this.jumpToManagerPage(event.target.dataset.pageJumpKey);
