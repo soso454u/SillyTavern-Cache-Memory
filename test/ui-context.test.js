@@ -239,3 +239,39 @@ test('main mobile settings keeps its height when keyboard opens and scrolls only
     assert.ok(scroller.scrollTop > 0);
     stop();
 });
+
+test('mobile main settings never repositions on focus, keyboard pan or partial viewport resize', () => {
+    const listeners = {}, frames = [], rootHandlers = {}, overlayHandlers = {};
+    const vv = { width:390, height:844, offsetLeft:0, offsetTop:0,
+        addEventListener(k,fn){listeners[k]=fn;}, removeEventListener(k){delete listeners[k];} };
+    const viewportBox = () => ({top:0,bottom:844});
+    const scroller = {scrollTop:0,getBoundingClientRect:viewportBox,querySelector:()=>({getBoundingClientRect:()=>({bottom:60})})};
+    const input = {matches:()=>true,closest:()=>scroller,getBoundingClientRect:()=>({top:705,bottom:752})};
+    const root = {innerWidth:390,innerHeight:844,visualViewport:vv,document:{activeElement:null},
+        matchMedia:()=>({matches:true}),requestAnimationFrame:fn=>(frames.push(fn),frames.length),
+        cancelAnimationFrame(){},addEventListener:(k,fn)=>{rootHandlers[k]=fn;},removeEventListener:k=>{delete rootHandlers[k];}};
+    const style = {setProperty(k,v){this[k]=v;}};
+    const overlay = {style,dataset:{},classList:{contains:name=>name==='cache-memory-overlay'},
+        contains:node=>node===input,
+        addEventListener:(k,fn)=>{overlayHandlers[k]=fn;},
+        removeEventListener:k=>{delete overlayHandlers[k];}};
+    const ctrl = new AbortController();
+    const stop = bindDialogViewport(overlay,root,ctrl.signal);
+    const initial = {top:style.top,left:style.left,width:style.width,height:style.height};
+    // Focus starts before Safari reports the keyboard size.
+    root.document.activeElement = input; overlayHandlers.focusin(); frames.shift()();
+    assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
+    vv.height = 760; vv.offsetTop = 22; listeners.resize(); frames.shift()();
+    assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
+    vv.height = 390; vv.offsetTop = 87; listeners.scroll(); frames.shift()();
+    assert.equal(overlay.dataset.keyboardOpen,'true');
+    assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
+    assert.equal(style['--cm-keyboard-inset'],'454px');
+    assert.ok(scroller.scrollTop > 0);
+    root.document.activeElement = null; vv.height = 844; vv.offsetTop = 0;
+    overlayHandlers.focusout(); frames.shift()();
+    assert.equal(overlay.dataset.keyboardOpen,'false');
+    assert.equal(style['--cm-keyboard-inset'],'0px');
+    assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
+    stop();
+});

@@ -47,18 +47,27 @@ export function bindDialogViewport(overlay, root, signal, anchor = null) {
         if (!input && view.height >= fullHeight - 100 || view.height > fullHeight) fullHeight = view.height;
         const keyboard = mobile && Boolean(input) && fullHeight - view.height > 100;
         overlay.dataset.keyboardOpen = String(keyboard);
-        // A nested mobile editor uses the visible viewport directly. Intersecting
-        // it with its keyboard-resized parent compounds the shrink/pan.
-        const stableMain = keyboard && overlay.classList?.contains('cache-memory-overlay');
+        // iOS/WebKit can pan the visual viewport several times during focus.
+        // Updating the MAIN window's geometry on every intermediate offset
+        // causes it to jump above the screen. Freeze its *existing* geometry
+        // from the first input focus (like the stable Selene music panel);
+        // allow only its internal scroller to reveal the active field.
+        // Confirmation dialogs remain keyboard-sized separately below.
+        const freezeMain = mobile && Boolean(input)
+            && overlay.classList?.contains('cache-memory-overlay');
+        if (freezeMain) {
+            overlay.style.setProperty('--cm-keyboard-inset',
+                keyboard ? `${Math.max(0, fullHeight - view.height)}px` : '0px');
+            keepInputVisible();
+            return;
+        }
         const rect = !mobile ? anchor?.getBoundingClientRect() : null;
         const left = rect ? Math.max(view.left, rect.left) : view.left;
         const top = rect ? Math.max(view.top, rect.top) : view.top;
         const right = rect ? Math.min(view.left + view.width, rect.right) : view.left + view.width;
         const bottom = rect ? Math.min(view.top + view.height, rect.bottom) : view.top + view.height;
-        const width = Math.max(0, right - left), height = stableMain ? fullHeight : Math.max(0, bottom - top);
-        // Keep the main settings window at its normal height when keyboard opens.
-        // Only the visible content area scrolls to reveal the focused field.
-        overlay.style.setProperty('--cm-keyboard-inset', stableMain ? `${Math.max(0, fullHeight - view.height)}px` : '0px');
+        const width = Math.max(0, right - left), height = Math.max(0, bottom - top);
+        overlay.style.setProperty('--cm-keyboard-inset', '0px');
         Object.assign(overlay.style, { top: `${top}px`, left: `${left}px`,
             width: `${width}px`, height: `${height}px`, right: 'auto', bottom: 'auto' });
         overlay.style.setProperty('--cm-dialog-height', `${height}px`);

@@ -1,8 +1,8 @@
 import { applyUITheme } from './ui-theme.js?v=1.24.9';
 import { generationPrompt } from './generation-prompts.js?v=1.24.9';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.9';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.13';
 import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.9';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.12';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.13';
 import { HistoryBackfill } from './history-backfill.js?v=1.24.9';
 import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.9';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.9';
