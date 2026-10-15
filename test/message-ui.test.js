@@ -17,7 +17,7 @@ function fixture() {
     ui.openManager = () => { throw Error('Message editing must not open a manager'); };
     const widget = { dataset: { messageId: entry.messageId }, querySelectorAll: () => Object.entries(ui.messageEditing.values)
         .map(([key, value]) => ({ dataset: { editField: key }, value })) };
-    return { ui, store, chat, entry, widget, switchChat: () => { chatId = 'other-synthetic-chat'; } };
+    return { ui, store, chat, entry, widget, switchChat: () => { chatId = 'other-synthetic-chat'; delete metadata.cache_memory; } };
 }
 
 test('message editing stays local and saves all Summary fields through the existing edit path', () => {

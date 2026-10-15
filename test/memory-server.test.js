@@ -24,7 +24,7 @@ test('authoritative persistence migrates old metadata once and confirms server c
     const client = {
         getChatId: () => 'chat-a',
         getMetadata: () => metadata,
-        readRemoteStore: async () => null,
+        readRemoteStore: async () => structuredClone(metadata.cache_memory),
         saveMetadata: async () => { throw new Error('must not use chat_metadata as authority'); },
         readAuthoritativeStore: async () => structuredClone(remote),
         commitAuthoritative: async (_id, payload) => {

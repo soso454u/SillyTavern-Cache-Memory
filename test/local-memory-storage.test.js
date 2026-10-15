@@ -86,7 +86,7 @@ test('legacy pending journal migrates only after durable commit and restores its
     assert.equal(reload.pending.size, 1);
 });
 
-test('cleanup commits without a permanent backup and removes the obsolete archive after confirmation', async () => {
+test('cleanup commits with tombstones and retains recovery backups outside the active store', async () => {
     const f = fixture(); await activate(f); f.failBackup = true;
     f.disk.set('cache_memory_replacement_backup_v1:a', { store: clone(f.remote) });
     await f.persistence.commitReplacement(f.store, () => {
@@ -94,7 +94,8 @@ test('cleanup commits without a permanent backup and removes the obsolete archiv
     });
     assert.equal(f.persistence.getState().state, 'confirmed'); assert.equal(f.writes, 1);
     assert.equal(f.remote.summaries.large, undefined);
-    assert.equal(f.disk.has('cache_memory_replacement_backup_v1:a'), false);
+    assert.equal(f.disk.has('cache_memory_replacement_backup_v1:a'), true);
+    assert.ok(f.disk.get('cache_memory_verified_backup_v1:a').snapshots.some(entry => entry.store.summaries.large));
     assert.equal(f.disk.has(f.persistence.storageKey), false);
 });
 

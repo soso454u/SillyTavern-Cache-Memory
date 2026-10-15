@@ -24,12 +24,29 @@ export class LocalMemoryStorage {
         return new Promise((resolve, reject) => {
             const tx = db.transaction('records', mode);
             const request = operation(tx.objectStore('records'));
+            const timer = setTimeout(() => { try { tx.abort(); } catch { /* Already settled. */ } reject(new Error('本机记忆存储事务超时；原副本保留')); }, 15000);
             // Request success alone does not mean the transaction was committed.
-            tx.oncomplete = () => resolve(request.result);
-            tx.onerror = tx.onabort = () => reject(tx.error || request.error || new Error('本机记忆存储提交失败'));
+            tx.oncomplete = () => { clearTimeout(timer); resolve(request.result); };
+            tx.onerror = tx.onabort = () => { clearTimeout(timer); reject(tx.error || request.error || new Error('本机记忆存储提交失败')); };
         });
     }
 
+    keys() { return this.transaction('readonly', store => store.getAllKeys()); }
+    async update(key, updater) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('records', 'readwrite'), store = tx.objectStore('records');
+            const request = store.get(key);
+            let result;
+            const timer = setTimeout(() => { try { tx.abort(); } catch { /* Settled. */ } reject(new Error('本机恢复快照事务超时')); }, 15000);
+            request.onsuccess = () => {
+                try { result = updater(request.result); store.put(result, key); }
+                catch (error) { clearTimeout(timer); tx.abort(); reject(error); }
+            };
+            tx.oncomplete = () => { clearTimeout(timer); resolve(result); };
+            tx.onerror = tx.onabort = () => { clearTimeout(timer); reject(tx.error || new Error('本机恢复快照提交失败')); };
+        });
+    }
     read(key) { return this.transaction('readonly', store => store.get(key)); }
     write(key, value) { return this.transaction('readwrite', store => store.put(value, key)); }
     remove(key) { return this.transaction('readwrite', store => store.delete(key)); }

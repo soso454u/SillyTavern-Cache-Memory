@@ -41,6 +41,8 @@ export class MemoryServerClient {
 
     async read(chatId, options = {}) { return this.request(`/memory/${encodeURIComponent(chatId)}`, { method: 'GET', ...options }); }
 
+    async history(chatId) { return this.request(`/memory/${encodeURIComponent(chatId)}/history`, { method: 'GET' }); }
+
     async commit(chatId, payload) {
         const result = await this.request(`/memory/${encodeURIComponent(chatId)}`, { method: 'POST', body: JSON.stringify(payload) });
         this.onStatus('committed', '已提交到服务器权威记忆库');

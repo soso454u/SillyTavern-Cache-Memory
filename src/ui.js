@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.9';
-import { generationPrompt } from './generation-prompts.js?v=1.24.9';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.13';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.9';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.13';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.9';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.9';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.9';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.9';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.9';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.9';
-import { parseFloorSummary } from './summarizer.js?v=1.24.9';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.9';
+import { applyUITheme } from './ui-theme.js?v=1.24.14';
+import { generationPrompt } from './generation-prompts.js?v=1.24.14';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.14';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.14';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.14';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.14';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.14';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.14';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.14';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.14';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.14';
+import { parseFloorSummary } from './summarizer.js?v=1.24.14';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.14';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.10';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.9';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.14';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.14';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -318,11 +318,13 @@ function managerPanelTemplate() {
                 <button type="button" class="menu_button" data-audit-open>按楼层查看原文／摘要</button>
                 <button type="button" class="menu_button" data-cleanup-summaries title="清理已确认归属且已有当前摘要的旧 Swipe 和重复记录；服务器确认后生效，不调用模型">清理旧摘要</button>
                 <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
+                <button type="button" class="menu_button" data-find-recovery>查找恢复副本</button>
                 <button type="button" class="menu_button" data-pending-backup hidden>下载待保存副本</button>
                 <button type="button" class="menu_button" data-reinject>重新注入</button>
                 <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
             </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p><p data-memory-diagnostics></p>
             <div class="cache-memory-summary-audit" data-summary-audit hidden></div>
+            <div data-recovery-candidates hidden></div>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
             </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
@@ -2714,7 +2716,11 @@ export class CacheMemoryUI {
                     if (!await this.showPluginDialog({ title: '从服务器恢复记忆',
                         message: `服务器已保存 ${Object.keys(prepared.remote.summaries).length} 条摘要。确认后使用服务器版本替换本机当前记忆及未上传修改。`, confirmLabel: '确认恢复' })) return;
                 }
-                this.persistence.restoreServerSnapshot(prepared);
+                await this.persistence.rememberSnapshot(id, this.store.current(), '手动恢复前的页面副本');
+                const restored = this.persistence.restoreServerSnapshot(prepared);
+                if (restored.state !== 'confirmed') {
+                    this.setManagerActionStatus('warning', restored.detail); return;
+                }
                 this.summarizer.invalidateContext();
                 this.lastMergeReport = null;
                 this.updateInjection('chat changed');
@@ -2737,6 +2743,33 @@ export class CacheMemoryUI {
             return;
         }
         if (event.target.closest('[data-cleanup-summaries]')) return this.cleanupOldSummaries();
+        if (event.target.closest('[data-find-recovery]')) {
+            const id = this.store.current().chatId;
+            this.setManagerActionStatus('info', '正在只读查找服务器、本机快照及其他窗口待保存日志…');
+            const report = await this.persistence.inspectRecovery(id);
+            if (this.store.current().chatId !== id) return;
+            this.recoveryReport = report;
+            const root = this.manager.querySelector('[data-recovery-candidates]');
+            root.replaceChildren(); root.hidden = false;
+            root.append(this.element('p', '', '以下副本只供下载核对；下载后可用现有 JSON 导入。查找不会覆盖、清空或合并。旧聊天身份必须另行核对。'));
+            report.candidates.forEach((candidate, index) => {
+                const row = this.element('p');
+                row.append(this.element('span', '', `${candidate.source} · ${Object.entries(candidate.counts).map(([key, count]) => `${key} ${count}`).join(' / ')}${candidate.identityMatches ? '' : ' · 旧身份，需核对'}${candidate.warning ? ` · ${candidate.warning}` : ''} `));
+                const button = this.element('button', 'menu_button', '下载此副本');
+                button.type = 'button'; button.dataset.recoveryDownload = String(index); row.append(button); root.append(row);
+            });
+            for (const error of report.errors) root.append(this.element('p', '', `未能检查：${error}`));
+            this.setManagerActionStatus(report.errors.length ? 'warning' : 'success', `找到 ${report.candidates.length} 份不同内容的候选副本；未修改记忆。`);
+            return;
+        }
+        const recoveryDownload = event.target.closest('[data-recovery-download]');
+        if (recoveryDownload) {
+            const candidate = this.recoveryReport?.chatId === this.store.current().chatId
+                ? this.recoveryReport.candidates[Number(recoveryDownload.dataset.recoveryDownload)] : null;
+            if (!candidate) throw new Error('聊天已变化，请重新查找恢复副本');
+            downloadJson('cache-memory-recovery-candidate.json', candidate.store, this.doc);
+            return;
+        }
         const update = event.target.closest('[data-update-checkpoints], [data-update-checkpoint]');
         if (update) {
             const id = update.closest('[data-memory-id]')?.dataset.memoryId;

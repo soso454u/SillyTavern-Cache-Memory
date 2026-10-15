@@ -1,13 +1,13 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.9';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.9';
-import { generationPrompt } from './generation-prompts.js?v=1.24.9';
-import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.9';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.9';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.9';
-import { extractSummarySource } from './summary-source.js?v=1.24.9';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.9';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.10';
-import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.9';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.14';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.14';
+import { generationPrompt } from './generation-prompts.js?v=1.24.14';
+import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.14';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.14';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.14';
+import { extractSummarySource } from './summary-source.js?v=1.24.14';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.14';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.14';
+import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.14';
 
 function pad(value) {
     return String(value).padStart(3, '0');

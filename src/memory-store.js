@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.9';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.9';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.9';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.24.14';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.14';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.24.14';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -47,6 +47,17 @@ export function createEmptyStore(chatId = '') {
 export function normalizeStore(value, chatId = '') {
     if (value != null && (typeof value !== 'object' || Array.isArray(value))) throw new Error('记忆数据格式异常，已停止初始化；原数据未清空');
     const store = value && typeof value === 'object' ? value : {};
+    // Reject damaged persisted sections before defaults can turn them into empties.
+    for (const section of ['summaries', 'keepRegistry', 'stateOverrides', 'tombstones']) {
+        if (Object.hasOwn(store, section) && (!store[section] || typeof store[section] !== 'object' || Array.isArray(store[section])))
+            throw new Error(`记忆 ${section} 格式异常；原数据未清空`);
+    }
+    for (const section of ['checkpoints', 'longMemories']) {
+        if (Object.hasOwn(store, section) && !Array.isArray(store[section])) throw new Error(`记忆 ${section} 格式异常；原数据未清空`);
+    }
+    if (Number(store.version) >= STORE_VERSION && Number(store.sync?.revision) > 0
+        && ['summaries', 'checkpoints', 'longMemories', 'keepRegistry'].some(section => !Object.hasOwn(store, section)))
+        throw new Error('已保存记忆缺少必要分区；原数据未清空');
     const retained = { ...store };
     delete retained.recovery;
     const summaries = store.summaries && typeof store.summaries === 'object' && !Array.isArray(store.summaries) ? store.summaries : {};
@@ -169,6 +180,12 @@ export class MemoryStore {
         if (this.replacementView?.chatId === String(this.getChatId())) return this.replacementView;
         const metadata = this.getMetadata();
         const old = metadata.cache_memory;
+        const chatId = String(this.getChatId() ?? '');
+        if (old?.chatId && old.chatId !== chatId) {
+            let scope; try { scope = JSON.parse(chatId); } catch { /* Legacy unscoped caller. */ }
+            if (!(Number(old.version) <= 4 && Array.isArray(scope) && old.chatId === scope[2]))
+                throw new Error('页面记忆的聊天身份不匹配；原副本保留，等待聊天加载完成');
+        }
         const needsMigration = Number(old?.version) < STORE_VERSION || !old?.keepRegistry || Boolean(old?.recovery);
         const normalized = normalizeStore(metadata.cache_memory, this.getChatId());
         // Projection reads must not detach the object receiving refreshSnapshot.

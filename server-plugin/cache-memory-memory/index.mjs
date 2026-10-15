@@ -8,8 +8,11 @@ export const info = Object.freeze({
     description: 'Authenticated, atomic, per-user Cache Memory persistence.',
 });
 
-const VERSION = 1;
-const root = path.resolve(process.env.SILLYTAVERN_DATA_DIR || path.join(process.cwd(), 'data'), 'cache-memory');
+const VERSION = 2;
+const root = path.resolve(process.env.SILLYTAVERN_DATA_DIR || globalThis.DATA_ROOT || path.join(process.cwd(), 'data'), 'cache-memory');
+// Older plugins ignored ST's configured dataRoot. Read that former location
+// only if the configured location is absent; corruption never triggers fallback.
+const legacyRoot = path.resolve(process.env.SILLYTAVERN_DATA_DIR || path.join(process.cwd(), 'data'), 'cache-memory');
 const locks = new Map();
 
 function userId(request) {
@@ -76,16 +79,76 @@ function threeWayMerge(base, local, remote) {
 }
 
 async function readFile(user, chatId) {
-    try { return JSON.parse(await fs.readFile(path.join(root, `${key(user, chatId)}.json`), 'utf8')); }
-    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+    for (const directory of new Set([root, legacyRoot])) {
+        try { return validateRecord(JSON.parse(await fs.readFile(path.join(directory, `${key(user, chatId)}.json`), 'utf8')), chatId); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    return null;
+}
+
+function validateSnapshot(store) {
+    if (!store || typeof store !== 'object' || Array.isArray(store)) throw new Error('invalid memory snapshot');
+    for (const section of ['summaries', 'keepRegistry', 'stateOverrides', 'tombstones']) {
+        if (Object.hasOwn(store, section) && (!store[section] || typeof store[section] !== 'object' || Array.isArray(store[section]))) throw new Error(`invalid ${section}`);
+    }
+    for (const section of ['checkpoints', 'longMemories']) {
+        if (!Array.isArray(store[section])) throw new Error(`invalid ${section}`);
+    }
+    if (!store.summaries || !store.keepRegistry) throw new Error('missing memory sections');
+}
+
+function validateRecord(record, chatId) {
+    if (record?.chatId !== chatId || !Number.isInteger(record.revision) || record.revision < 1) throw new Error('invalid stored chat identity/revision');
+    validateSnapshot(record.store);
+    if (record.store.chatId !== chatId || record.digest !== digest(record.store)) throw new Error('stored memory checksum mismatch; original file retained');
+    return record;
+}
+
+function unexplainedLoss(before, after) {
+    return ['summaries', 'checkpoints', 'longMemories', 'keepRegistry', 'stateOverrides'].some(section => {
+        const type = { summaries: 'Summary', checkpoints: 'Checkpoint', longMemories: 'Long Memory', keepRegistry: 'KEEP', stateOverrides: 'stateOverrides' }[section];
+        const a = entities(before, section), b = entities(after, section);
+        return Object.keys(a).some(id => !Object.hasOwn(b, id) && !after?.tombstones?.[`${type}:${id}`]);
+    });
+}
+
+async function history(user, chatId, storageRoot = root) {
+    const directory = path.join(storageRoot, 'history', key(user, chatId));
+    let names;
+    try { names = await fs.readdir(directory); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    const records = [];
+    for (const name of names.filter(name => /^\d+-[a-f0-9]{64}\.json$/.test(name))) {
+        records.push(validateRecord(JSON.parse(await fs.readFile(path.join(directory, name), 'utf8')), chatId));
+    }
+    return records.sort((a, b) => b.revision - a.revision);
+}
+
+async function durableWrite(file, record) {
+    const temp = `${file}.${process.pid}.${crypto.randomBytes(5).toString('hex')}.tmp`;
+    try {
+        const handle = await fs.open(temp, 'wx', 0o600);
+        try { await handle.writeFile(JSON.stringify(record)); await handle.sync(); } finally { await handle.close(); }
+        await fs.rename(temp, file);
+        if (process.platform !== 'win32') {
+            const directory = await fs.open(path.dirname(file), 'r');
+            try { await directory.sync(); } finally { await directory.close(); }
+        }
+    } finally { await fs.rm(temp, { force: true }); }
 }
 
 async function writeAtomic(user, chatId, record) {
     await fs.mkdir(root, { recursive: true });
     const file = path.join(root, `${key(user, chatId)}.json`);
-    const temp = `${file}.${process.pid}.${crypto.randomBytes(5).toString('hex')}.tmp`;
-    await fs.writeFile(temp, JSON.stringify(record), { mode: 0o600 });
-    await fs.rename(temp, file);
+    const previous = await readFile(user, chatId);
+    if (previous) {
+        const directory = path.join(root, 'history', key(user, chatId));
+        await fs.mkdir(directory, { recursive: true });
+        await durableWrite(path.join(directory, `${previous.revision}-${previous.digest}.json`), previous);
+    }
+    await durableWrite(file, record);
+    // Keep five prior server revisions; backups are outside model/export memory.
+    const old = (await history(user, chatId)).slice(5);
+    for (const entry of old) await fs.rm(path.join(root, 'history', key(user, chatId), `${entry.revision}-${entry.digest}.json`));
 }
 
 async function withLock(lockKey, callback) {
@@ -107,24 +170,42 @@ function requireIdentity(request, response) {
     return user;
 }
 
+function guardedRoute(handler) {
+    return (request, response) => Promise.resolve().then(() => handler(request, response)).catch(error =>
+        response.status(503).json({ error: `Memory storage unavailable; originals retained: ${error.message}` }));
+}
+
 export async function init(router) {
     router.get('/status', (request, response) => {
         response.set?.('Cache-Control', 'no-store');
         if (!userId(request)) return response.sendStatus(401);
-        return response.json({ id: info.id, version: VERSION, atomic: true, revisionCheck: true, userScoped: true });
+        return response.json({ id: info.id, version: VERSION, atomic: true, revisionCheck: true, userScoped: true, history: true });
     });
-    router.get('/memory/:chatId', async (request, response) => {
+    router.get('/memory/:chatId', guardedRoute(async (request, response) => {
         response.set?.('Cache-Control', 'no-store');
         const user = requireIdentity(request, response); if (!user) return;
         const chatId = safeId(request.params.chatId); if (!chatId) return response.status(400).json({ error: 'chatId required' });
         const record = await readFile(user, chatId);
         return response.json(record || { chatId, revision: 0, digest: '', store: null, conflicts: [] });
-    });
-    router.post('/memory/:chatId', async (request, response) => {
+    }));
+    router.get('/memory/:chatId/history', guardedRoute(async (request, response) => {
+        response.set?.('Cache-Control', 'no-store');
+        const user = requireIdentity(request, response); if (!user) return;
+        const chatId = safeId(request.params.chatId); if (!chatId) return response.status(400).json({ error: 'chatId required' });
+        const records = await history(user, chatId);
+        if (root !== legacyRoot) {
+            records.push(...await history(user, chatId, legacyRoot));
+            try { records.push(validateRecord(JSON.parse(await fs.readFile(path.join(legacyRoot, `${key(user, chatId)}.json`), 'utf8')), chatId)); }
+            catch (error) { if (error.code !== 'ENOENT') throw error; }
+        }
+        return response.json({ chatId, records });
+    }));
+    router.post('/memory/:chatId', guardedRoute(async (request, response) => {
         const user = requireIdentity(request, response); if (!user) return;
         const chatId = safeId(request.params.chatId); if (!chatId) return response.status(400).json({ error: 'chatId required' });
         const payload = request.body || {};
         if (!payload.snapshot || typeof payload.snapshot !== 'object') return response.status(400).json({ error: 'snapshot required' });
+        try { validateSnapshot(payload.snapshot); } catch (error) { return response.status(400).json({ error: error.message }); }
         return withLock(key(user, chatId), async () => {
             const current = await readFile(user, chatId);
             const currentRevision = Number(current?.revision || 0);
@@ -132,6 +213,7 @@ export async function init(router) {
             if (Number(payload.baseRevision || 0) !== currentRevision) return response.status(409).json({ error: 'revision conflict', record: current });
             if (payload.snapshot.chatId !== chatId) return response.status(400).json({ error: 'chat identity mismatch' });
             if (Number(current?.store?.version || 0) > Number(payload.snapshot.version || 0)) return response.status(409).json({ error: 'schema downgrade refused', record: current });
+            if (current?.store && !payload.allowReplacement && unexplainedLoss(current.store, payload.snapshot)) return response.status(409).json({ error: 'memory integrity loss: deletion markers required', record: current });
             const merged = current?.store ? threeWayMerge(base || current.store, payload.snapshot, current.store) : { merged: clone(payload.snapshot), conflicts: [] };
             if (merged.conflicts.length) return response.status(409).json({ error: 'record conflicts', conflicts: merged.conflicts, record: current });
             delete merged.merged.recovery;
@@ -144,7 +226,7 @@ export async function init(router) {
             await writeAtomic(user, chatId, next);
             return response.json({ state: 'committed', record: next });
         });
-    });
+    }));
 }
 
 export async function exit() {}

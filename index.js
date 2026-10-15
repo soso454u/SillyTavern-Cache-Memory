@@ -12,18 +12,18 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.24.9';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.9';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.13';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.9';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.9';
-import { getAssistantMessages } from './src/utils.js?v=1.24.9';
-import { isUsableMemory } from './src/continuity.js?v=1.24.9';
-import { MemoryStore } from './src/memory-store.js?v=1.24.10';
-import { MemorySummarizer } from './src/summarizer.js?v=1.24.10';
-import { CacheMemoryUI } from './src/ui.js?v=1.24.13';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.9';
-import { MemoryServerClient } from './src/memory-server.js?v=1.24.9';
+import { SummaryApiClient } from './src/api-client.js?v=1.24.14';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.24.14';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.24.14';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.24.14';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.24.14';
+import { getAssistantMessages } from './src/utils.js?v=1.24.14';
+import { isUsableMemory } from './src/continuity.js?v=1.24.14';
+import { MemoryStore } from './src/memory-store.js?v=1.24.14';
+import { MemorySummarizer } from './src/summarizer.js?v=1.24.14';
+import { CacheMemoryUI } from './src/ui.js?v=1.24.14';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.24.14';
+import { MemoryServerClient } from './src/memory-server.js?v=1.24.14';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -47,8 +47,11 @@ let publishedMemoryValue = null;
 function memoryChatId() {
     const context = getContext();
     const id = getCurrentChatId();
-    if (!id) return '';
-    return JSON.stringify([context.groupId ? 'group' : 'character', String(context.groupId || context.characters?.[context.characterId]?.avatar || ''), String(id)]);
+    if (!id || String(context?.chatId ?? '') !== String(id)) return '';
+    const group = context.groupId !== null && context.groupId !== undefined && context.groupId !== '';
+    const owner = group ? context.groupId : context.characters?.[context.characterId]?.avatar;
+    if (owner === null || owner === undefined || owner === '') return '';
+    return JSON.stringify([group ? 'group' : 'character', String(owner), String(id)]);
 }
 
 const apiCacheAdapter = new ApiCacheAdapterBridge({
@@ -138,6 +141,7 @@ const persistence = new MemoryPersistenceCoordinator({
         await context.saveMetadata();
     },
     readAuthoritativeStore: async (chatId, options) => memoryServer.read(chatId, options),
+    readAuthoritativeHistory: async chatId => memoryServer.history(chatId),
     commitAuthoritative: async (chatId, payload) => memoryServer.commit(chatId, payload),
     authoritativeAvailable: () => memoryServer.available,
     onStatus: (chatId, status) => {
@@ -215,9 +219,12 @@ function updateInjection(reason = 'manual edit') {
 
 async function refreshChatState({ serverLoaded = false } = {}) {
     if (!settings) return;
-    await persistence.ready;
     const revision = ++refreshRevision;
-    let current = store.current();
+    await persistence.ready;
+    if (revision !== refreshRevision || !memoryChatId()) return;
+    let current;
+    try { current = store.current(); }
+    catch (error) { ui?.setStatus('error', error.message); console.warn(LOG_PREFIX, error); return; }
     const chatId = current.chatId;
     if (!chatId) return;
     if (chatId !== activeChatId || serverLoaded) summarizer.invalidateContext();
@@ -227,7 +234,6 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     store.persistMigration();
     store.syncMessages(chat);
     observedAssistantEntries = new Map(getAssistantMessages(chat).map(entry => [entry.messageIndex, entry]));
-    await persistence.clearReplacementBackup(chatId).catch(() => {});
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
     const switched = chatId !== activeChatId;
     if (switched) {

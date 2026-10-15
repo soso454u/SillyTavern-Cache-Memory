@@ -25,6 +25,7 @@ function fixture(authority = false, sharedStorage = storage(), sessionStorage = 
 for (const authority of [false, true]) test(`idle cached records, server deletions and frozen snapshots never become edits (authority=${authority})`, async () => {
     const f = fixture(authority);
     f.remote = createEmptyStore('a');
+    f.remote.tombstones['Summary:m1'] = { deletedAt: 'explicit deletion' };
     f.remote.injectionSnapshot = { value: 'server frozen bytes', blocks: [] };
     for (let n = 0; n < 4; n++) {
         assert.equal((await f.p.verify()).state, 'confirmed');

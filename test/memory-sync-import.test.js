@@ -124,7 +124,8 @@ test('the ordinary toolbar exposes download and import without any recovery-copy
     assert.match(ordinary, /data-save-memory[^>]*>上传记忆到服务器/);
     assert.match(ordinary, /data-read-server>从服务器恢复记忆/);
     assert.doesNotMatch(ordinary, /data-export-recovery|data-memory-conflict/);
-    assert.doesNotMatch(html, /恢复副本|data-export-recovery/);
+    assert.match(html.slice(recovery), /data-find-recovery/);
+    assert.doesNotMatch(ordinary, /data-find-recovery/);
     assert.equal((html.match(/data-import-merge-file/g) ?? []).length, 1);
 });
 

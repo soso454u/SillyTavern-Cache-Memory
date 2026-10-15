@@ -33,12 +33,13 @@ test('server routes enforce authenticated isolation, atomic CAS and reject old s
         assert.equal((await request('GET', null, 'another-user')).data.store, null);
         assert.equal((await request('POST', { snapshot: { ...snapshot, chatId: 'wrong' }, baseRevision: 2 })).status, 400);
         assert.equal((await request('POST', { snapshot: { ...snapshot, version: 5 }, baseRevision: 2 })).status, 409);
-        const files = await fs.readdir(path.join(directory, 'cache-memory')); assert.equal(files.length, 1); assert.match(files[0], /^[a-f0-9]+\.json$/);
+        const files = (await fs.readdir(path.join(directory, 'cache-memory'))).filter(name => name.endsWith('.json')); assert.equal(files.length, 1); assert.match(files[0], /^[a-f0-9]+\.json$/);
         const persisted = JSON.parse(await fs.readFile(path.join(directory, 'cache-memory', files[0]), 'utf8'));
         assert.equal(persisted.store.sync.revision, 2); assert.ok(persisted.store.summaries.b);
         assert.ok(persisted.store.tombstones['Summary:gone']);
         assert.equal(persisted.store.recovery, undefined);
         persisted.store.recovery = { historical: { content: 'old archived content' } };
+        persisted.digest = plugin.digest(persisted.store);
         await fs.writeFile(path.join(directory, 'cache-memory', files[0]), JSON.stringify(persisted));
         const metadata = { cache_memory: structuredClone(persisted.store) };
         const coordinator = new MemoryPersistenceCoordinator({ getChatId: () => 'synthetic-chat', getMetadata: () => metadata,
