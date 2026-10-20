@@ -1,6 +1,6 @@
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.14';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.16';
-import { generationPrompt } from './generation-prompts.js?v=1.24.16';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.17';
+import { generationPrompt } from './generation-prompts.js?v=1.24.17';
 import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.14';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.14';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.14';
@@ -18,6 +18,17 @@ function trackedContext(store, settings, floor) {
     if (!settings.activeStateEnabled) return '';
     const context = stateContext(store, floor);
     return context === '无' ? '' : `\n\n[CURRENT_TRACKED_STATE]\n${context}`;
+}
+
+function priorNormalContext(store, settings, floor) {
+    if (settings.summaryMode === 'ensemble') return '';
+    // Bounded, read-only generation background; never new event/evidence input.
+    const recent = Object.values(store.summaries).filter(item => isUsableMemory(item) && item.floor < floor)
+        .sort((a, b) => a.floor - b.floor).slice(-3)
+        .map(item => `[第${item.floor}层]\n${stripStructuredSections(summaryText(item), ['KEEP'])}`).join('\n\n');
+    const keeps = formatKeepItems(collectKeepItems(store, floor - 1));
+    return (recent ? `\n\n[PRIOR_MEMORY_CONTEXT]\n${recent}` : '')
+        + (keeps !== '无' ? `\n\n[EXISTING_KEEP]\n${keeps}` : '');
 }
 
 function nextSequenceId(prefix, items) {
@@ -208,6 +219,7 @@ export class MemorySummarizer {
             const result = await this.apiClient.complete({
                 systemPrompt,
                 userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata)
+                    + priorNormalContext(this.generationStore(), settings, entry.floor)
                     + trackedContext(this.generationStore(), settings, entry.floor - 1)
                     + (advanced ? `\n\n[EXISTING_LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.generationStore(), entry.floor - 1))}` : ''),
                 maxTokens: settings.summaryMaxTokens,

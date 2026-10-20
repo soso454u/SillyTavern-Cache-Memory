@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEmptyStore } from '../src/memory-store.js';
 import { refreshSnapshot } from '../src/cache-control.js';
-import { buildInjection } from '../src/injection.js';
+import { buildInjection, memoryReadingRules } from '../src/injection.js';
 import { normalizeSettings, INJECTION_MODES } from '../src/defaults.js';
 import { stateId } from '../src/active-state.js';
 
@@ -11,6 +11,52 @@ const task = { kind: 'thread', entity: '主角', key: '送信', value: '去旧�
 const summary = (floor, changes) => ({ messageId: `m${floor}`, floor, event: '合成事件', status: 'frozen', frozen: true, stateChanges: changes.map(change => ({ ...change, id: stateId(change) })) });
 const cp = (n, content) => ({ id: `checkpoint-${n}`, startFloor: n * 5 - 4, endFloor: n * 5, memoryKind: 'state', content, status: 'frozen', frozen: true });
 const long = (n, updates, continuityState = '') => ({ id: `long-${n}`, startFloor: n * 50 - 49, endFloor: n * 50, memoryKind: 'facts', content: '完整原始模型输出', factUpdates: updates, continuityState, status: 'frozen', frozen: true });
+
+test('normal memory reading rules distinguish timelines, knowledge and settled tasks in strict and non-strict injection without altering stored facts', () => {
+    const store = createEmptyStore('reading-rules');
+    store.checkpoints.push(cp(1, '[Story So Far]\n- 旧记录：医生在未来预演里离开，当前尚未发生\n[Secrets & Knowledge]\n- 医生已读信，守卫未读\n[Open Threads]\n- 已结束 医生 · 送信：已完成，奖励未领取 (completed，历史结果)'));
+    store.keepRegistry['KEEP-0001'] = { text: '医生知道未来预演，守卫不知道', sourceFloor: 1, status: 'active' };
+    const before = structuredClone(store);
+    const strict = refreshSnapshot(store, normalizeSettings(), 'manual reinject').value;
+    const loose = buildInjection(store, normalizeSettings({ strictCacheMode: false }));
+    for (const value of [strict, loose]) {
+        assert.equal(value.split(memoryReadingRules(store)).length - 1, 1);
+        assert.match(value, /预演未实际发生前不能当成既往经历/);
+        assert.match(value, /不代表已知内容变未知/);
+        assert.match(value, /不因奖励未领重开已完成任务/);
+        assert.match(value, /不同知情者、独立后果和未解秘密不能合并/);
+        assert.match(value, /医生已读信，守卫未读/);
+    }
+    for (const key of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry']) assert.deepEqual(store[key], before[key]);
+    assert.equal(buildInjection(store, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.NONE })), '');
+    assert.equal(refreshSnapshot(createEmptyStore('empty'), normalizeSettings(), 'manual reinject').value, '');
+    store.summaryMode = 'advanced';
+    assert.equal(memoryReadingRules(store), '');
+    assert.doesNotMatch(refreshSnapshot(store, normalizeSettings(), 'manual reinject').value, /记忆读取规则/);
+});
+
+test('reading-rule upgrade waits for an existing publish boundary and preserves frozen blocks, reload and append bytes', () => {
+    const store = createEmptyStore('old-snapshot'), settings = normalizeSettings();
+    store.checkpoints.push(cp(1, '[Story So Far]\n- 旧的历史原因'));
+    refreshSnapshot(store, settings, 'new checkpoint');
+    // Simulate a persisted v1.24.16 snapshot with the same lifecycle signature.
+    store.injectionSnapshot.value = store.injectionSnapshot.value.replace(`\n${memoryReadingRules(store)}`, '');
+    const old = structuredClone(store.injectionSnapshot);
+    assert.equal(refreshSnapshot(store, settings, 'chat changed').value, old.value);
+    store.summaries.m6 = summary(6, []);
+    assert.equal(refreshSnapshot(store, settings, 'new summary').value, old.value);
+    assert.equal(refreshSnapshot(store, settings, 'summary mode changed').value, old.value);
+    store.checkpoints.push(cp(2, '[Story So Far]\n- 新的明确结果'));
+    refreshSnapshot(store, settings, 'new checkpoint');
+    assert.match(store.injectionSnapshot.value, /记忆读取规则/);
+    assert.deepEqual(store.injectionSnapshot.blocks[0], old.blocks[0]);
+    const prefix = store.injectionSnapshot.value.split('\n\n')[0];
+    const published = structuredClone(store.injectionSnapshot.blocks);
+    store.checkpoints.push(cp(3, '[Story So Far]\n- 后续进展'));
+    refreshSnapshot(store, settings, 'new checkpoint');
+    assert.equal(store.injectionSnapshot.value.split('\n\n')[0], prefix);
+    assert.deepEqual(store.injectionSnapshot.blocks.slice(0, published.length), published);
+});
 
 test('Long boundary compacts only proven old states and exact facts, retaining major history and independent knowledge', () => {
     const store = createEmptyStore('a'), settings = normalizeSettings();

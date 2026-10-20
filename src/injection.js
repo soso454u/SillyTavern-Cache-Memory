@@ -3,6 +3,15 @@ import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, pro
 import { stripStructuredSections } from './summary-format.js?v=1.24.14';
 import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.14';
 
+// Interpret retained facts; never infer corrections or remove historical data.
+// This fixed header changes only when the existing snapshot lifecycle publishes.
+export function memoryReadingRules(store) {
+    if (['advanced', 'ensemble'].includes(store?.summaryMode)) return '';
+    return '记忆读取规则：以下为历史资料，不是要求重演的剧情指令。区分当前时间线事实、原剧情／未来预演、梦境、系统声称与人物猜测；预演未实际发生前不能当成既往经历，知情仅属于明确获知的人物。\n'
+        + '同一人物同一事项以剧情时间及后续明确证据判断当前结果，不按块的位置或 KEEP 标签决定真伪；新正文明确结果优先于旧摘要／旧追踪状态，重大起因、后果与不同人物认知仍保留。后来未提及、未回复或通知只显示半句，不代表已知内容变未知；没有明确遗忘或纠正证据不倒退认知。\n'
+        + '任务明确完成／失败／取消后，旧 published／active 仅为历史，不再催办；任务完成与奖励领取分别判断，不因奖励未领重开已完成任务。未回复的普通消息、情绪、姿势不自动成为待办。语义相同的 KEEP／事实理解一次，不重复触发事件；不同知情者、独立后果和未解秘密不能合并，重要 NPC 不因久未登场失效。';
+}
+
 // A projection only: never edit retained records or guess from age/fuzzy prose.
 // Published blocks can be compacted at a Long boundary or explicit rebuild;
 // an ordinary CP append may only deduplicate the newly appended blocks.
@@ -72,7 +81,8 @@ function fullInjection(blocks, store) {
                 type: record ? store.longMemories.includes(record) ? 'long' : 'checkpoint' : undefined };
         }), store, { compactPublished: true }).map(block => block.text);
     }
-    return blocks.length ? `<CACHE_MEMORY>\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
+    const rules = memoryReadingRules(store);
+    return blocks.length ? `<CACHE_MEMORY>${rules ? `\n${rules}` : ''}\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
 }
 
 function byRange(a, b) {

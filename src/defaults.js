@@ -4,7 +4,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.14';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.24.14';
 
-export const PLUGIN_VERSION = '1.24.16';
+export const PLUGIN_VERSION = '1.24.17';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1440,11 +1440,23 @@ export const NORMAL_SUMMARY_LENGTH_RULES = `【普通摘要总字数预算】
 Event 占主要篇幅，其余栏目合用剩余预算。同一事实只放最合适的一栏，其他栏不换句式重述；无新增写无。NPC 只写本层关键新信息，不展开档案。Quote 仅保留无法转述的关键短句，否则写无。
 输出前在本次回答内自查总长度：删除修辞、重复背景与普通动作，合并同一因果链的短句；保留关键人物指向、决定、条件、结果及认知差，不能用空泛概括或截断句子凑长度。不要输出字数统计或自查过程。`;
 
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V12416_DEFAULT_PROMPTS = Object.freeze({
     ...V12415_DEFAULT_PROMPTS,
     summary: V12415_DEFAULT_PROMPTS.summary.replace(/\{\{maxLength\}\} 是软目标[\s\S]*?(?=压缩顺序：)/u,
         `${NORMAL_SUMMARY_LENGTH_RULES}\n\n`),
 });
+
+export const NORMAL_CONTINUITY_RULES = `【时间线、认知与事项连续性】
+区分当前时间线已发生事实、既定剧情／未来预演／梦境，以及人物猜测或系统声称；保留来源与知情者。看到“以后会发生”只记录其获知该预演，不能写成已经发生的经历，事件发生的时点、条件和对象也不能改写。想问、拟发送、命令他人执行，分别不能写成已问、已发送、已执行；明确结果出现后再更新。
+PRIOR_MEMORY_CONTEXT 与 EXISTING_KEEP 仅供核对已知、复用身份和防重复，不是本层新事件或新证据。正文明确纠正时记录纠正；否则已明确读过／被告知的内容，不因通知只露半句、未回复或本层没重述就变成未知。各人物只拥有其明确获知的信息，读者所见和系统对宿主所说不自动成为其他人物已知。
+Open 只保留明确未完成且需要后续行动的重要事项。未回复一条消息不自动构成任务，普通等待及“关系将如何发展”不建事项；有具体邀约、期限或承诺时才记录。任务完成结果写历史，奖励领取与任务完成分别按证据判断，不把任务完成一并误记成奖励已领取。
+KEEP 只写首次成立、已有 KEEP 尚未涵盖的关键长期信息。同一秘密或调查的复述不新建；新进展写 Event／State，只有新增独立长期后果才新增 KEEP。关系转折保留动作的意义与明确原因，省略无后续作用的动作逐拍复述。
+整理 CP／Long 时继承上述时间线类别、知情范围和重要 NPC 信息；后来的有效事实可更新同一当前状态，不能把“未提及／未回复／没打开预览”当作遗忘、失效或未完成的新证据。过时计划和已结算任务不重复列为活跃事项，必要起因与后果留在历史。`;
+
+export const DEFAULT_PROMPTS = Object.freeze(Object.fromEntries(
+    Object.entries(V12416_DEFAULT_PROMPTS).map(([stage, prompt]) => [stage,
+        insertPromptSection(prompt, stage === 'summary' ? '【记录规则】' : stage === 'checkpoint' ? '【继承规则】' : '【长期保存范围】', NORMAL_CONTINUITY_RULES)]),
+));
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
@@ -1534,7 +1546,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];

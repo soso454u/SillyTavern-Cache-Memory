@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PROMPTS, V1210_DEFAULT_PROMPTS, V12415_DEFAULT_PROMPTS, NORMAL_SUMMARY_LENGTH_RULES, ENSEMBLE_PROMPTS, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
+import { DEFAULT_PROMPTS, V1210_DEFAULT_PROMPTS, V12415_DEFAULT_PROMPTS, V12416_DEFAULT_PROMPTS, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES, ENSEMBLE_PROMPTS, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
 import { generationPrompt, NORMAL_STATE_EXTRACTION_RULES } from '../src/generation-prompts.js';
 import { parseStateChanges, projectActiveState, stateId, reconcileTrackedCheckpoint } from '../src/active-state.js';
 import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from '../src/normal-memory.js';
@@ -47,10 +47,26 @@ test('ordinary summary budgets cover all visible fields and migrate the unbounde
     assert.match(DEFAULT_PROMPTS.summary, /通常合计不超过 \{\{maxLength\}\} 字/);
     assert.match(DEFAULT_PROMPTS.summary, /最多允许超过约 15%/);
     assert.doesNotMatch(DEFAULT_PROMPTS.summary, /是软目标|重要多人场景允许详细/);
-    assert.equal(DEFAULT_PROMPTS.checkpoint, V12415_DEFAULT_PROMPTS.checkpoint);
-    assert.equal(DEFAULT_PROMPTS.longMemory, V12415_DEFAULT_PROMPTS.longMemory);
+    assert.equal(DEFAULT_PROMPTS.checkpoint.replace(`${NORMAL_CONTINUITY_RULES}\n\n`, ''), V12415_DEFAULT_PROMPTS.checkpoint);
+    assert.equal(DEFAULT_PROMPTS.longMemory.replace(`${NORMAL_CONTINUITY_RULES}\n\n`, ''), V12415_DEFAULT_PROMPTS.longMemory);
     const settings = normalizeSettings({ globalPromptMode: 'blank' });
     assert.equal(generationPrompt(settings, 'summary').split(NORMAL_SUMMARY_LENGTH_RULES).length - 1, 1);
+});
+
+test('time, knowledge and settlement contracts migrate official defaults and apply once to custom normal requests', () => {
+    assert.deepEqual(normalizeSettings({ prompts: V12416_DEFAULT_PROMPTS }).prompts, DEFAULT_PROMPTS);
+    const settings = normalizeSettings({ globalPromptMode: 'blank', activeStateEnabled: false });
+    for (const stage of ['summary', 'checkpoint', 'longMemory']) {
+        assert.equal(generationPrompt(settings, stage).split(NORMAL_CONTINUITY_RULES).length - 1, 1);
+        const custom = `我自己的${stage}模板`;
+        const customized = { ...settings, prompts: { ...settings.prompts, [stage]: custom } };
+        assert.match(generationPrompt(customized, stage), /不能写成已经发生的经历/);
+        assert.equal(customized.prompts[stage], custom);
+    }
+    assert.match(NORMAL_STATE_EXTRACTION_RULES, /不能只在 Event 写完成/);
+    assert.match(NORMAL_STATE_EXTRACTION_RULES, /奖励明确发放才标 obtained，否则 pending/);
+    assert.match(NORMAL_CONTINUITY_RULES, /想问、拟发送、命令他人执行/);
+    assert.match(NORMAL_CONTINUITY_RULES, /不因通知只露半句/);
 });
 
 test('custom ordinary summaries receive the budget even with Changes disabled, without changing saved templates or ensemble requests', () => {
@@ -151,9 +167,39 @@ for (const mode of ['normal', 'ensemble']) test(`real Summary pipeline selects n
     const saved = await f.summarizer.summarizeEntry(entry, { deferAggregates: true });
     assert.equal(f.requests.length, 1); assert.match(saved.event, /保护村民/); assert.match(saved.state, /坐在窗边/);
     assert.equal(saved.stateChanges.length, mode === 'normal' ? 1 : 2);
+    if (mode === 'ensemble') assert.doesNotMatch(f.requests[0].userContent, /PRIOR_MEMORY_CONTEXT|EXISTING_KEEP/);
     assert.deepEqual(f.store.current().injectionSnapshot, frozen);
     const before = structuredClone(f.store.current());
     await f.summarizer.summarizeEntry(entry); assert.equal(f.requests.length, 1); assert.deepEqual(f.store.current(), before);
+});
+
+test('normal Summary receives only three prior summaries and existing KEEP, settling the same task without rewriting history or cache', async () => {
+    const f = fixture('normal', 6);
+    f.chat[5].mes = '修桥工乙送信任务已完成，奖励尚未领取。通知预览仅显示已知消息的半句。';
+    const entries = getAssistantMessages(f.chat);
+    const task = delta(row('送信', '送信给医生丙', { kind: 'thread', category: 'task', status: 'published', acquisition: 'pending' }));
+    for (const entry of entries.slice(0, 5)) f.store.addSummary({ messageId: entry.messageId, floor: entry.floor,
+        title: `旧层${entry.floor}`, event: entry.floor === 3 ? '医生丙已读过消息全文，得知这是一段未来预演，尚未发生。' : `旧事${entry.floor}`,
+        status: 'frozen', stateChanges: entry.floor === 1 ? [task] : [] });
+    f.store.addSummary({ messageId: 'future', floor: 7, title: '未来层不可读取', event: '未来层不可读取', status: 'frozen' });
+    f.store.current().keepRegistry['KEEP-0001'] = { text: '医生丙知道未来预演，其他人不知情', sourceFloor: 3, status: 'active' };
+    f.store.current().keepRegistry['KEEP-0002'] = { text: '未来秘密不可读取', sourceFloor: 7, status: 'active' };
+    const before = structuredClone(f.store.current());
+    const completed = { ...task, status: 'completed', acquisition: 'pending', value: '送信已完成，奖励未领取', evidence: '送信任务已完成，奖励尚未领取' };
+    f.summarizer.apiClient.complete = async request => { f.requests.push(request); return { content:
+        `[SUMMARY]\n[Title]\n送信完成\n[Event]\n修桥工乙完成送信，奖励未领取\n[State]\n无\n[Open]\n领取送信奖励\n[KEEP]\n无\n[Changes]\n${JSON.stringify([completed])}` }; };
+    await f.summarizer.summarizeEntry(entries[5], { deferAggregates: true });
+    assert.equal(f.requests.length, 1);
+    const request = f.requests[0];
+    assert.match(request.userContent, /PRIOR_MEMORY_CONTEXT[\s\S]*医生丙已读过消息全文/);
+    assert.match(request.userContent, /EXISTING_KEEP[\s\S]*KEEP-0001/);
+    assert.match(request.userContent, new RegExp(task.id));
+    assert.doesNotMatch(request.userContent, /旧事1|旧事2|未来层不可读取|未来秘密不可读取/);
+    const current = projectActiveState(f.store.current()).find(item => item.id === task.id);
+    assert.equal(current.status, 'completed'); assert.equal(current.acquisition, 'pending');
+    for (const entry of entries.slice(0, 5)) assert.deepEqual(f.store.current().summaries[entry.messageId], before.summaries[entry.messageId]);
+    assert.deepEqual(f.store.current().keepRegistry, before.keepRegistry);
+    assert.deepEqual(f.store.current().injectionSnapshot, before.injectionSnapshot);
 });
 
 test('real new CP generation removes repeated ended tasks without rewriting prior summaries, CP, KEEP or frozen injection', async () => {
