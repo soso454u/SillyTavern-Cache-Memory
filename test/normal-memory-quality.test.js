@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PROMPTS, V1210_DEFAULT_PROMPTS, ENSEMBLE_PROMPTS, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
+import { DEFAULT_PROMPTS, V1210_DEFAULT_PROMPTS, V12415_DEFAULT_PROMPTS, NORMAL_SUMMARY_LENGTH_RULES, ENSEMBLE_PROMPTS, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
 import { generationPrompt, NORMAL_STATE_EXTRACTION_RULES } from '../src/generation-prompts.js';
 import { parseStateChanges, projectActiveState, stateId, reconcileTrackedCheckpoint } from '../src/active-state.js';
 import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from '../src/normal-memory.js';
@@ -20,7 +20,7 @@ test('ordinary defaults rank actual consequences, keep important NPCs and use ad
     assert.match(DEFAULT_PROMPTS.summary, /参与度、行为后果和长期影响/);
     assert.match(DEFAULT_PROMPTS.summary, /正文明示性格、关系、经历、立场、秘密和各自认知差/);
     assert.match(DEFAULT_PROMPTS.summary, /不设最低字数/);
-    assert.doesNotMatch(DEFAULT_PROMPTS.summary, /280–|最多允许超过约 15%|Event 约 140–180/);
+    assert.doesNotMatch(DEFAULT_PROMPTS.summary, /280–|Event 约 140–180/);
     for (const section of SUMMARY_SECTION_NAMES) assert.ok(DEFAULT_PROMPTS.summary.includes(`[${section}]`));
     assert.match(DEFAULT_PROMPTS.checkpoint, /尚未进入 LONG_FACTS[\s\S]*PREVIOUS_STATE 传递/);
     assert.match(DEFAULT_PROMPTS.longMemory, /不因长期未出场而删除/);
@@ -39,6 +39,31 @@ test('previous official prompts upgrade exactly while customized prompts and ens
     const group = memoryGenerationSettings(settings, 'ensemble');
     for (const stage of ['summary', 'checkpoint', 'longMemory']) assert.equal(generationPrompt(group, stage), ENSEMBLE_PROMPTS[stage]);
     assert.deepEqual(memoryGenerationSettings(settings, 'normal').prompts, DEFAULT_PROMPTS);
+});
+
+test('ordinary summary budgets cover all visible fields and migrate the unbounded v1.24.15 default', () => {
+    assert.deepEqual(normalizeSettings({ prompts: V12415_DEFAULT_PROMPTS }).prompts, DEFAULT_PROMPTS);
+    assert.match(DEFAULT_PROMPTS.summary, /Title、Characters、Event、State、Open、Quote、KEEP 合计/);
+    assert.match(DEFAULT_PROMPTS.summary, /通常合计不超过 \{\{maxLength\}\} 字/);
+    assert.match(DEFAULT_PROMPTS.summary, /最多允许超过约 15%/);
+    assert.doesNotMatch(DEFAULT_PROMPTS.summary, /是软目标|重要多人场景允许详细/);
+    assert.equal(DEFAULT_PROMPTS.checkpoint, V12415_DEFAULT_PROMPTS.checkpoint);
+    assert.equal(DEFAULT_PROMPTS.longMemory, V12415_DEFAULT_PROMPTS.longMemory);
+    const settings = normalizeSettings({ globalPromptMode: 'blank' });
+    assert.equal(generationPrompt(settings, 'summary').split(NORMAL_SUMMARY_LENGTH_RULES).length - 1, 1);
+});
+
+test('custom ordinary summaries receive the budget even with Changes disabled, without changing saved templates or ensemble requests', () => {
+    const custom = `${V12415_DEFAULT_PROMPTS.summary}\n用户自定义规则`;
+    for (const activeStateEnabled of [false, true]) {
+        const settings = normalizeSettings({ prompts: { summary: custom }, activeStateEnabled, globalPromptMode: 'blank' });
+        assert.equal(settings.prompts.summary, custom);
+        assert.ok(generationPrompt(settings, 'summary').includes(NORMAL_SUMMARY_LENGTH_RULES));
+        const group = memoryGenerationSettings(settings, 'ensemble');
+        assert.equal(generationPrompt(group, 'summary'), ENSEMBLE_PROMPTS.summary);
+        assert.ok(!generationPrompt(settings, 'checkpoint').includes(NORMAL_SUMMARY_LENGTH_RULES));
+        assert.ok(!generationPrompt(settings, 'longMemory').includes(NORMAL_SUMMARY_LENGTH_RULES));
+    }
 });
 
 test('normal extraction preserves evidenced independent NPC identities, traits, history and separate knowledge holders', () => {

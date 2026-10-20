@@ -4,7 +4,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.14';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.24.14';
 
-export const PLUGIN_VERSION = '1.24.15';
+export const PLUGIN_VERSION = '1.24.16';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1404,7 +1404,7 @@ const PRE_QUALITY_DEFAULT_PROMPTS = Object.freeze({
 
 // Replace conflicting ordinary extraction instructions rather than appending a
 // second detailed-mode template. Prior official defaults still migrate exactly.
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V12415_DEFAULT_PROMPTS = Object.freeze({
     summary: PRE_QUALITY_DEFAULT_PROMPTS.summary
         .replace('【记录规则】', `【记录规则】
 
@@ -1432,6 +1432,18 @@ export const DEFAULT_PROMPTS = Object.freeze({
 不按 user／char 或主角标签分配优先级。重要 NPC 的明确身份、稳定性格、关系、重要经历、立场与秘密／认知差按实际长期影响保存；不因长期未出场而删除，也不为普通路人建立完整档案。
 同一事实不重复新增：已有当前事实不变时输出无，明确变化才更新原 fact-id；更新必须包含仍重要的历史原因与后果。仅因改写、更短或合并表述不能退休旧事实。短期细节留在 Summary，跨场景的重要事实进入 Long Facts；只有特别关键的长期事项进入 KEEP。
 已结算任务不再写为 Open Threads，具有持续影响的奖励、决定及结果作为历史事实保留。`),
+});
+
+export const NORMAL_SUMMARY_LENGTH_RULES = `【普通摘要总字数预算】
+{{maxLength}} 字是整份可见摘要的共用预算：Title、Characters、Event、State、Open、Quote、KEEP 合计，不能每栏各写这么多；Changes JSON 不计入这份可见预算，但只写必要增量。
+通常合计不超过 {{maxLength}} 字；仅关键因果、关系、秘密或认知差确实无法再压缩时，最多允许超过约 15%，不得以多人场景为由扩写到预算的两三倍。不设最低字数，简单剧情可很短。
+Event 占主要篇幅，其余栏目合用剩余预算。同一事实只放最合适的一栏，其他栏不换句式重述；无新增写无。NPC 只写本层关键新信息，不展开档案。Quote 仅保留无法转述的关键短句，否则写无。
+输出前在本次回答内自查总长度：删除修辞、重复背景与普通动作，合并同一因果链的短句；保留关键人物指向、决定、条件、结果及认知差，不能用空泛概括或截断句子凑长度。不要输出字数统计或自查过程。`;
+
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V12415_DEFAULT_PROMPTS,
+    summary: V12415_DEFAULT_PROMPTS.summary.replace(/\{\{maxLength\}\} 是软目标[\s\S]*?(?=压缩顺序：)/u,
+        `${NORMAL_SUMMARY_LENGTH_RULES}\n\n`),
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1522,7 +1534,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];

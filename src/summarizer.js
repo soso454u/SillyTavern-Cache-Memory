@@ -1,6 +1,6 @@
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.14';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.15';
-import { generationPrompt } from './generation-prompts.js?v=1.24.15';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.16';
+import { generationPrompt } from './generation-prompts.js?v=1.24.16';
 import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.14';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.14';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.14';

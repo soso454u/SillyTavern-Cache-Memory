@@ -1,4 +1,4 @@
-import { withGlobalPrompt } from './defaults.js?v=1.24.15';
+import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.24.16';
 import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.24.14';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
@@ -17,5 +17,7 @@ export function generationPrompt(settings, stage) {
     const extractionRules = settings.summaryMode === 'ensemble' ? STATE_EXTRACTION_RULES : NORMAL_STATE_EXTRACTION_RULES;
     const rules = settings.activeStateEnabled && !completeEnsemble
         ? stage === 'summary' ? extractionRules : STATE_AGGREGATION_RULES : '';
-    return withGlobalPrompt(settings, prompt + rules);
+    const budget = stage === 'summary' && settings.summaryMode !== 'ensemble' && !prompt.includes(NORMAL_SUMMARY_LENGTH_RULES)
+        ? `\n${NORMAL_SUMMARY_LENGTH_RULES}` : '';
+    return withGlobalPrompt(settings, prompt + budget + rules);
 }
