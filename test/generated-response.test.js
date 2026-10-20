@@ -1,3 +1,4 @@
+import { NORMAL_STATE_EXTRACTION_RULES } from '../src/generation-prompts.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanGeneratedResponse, prepareMemoryResponse } from '../src/response-cleanup.js';
@@ -103,7 +104,7 @@ test('ordinary custom prompts survive while advanced requests use independent fu
     const f = fixture();
     await f.summarizer.summarizeEntry(f.entry, { deferAggregates: true });
     assert.equal(f.requests.length, 1);
-    assert.equal(f.requests[0].systemPrompt.endsWith(STATE_EXTRACTION_RULES), true);
+    assert.equal(f.requests[0].systemPrompt.endsWith(NORMAL_STATE_EXTRACTION_RULES), true);
     assert.doesNotMatch(f.requests[0].systemPrompt, /【复杂进阶总结/);
     const stored = structuredClone(f.store.current().summaries);
     const defaults = { ...f.settings.prompts };

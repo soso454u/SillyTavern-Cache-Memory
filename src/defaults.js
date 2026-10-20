@@ -4,7 +4,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.14';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.24.14';
 
-export const PLUGIN_VERSION = '1.24.14';
+export const PLUGIN_VERSION = '1.24.15';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1396,10 +1396,42 @@ KEEP 解决与替代仍须 NEW_SUMMARIES 的明确证据，不重复输出全部
 未完成的短期任务由 Open Threads / KEEP 管理，不因未完成自动进入 Long Fact；已完成且无长期影响的任务不长期保留。`),
 });
 
-export const DEFAULT_PROMPTS = Object.freeze({
+const PRE_QUALITY_DEFAULT_PROMPTS = Object.freeze({
     ...V1210_DEFAULT_PROMPTS,
     checkpoint: V1210_DEFAULT_PROMPTS.checkpoint.replace('技能升级与属性变化以最新明确状态替代旧值。',
         '技能升级与属性变化以最新明确状态替代旧值。同一任务、属性、物品或计划只在最合适的原栏目保留一条当前状态；明确被新计划替代的旧计划移出当前状态，必要历史原因仍可保留。不同人物的认知不能合并，长期未提及不等于任务结束。'),
+});
+
+// Replace conflicting ordinary extraction instructions rather than appending a
+// second detailed-mode template. Prior official defaults still migrate exactly.
+export const DEFAULT_PROMPTS = Object.freeze({
+    summary: PRE_QUALITY_DEFAULT_PROMPTS.summary
+        .replace('【记录规则】', `【记录规则】
+
+- 不默认 user、char 是故事主角，不按标签或固定人物排序；依据本层参与度、行为后果和长期影响分配篇幅，所有真正重要的人物平等。
+- 事件及因果为主体：谁因什么做了什么、造成什么结果、影响了谁。重要决定、承诺、关系转折、特殊物品、任务条件和关键对话不能被“气氛紧张”等概括替代。
+- 重要 NPC 的稳定身份、正文明示性格、关系、经历、立场、秘密和各自认知差应在本层明确新确认或变化时独立记录；不为每个路人建立完整档案，不从单次行为推断性格。`)
+        .replace(/正文摘要目标为 280–[\s\S]*?(?=压缩顺序：)/u,
+            `{{maxLength}} 是软目标，随事件复杂程度调整：简单剧情可以很短，重要多人场景允许详细；不设最低字数，不为填满预算重复描写。先写完整关键因果与各方持续影响，再精简重复、普通动作、姿势、短暂情绪、临时衣着及无后续作用的琐事；不能为缩短删除关键关系、秘密或认知差。
+
+`)
+        .replace(/\[State\]\n[\s\S]*?(?=\n\[Open\])/u, `[State]
+仅写本层真正新增或明确改变、会影响后续行动的状态：重要身份、关系与立场、明确性格、认知差、重要物品归属、伤势和现实限制。
+短期细节有剧情作用时留在 Event 或本栏叙述，不为情绪、姿势、普通物品位置逐项建立长期追踪。未变化的资料不重抄；没有新增写无。
+`)
+        .replace(/\[Open\]\n[\s\S]*?(?=\n\[Quote\])/u, `[Open]
+只写正文明确且仍未完成、具有后续影响的任务、承诺、重要计划、伏笔、持续冲突、秘密或调查；说明涉及人物、条件与当前卡点。
+已完成或结算的任务退出本栏，重要结果与奖励写 Event／State，不把仍需保留的历史当成仍未完成。普通等待、小动作和场景未结束本身不创建事项。无则写无。
+`),
+    checkpoint: PRE_QUALITY_DEFAULT_PROMPTS.checkpoint
+        .replace('【任务与角色状态继承规则】', `【任务与角色状态继承规则】
+重要性依据实际行动与持续影响，不固定围绕 user／char。重要 NPC 的明确身份、性格、关系、经历、立场与各自秘密／认知差同样继承；尚未进入 LONG_FACTS 的重要人物信息必须随 PREVIOUS_STATE 传递，不能提前交给尚未生成的长期记忆。已在 LONG_FACTS 的资料不重抄完整档案。
+当前状态只写一份最新明确结果；重大历史起因、选择和后果保留在 Story So Far，不能用删除历史来消除表面矛盾。已结束任务移出 Open Threads，本阶段结算的奖励与重要结果并入历史，不在每个阶段重列全部已完成任务。`),
+    longMemory: PRE_QUALITY_DEFAULT_PROMPTS.longMemory
+        .replace('【长期保存范围】', `【长期保存范围】
+不按 user／char 或主角标签分配优先级。重要 NPC 的明确身份、稳定性格、关系、重要经历、立场与秘密／认知差按实际长期影响保存；不因长期未出场而删除，也不为普通路人建立完整档案。
+同一事实不重复新增：已有当前事实不变时输出无，明确变化才更新原 fact-id；更新必须包含仍重要的历史原因与后果。仅因改写、更短或合并表述不能退休旧事实。短期细节留在 Summary，跨场景的重要事实进入 Long Facts；只有特别关键的长期事项进入 KEEP。
+已结算任务不再写为 Open Threads，具有持续影响的奖励、决定及结果作为历史事实保留。`),
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1490,7 +1522,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];

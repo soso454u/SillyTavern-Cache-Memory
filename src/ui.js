@@ -1,15 +1,15 @@
 import { applyUITheme } from './ui-theme.js?v=1.24.14';
-import { generationPrompt } from './generation-prompts.js?v=1.24.14';
+import { generationPrompt } from './generation-prompts.js?v=1.24.15';
 import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.14';
 import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.14';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.14';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.15';
 import { HistoryBackfill } from './history-backfill.js?v=1.24.14';
 import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.14';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.14';
 import { buildStructuredSummary } from './summary-format.js?v=1.24.14';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.14';
 import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.14';
-import { parseFloorSummary } from './summarizer.js?v=1.24.14';
+import { parseFloorSummary } from './summarizer.js?v=1.24.15';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.14';
 
 import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.14';

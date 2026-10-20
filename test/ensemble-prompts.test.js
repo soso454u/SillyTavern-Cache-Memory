@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_PROMPTS, ENSEMBLE_PROMPTS, ENSEMBLE_GENERATION, normalizeLoadedSettings, normalizeSettings, memoryGenerationSettings, modePromptDefaults } from '../src/defaults.js';
-import { generationPrompt } from '../src/generation-prompts.js';
+import { generationPrompt, NORMAL_STATE_EXTRACTION_RULES } from '../src/generation-prompts.js';
 import { bindDialogViewport } from '../src/ui-context.js';
 import { CacheMemoryUI, configTemplate } from '../src/ui.js';
 import { MemorySummarizer } from '../src/summarizer.js';
@@ -42,7 +42,7 @@ test('old advanced chat mode now selects full templates; editing and reset never
 test('complete ensemble templates avoid old appended rules and retain the Changes parser contract', () => {
     const normal = normalizeSettings({ globalPromptMode: 'blank' });
     const group = memoryGenerationSettings(normal, 'advanced');
-    assert.equal(generationPrompt(normal, 'summary'), normal.prompts.summary + STATE_EXTRACTION_RULES);
+    assert.equal(generationPrompt(normal, 'summary'), normal.prompts.summary + NORMAL_STATE_EXTRACTION_RULES);
     assert.equal(generationPrompt(normal, 'checkpoint'), normal.prompts.checkpoint + STATE_AGGREGATION_RULES);
     for (const stage of ['summary', 'checkpoint', 'longMemory']) {
         assert.equal(generationPrompt(group, stage), ENSEMBLE_PROMPTS[stage]);

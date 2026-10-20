@@ -1,6 +1,6 @@
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.14';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.14';
-import { generationPrompt } from './generation-prompts.js?v=1.24.14';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.15';
+import { generationPrompt } from './generation-prompts.js?v=1.24.15';
 import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.14';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.14';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.14';
@@ -8,6 +8,7 @@ import { extractSummarySource } from './summary-source.js?v=1.24.14';
 import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.14';
 import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.14';
 import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.14';
+import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from './normal-memory.js?v=1.24.15';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -244,6 +245,9 @@ export class MemorySummarizer {
                 frozen: true,
                 status: 'frozen',
             };
+            if (!advanced && settings.activeStateEnabled) {
+                record.stateChanges = selectNormalChanges(record.stateChanges, projectActiveState(this.generationStore(), entry.floor - 1));
+            }
             await this.commitMemory(() => {
                 const saved = this.store.addSummary(record, { overwrite, entry, background: deferAggregates || this.aggregateDeferrals > 0 });
                 return saved;
@@ -572,6 +576,8 @@ export class MemorySummarizer {
         const incremental = settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy';
         const state = previousState(this.generationStore(), startFloor);
         if (incremental && settings.activeStateEnabled && state.id) state.content = reconcileTrackedCheckpoint(state.content, this.generationStore(), startFloor - 1, startFloor);
+        if (incremental && settings.activeStateEnabled && settings.summaryMode !== 'ensemble' && state.id)
+            state.content = normalCheckpointHistory(state.content, projectActiveState(this.generationStore(), startFloor - 1), startFloor);
         const checkpointVersions = state.id ? { [state.id]: aggregateVersion([...checkpoints, ...this.store.current().longMemories].find(cp => cp.id === state.id)) } : {};
         const keeps = collectKeepItems(this.generationStore(), endFloor);
         const keepVersion = JSON.stringify(this.store.current().keepRegistry);
@@ -628,6 +634,8 @@ export class MemorySummarizer {
             await this.commitMemory(() => {
                 if (incremental) this.store.applyKeepItems(resolveKeepItems(keeps, cleaned, newSummaries, summaries), { persist: false });
                 record.content = settings.activeStateEnabled ? reconcileTrackedCheckpoint(record.content, this.generationStore(), endFloor, startFloor) : deduplicateCheckpoint(record.content);
+                if (incremental && settings.activeStateEnabled && settings.summaryMode !== 'ensemble')
+                    record.content = normalCheckpointHistory(record.content, projectActiveState(this.generationStore(), endFloor), startFloor);
                 return this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) });
             }, assertSources);
             return record;
@@ -755,7 +763,10 @@ export class MemorySummarizer {
                 threads.push(...projectActiveState(this.generationStore(), endFloor).filter(item => item.kind === 'thread' && !item.needsReview && !isTrackedActive(item) && item.sourceFloor >= startFloor)
                     .map(item => `- 已结束 ${item.entity} · ${item.key}：${item.value} (${item.status}，历史结果)`));
                 record.continuityState = threads.length ? `[Open Threads]\n${threads.join('\n')}` : '';
+                if (settings.summaryMode !== 'ensemble' && record.continuityState)
+                    record.continuityState = normalCheckpointHistory(record.continuityState, projectActiveState(this.generationStore(), endFloor), startFloor);
             }
+            if (incremental && settings.summaryMode !== 'ensemble') record.factUpdates = selectNormalFactUpdates(record.factUpdates, projection.facts);
             await this.commitMemory(() => this.store.addLongMemory(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) }), assertSources);
             return record;
         } catch (error) {
