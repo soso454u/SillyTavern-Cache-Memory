@@ -1,5 +1,5 @@
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.14';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.17';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.18';
 import { generationPrompt } from './generation-prompts.js?v=1.24.17';
 import { clampText, getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.14';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.14';
@@ -9,6 +9,7 @@ import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } f
 import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.14';
 import { parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, activeStateVersion } from './active-state.js?v=1.24.14';
 import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from './normal-memory.js?v=1.24.15';
+import { retryOperation, waitForRetry } from './retry.js?v=1.24.18';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -78,7 +79,7 @@ export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}
 }
 
 export class MemorySummarizer {
-    constructor({ store, apiClient, getSettings, getChat, getPersistenceState = () => ({}), flushMemory = async () => ({ state: 'confirmed' }), commitMemory = async mutate => mutate(), onStatus = () => {} }) {
+    constructor({ store, apiClient, getSettings, getChat, getPersistenceState = () => ({}), flushMemory = async () => ({ state: 'confirmed' }), commitMemory = async mutate => mutate(), onStatus = () => {}, retryDelay = waitForRetry }) {
         this.store = store;
         this.getPersistenceState = getPersistenceState;
         this.flushMemory = flushMemory;
@@ -90,11 +91,25 @@ export class MemorySummarizer {
         this.queue = Promise.resolve();
         this.inFlight = new Set();
         this.pendingSummaries = new Map();
+        this.retryDelay = retryDelay;
+        this.unsavedResponses = new Map();
         this.aggregateDeferrals = 0;
         this.contextRevision = 0;
     }
 
-    invalidateContext() { this.contextRevision++; }
+    invalidateContext() { this.contextRevision++; this.unsavedResponses.clear(); }
+
+    async completeWithRetry(request, assertActive, key, { retryDelay = this.retryDelay, onRetry = () => {} } = {}) {
+        assertActive();
+        if (this.unsavedResponses.has(key)) return this.unsavedResponses.get(key);
+        const result = await retryOperation(() => this.apiClient.complete(request), { signal: request.signal, assertActive, delay: retryDelay,
+            onRetry: info => {
+                this.onStatus('busy', `生成请求失败，${info.waitMs / 1000} 秒后自动重试 ${info.attempt}/${info.maxRetries}：${info.error.message}`);
+                onRetry(info);
+            } });
+        this.unsavedResponses.set(key, result);
+        return result;
+    }
 
     generationStore() {
         return this.store.effectiveStore(this.getChat());
@@ -175,7 +190,7 @@ export class MemorySummarizer {
         return pending;
     }
 
-    async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal } = {}) {
+    async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal, retryDelay, onRetry } = {}) {
         const existing = this.store.getSummaryForEntry(entry);
         // Reuse saved floor memory regardless of identity/source drift. Only
         // an explicit overwrite regenerates it; missing-floor scans do not.
@@ -190,6 +205,7 @@ export class MemorySummarizer {
         const revision = this.contextRevision;
         const targetVersions = () => JSON.stringify(this.store.summaryCandidates(entry).map(([id, item]) => [id, summaryVersion(item)]).sort());
         const expectedTargets = targetVersions();
+        let responseKey;
         const assertContext = () => {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('摘要');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
@@ -216,7 +232,7 @@ export class MemorySummarizer {
                 storyTimeFound: Boolean(sourceMetadata.storyTime),
                 locationFound: Boolean(sourceMetadata.location),
             });
-            const result = await this.apiClient.complete({
+            const request = {
                 systemPrompt,
                 userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata)
                     + priorNormalContext(this.generationStore(), settings, entry.floor)
@@ -224,7 +240,9 @@ export class MemorySummarizer {
                     + (advanced ? `\n\n[EXISTING_LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.generationStore(), entry.floor - 1))}` : ''),
                 maxTokens: settings.summaryMaxTokens,
                 signal,
-            });
+            };
+            responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);
+            const result = await this.completeWithRetry(request, assertContext, responseKey, { retryDelay, onRetry });
             if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
             const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: summarySource.text, prompt: settings.prompts.summary });
             const parsed = parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
@@ -264,6 +282,7 @@ export class MemorySummarizer {
                 const saved = this.store.addSummary(record, { overwrite, entry, background: deferAggregates || this.aggregateDeferrals > 0 });
                 return saved;
             }, assertContext);
+            this.unsavedResponses.delete(responseKey);
             let aggregateFailure = '';
             try {
                 if (!deferAggregates && !this.aggregateDeferrals) await this.generateDueAggregates({ signal });
@@ -276,6 +295,7 @@ export class MemorySummarizer {
                 : `第 ${entry.floor} 层摘要已冻结`);
             return record;
         } catch (error) {
+            if (error.code !== 'SAVE_UNCONFIRMED') this.unsavedResponses.delete(responseKey);
             // Network failures can arrive after a chat switch or source edit too.
             try { assertContext(); } catch (contextError) { error = contextError; }
             if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) {
@@ -619,8 +639,11 @@ export class MemorySummarizer {
             endFloor,
             maxLength: settings.checkpointMaxLength,
         });
+        let responseKey;
         try {
-            const result = await this.apiClient.complete({ systemPrompt, userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal });
+            const request = { systemPrompt, userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.checkpointMaxTokens, signal };
+            responseKey = JSON.stringify(['checkpoint', chatId, revision, expectedTargets, request]);
+            const result = await this.completeWithRetry(request, assertSources, responseKey);
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             assertSources();
@@ -650,8 +673,10 @@ export class MemorySummarizer {
                     record.content = normalCheckpointHistory(record.content, projectActiveState(this.generationStore(), endFloor), startFloor);
                 return this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) });
             }, assertSources);
+            this.unsavedResponses.delete(responseKey);
             return record;
         } catch (error) {
+            if (error.code !== 'SAVE_UNCONFIRMED') this.unsavedResponses.delete(responseKey);
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) throw error;
             if (!existing || existing.status === 'failed') this.store.addCheckpoint({
@@ -748,8 +773,11 @@ export class MemorySummarizer {
         };
         const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${item.startFloor}-${item.endFloor}层]\n${item.content}`).join('\n\n');
         const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
+        let responseKey;
         try {
-            const result = await this.apiClient.complete({ systemPrompt, userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal });
+            const request = { systemPrompt, userContent: userContent + (settings.activeStateEnabled ? `\n\n[CURRENT_TRACKED_STATE]\n${stateContext(this.generationStore(), endFloor)}` : ''), maxTokens: settings.longMemoryMaxTokens, signal };
+            responseKey = JSON.stringify(['long', chatId, revision, expectedTargets, request]);
+            const result = await this.completeWithRetry(request, assertSources, responseKey);
             assertSources();
             if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
             const cleaned = prepareMemoryResponse(result.content, 'Long Memory', { source: userContent, prompt: settings.prompts.longMemory });
@@ -780,8 +808,10 @@ export class MemorySummarizer {
             }
             if (incremental && settings.summaryMode !== 'ensemble') record.factUpdates = selectNormalFactUpdates(record.factUpdates, projection.facts);
             await this.commitMemory(() => this.store.addLongMemory(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) }), assertSources);
+            this.unsavedResponses.delete(responseKey);
             return record;
         } catch (error) {
+            if (error.code !== 'SAVE_UNCONFIRMED') this.unsavedResponses.delete(responseKey);
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Long Memory');
             if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) throw error;
             if (!existing || existing.status === 'failed') this.store.addLongMemory({

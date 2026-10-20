@@ -16,7 +16,7 @@ function fixture(count = 5, authority = false) {
     let remote = structuredClone(store.current()), fail = false, duringWrite = () => {};
     const journal = new Map();
     const storage = { getItem: key => journal.get(key), setItem: (key, value) => journal.set(key, value), removeItem: key => journal.delete(key) };
-    const persistence = new MemoryPersistenceCoordinator({ storage, getChatId: () => 'a', getMetadata: () => metadata,
+    const persistence = new MemoryPersistenceCoordinator({ retryDelay: async () => {}, storage, getChatId: () => 'a', getMetadata: () => metadata,
         readRemoteStore: async () => structuredClone(remote), saveMetadata: async () => {
             duringWrite(); if (fail) throw new Error('模拟保存失败'); remote = structuredClone(metadata.cache_memory);
         }, ...(authority ? {
@@ -40,6 +40,60 @@ function fixture(count = 5, authority = false) {
     const seed = () => { remote = structuredClone(store.current()); persistence.pending.clear(); persistence.activate('a', store.current()); };
     return { chat, store, persistence, summarizer, requests, seed, get remote() { return remote; }, set fail(v) { fail = v; }, set duringWrite(fn) { duringWrite = fn; }, set remote(v) { remote = v; } };
 }
+
+for (const authority of [false, true]) test(`failed uploads retry three times without regenerating or exposing the replacement (authority=${authority})`, async () => {
+    const f = fixture(1, authority), entry = getAssistantMessages(f.chat)[0];
+    const original = structuredClone(f.store.getSummary(entry.messageId)), waits = [];
+    let writes = 0;
+    f.persistence.retryDelay = async ms => waits.push(ms);
+    f.duringWrite = () => {
+        writes++;
+        f.fail = writes < 4;
+        assert.deepEqual(f.store.getSummary(entry.messageId), original);
+    };
+    await f.summarizer.summarizeMessage(entry.messageId, { overwrite: true, deferAggregates: true });
+    assert.equal(writes, 4); assert.deepEqual(waits, [2000, 5000, 10000]);
+    assert.equal(f.requests.length, 1); assert.equal(f.persistence.getState().state, 'confirmed');
+    assert.notEqual(f.store.getSummary(entry.messageId).event, original.event);
+});
+
+test('a previously failed server read is checked again automatically; a model response survives preflight retries', async () => {
+    const f = fixture(1), entry = getAssistantMessages(f.chat)[0], read = f.persistence.readRemoteStore;
+    let failures = 0; const waits = [];
+    f.persistence.retryDelay = async ms => waits.push(ms);
+    f.persistence.readRemoteStore = async (...args) => {
+        if (++failures <= 3) throw new Error('服务器读取超时');
+        return read(...args);
+    };
+    await f.summarizer.summarizeMessage(entry.messageId, { overwrite: true, deferAggregates: true });
+    assert.deepEqual(waits, [2000, 5000, 10000]); assert.equal(f.requests.length, 1);
+    assert.equal(f.persistence.getState().state, 'confirmed');
+});
+
+test('exhausted preflight retries preserve old memory and let a later click save the same generated result', async () => {
+    const f = fixture(1), entry = getAssistantMessages(f.chat)[0], read = f.persistence.readRemoteStore;
+    const original = structuredClone(f.store.getSummary(entry.messageId));
+    let reads = 0;
+    f.persistence.readRemoteStore = async () => { reads++; throw new Error('服务器读取超时'); };
+    await assert.rejects(f.summarizer.summarizeMessage(entry.messageId, { overwrite: true, deferAggregates: true }), { code: 'SAVE_UNCONFIRMED' });
+    assert.equal(reads, 4); assert.equal(f.requests.length, 1);
+    assert.deepEqual(f.store.getSummary(entry.messageId), original);
+    f.persistence.readRemoteStore = read;
+    await f.summarizer.summarizeMessage(entry.messageId, { overwrite: true, deferAggregates: true });
+    assert.equal(f.requests.length, 1); assert.equal(f.persistence.getState().state, 'confirmed');
+});
+
+test('a failed local record can be retried when the server has never stored any summary', async () => {
+    const f = fixture(0);
+    f.chat.push({ mes: '尚未上传过的正文', gen_started: 'new-source' });
+    const entry = getAssistantMessages(f.chat)[0], resume = f.persistence.pauseSaves('a');
+    f.store.addSummary({ messageId: entry.messageId, floor: entry.floor, status: 'failed', frozen: false, error: 'HTTP 504' });
+    resume({ retryPending: false });
+    assert.equal(Object.keys(f.remote.summaries).length, 0);
+    await f.summarizer.summarizeMessage(entry.messageId, { overwrite: true, deferAggregates: true });
+    assert.equal(f.requests.length, 1); assert.equal(f.persistence.getState().state, 'confirmed');
+    assert.equal(f.remote.summaries[entry.messageId].status, 'frozen');
+});
 
 test('floor 207 swipe replaces its old versions after readback; CP-042 uses only the current summary', async () => {
     const f = fixture(210), message = f.chat[206], old = getAssistantMessages(f.chat)[206];

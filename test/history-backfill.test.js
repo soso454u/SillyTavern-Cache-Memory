@@ -32,7 +32,7 @@ function fixture(count = 50) {
         calls.push(request);
         if (request.systemPrompt.includes('[CHECKPOINT]')) return { content: '[CHECKPOINT]\n[Current State]\n当前状态\n[KEEP]\n无' };
         if (request.systemPrompt.includes('[LONG_MEMORY]')) return { content: '[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' };
-        return { content: `[SUMMARY]\n[Title]\n${request.userContent}\n[Event]\n${request.userContent}\n[Open]\n无\n[KEEP]\n无` };
+        return { content: `[SUMMARY]\n[Title]\n${request.userContent.split('\n\n[')[0]}\n[Event]\n${request.userContent.split('\n\n[')[0]}\n[Open]\n无\n[KEEP]\n无` };
     } };
     const summarizer = new MemorySummarizer({ store, apiClient, getSettings: () => settings, getChat: () => chat });
     const progress = [];
@@ -120,14 +120,14 @@ test('missing Checkpoint backfill cancellation aborts the active request without
     assert.deepEqual(f.store.current().checkpoints, []);
 });
 
-test('transient failures retry at 2s/5s, persistent errors do not stop later floors; 401 is not retried', async () => {
+test('transient failures retry at 2s/5s/10s, persistent errors do not stop later floors; 401 is not retried', async () => {
     const f = fixture(4);
     const attempts = new Map();
     const delays = [];
     const complete = f.apiClient.complete;
     f.backfill.delay = async ms => delays.push(ms);
     f.apiClient.complete = request => {
-        const body = request.userContent;
+        const body = request.userContent.split('\n\n[')[0];
         attempts.set(body, (attempts.get(body) || 0) + 1);
         if (body === '正文1' && attempts.get(body) < 3) throw Object.assign(new Error('Gateway timeout'), { status: 504 });
         if (body === '正文2') throw Object.assign(new Error('Unauthorized'), { status: 401 });
@@ -135,11 +135,11 @@ test('transient failures retry at 2s/5s, persistent errors do not stop later flo
         return complete(request);
     };
     const result = await f.backfill.start({ endFloor: 4 });
-    assert.deepEqual(delays, [2000, 5000, 2000, 5000]);
-    assert.deepEqual([...attempts.values()], [3, 1, 3, 1]);
+    assert.deepEqual(delays, [2000, 5000, 2000, 5000, 10000]);
+    assert.deepEqual([...attempts.values()], [3, 1, 4, 1]);
     assert.equal(result.success, 2);
     assert.equal(result.failed, 2);
-    assert.equal(result.retries, 4);
+    assert.equal(result.retries, 5);
     assert.deepEqual(f.chat, f.original);
 });
 
@@ -167,7 +167,7 @@ test('forcing a batch with a published checkpoint preserves both the checkpoint 
     const prompt = f.store.current().injectionSnapshot.value;
     const checkpoint = structuredClone(f.store.current().checkpoints[0]);
     f.refreshes.length = 0;
-    f.apiClient.complete = async request => ({ content: `[SUMMARY]\n[Title]\n更新\n[Event]\n${request.userContent}的更新` });
+    f.apiClient.complete = async request => ({ content: `[SUMMARY]\n[Title]\n更新\n[Event]\n${request.userContent.split('\n\n[')[0]}的更新` });
     const result = await f.backfill.start({ endFloor: 5, mode: 'all' });
     assert.equal(result.success, 5);
     assert.notEqual(prompt, '');
@@ -184,7 +184,7 @@ test('pause finishes the active request, waits before the next floor, then resum
     let concurrent = 0, maximum = 0;
     f.apiClient.complete = async request => {
         maximum = Math.max(maximum, ++concurrent);
-        if (request.userContent === '正文1') { started.resolve(); await release.promise; }
+        if (request.userContent.split('\n\n[')[0] === '正文1') { started.resolve(); await release.promise; }
         try { return await complete(request); } finally { concurrent--; }
     };
     f.backfill.onProgress = state => { if (state.status === 'paused') paused.resolve(); };
@@ -206,7 +206,7 @@ test('cancellation aborts only the active floor and aggregates the five already 
     const started = gate();
     const complete = f.apiClient.complete;
     f.apiClient.complete = request => {
-        if (request.userContent !== '正文6') return complete(request);
+        if (request.userContent.split('\n\n[')[0] !== '正文6') return complete(request);
         return new Promise((_resolve, reject) => {
             request.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'REQUEST_ABORTED' })), { once: true });
             started.resolve();
@@ -291,8 +291,9 @@ test('late failed checkpoints and long memories are discarded after a chat switc
         for (const entry of entries) f.store.addSummary({ ...entry, message: undefined, sourceContentFingerprint: entry.contentFingerprint, title: 'S', event: '事件', status: 'frozen', frozen: true });
         const started = gate(), response = gate();
         f.apiClient.complete = () => { started.resolve(); return response.promise; };
+        if (kind === 'long') f.store.addCheckpoint({ id: 'checkpoint-001', startFloor: 1, endFloor: 5, content: '状态', status: 'frozen', frozen: true });
         const pending = kind === 'checkpoint' ? f.summarizer.generateCheckpoint(1, 5)
-            : f.summarizer.generateLongMemory([{ id: 'checkpoint-001', startFloor: 1, endFloor: 5, content: '状态' }]);
+            : f.summarizer.generateLongMemory(f.store.current().checkpoints);
         const rejection = assert.rejects(pending, error => error.code === 'CHAT_CHANGED');
         await started.promise;
         f.switchChat();

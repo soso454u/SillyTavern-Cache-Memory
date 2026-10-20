@@ -2,14 +2,14 @@ import { applyUITheme } from './ui-theme.js?v=1.24.14';
 import { generationPrompt } from './generation-prompts.js?v=1.24.17';
 import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.14';
 import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.17';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.17';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.14';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.18';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.18';
 import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.14';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.14';
 import { buildStructuredSummary } from './summary-format.js?v=1.24.14';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.14';
 import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.14';
-import { parseFloorSummary } from './summarizer.js?v=1.24.17';
+import { parseFloorSummary } from './summarizer.js?v=1.24.18';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.14';
 
 import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.14';
@@ -2108,12 +2108,10 @@ export class CacheMemoryUI {
         const controller = new AbortController(), runId = ++this.missingCheckpointRunId;
         const chatId = this.store.current().chatId, epoch = this.persistence?.epoch;
         this.missingCheckpointController = controller;
-        this.missingCheckpointState = { kind: 'all', status: 'running', total: 0, processed: 0, created: 0, failed: 0, skipped: 0, phase: '读取服务器', errors: [] };
+        this.missingCheckpointState = { kind: 'all', status: 'running', total: 0, processed: 0, created: 0, failed: 0, skipped: 0, phase: 'Summary', errors: [] };
         this.renderManager();
         try {
-            const saved = await this.persistence.reread(chatId);
-            if (runId !== this.missingCheckpointRunId || chatId !== this.store.current().chatId || epoch !== this.persistence.epoch || controller.signal.aborted) return;
-            if (saved.state !== 'confirmed') throw new Error(`服务器记忆尚未确认：${saved.detail}`);
+            if (runId !== this.missingCheckpointRunId || chatId !== this.store.current().chatId || epoch !== this.persistence?.epoch || controller.signal.aborted) return;
             const result = await this.summarizer.fillMissingMemories({ signal: controller.signal, onlyLong,
                 onProgress: progress => {
                     if (runId !== this.missingCheckpointRunId) return;

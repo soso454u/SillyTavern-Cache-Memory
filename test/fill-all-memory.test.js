@@ -120,14 +120,14 @@ test('safe stop or a chat revision change prevents committing late generated con
     }
 });
 
-test('one-click UI reads server first, runs every memory stage and releases its stop control', async () => {
+test('one-click UI does not require an uploaded record before filling memory and releases its stop control', async () => {
     const f = fixture(5); let reads = 0;
     const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { store: f.store, summarizer: f.summarizer,
-        persistence: { epoch: 1, reread: async () => { reads++; return { state: 'confirmed' }; } },
+        persistence: { epoch: 1, reread: async () => { reads++; return { state: 'failed', detail: '尚未上传' }; } },
         missingCheckpointRunId: 0, missingCheckpointState: { status: 'idle' },
         renderManager() {}, renderMessageMemories() {}, showTaskProgress() {},
     });
     await ui.handleManagerClick({ target: { closest: selector => selector === '[data-fill-all-memories]' ? {} : null } });
-    assert.equal(reads, 1); assert.equal(ui.missingCheckpointState.status, 'completed');
+    assert.equal(reads, 0); assert.equal(ui.missingCheckpointState.status, 'completed');
     assert.equal(ui.missingCheckpointState.created, 1); assert.equal(ui.missingCheckpointController, null);
 });

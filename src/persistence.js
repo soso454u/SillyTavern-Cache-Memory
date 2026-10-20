@@ -1,5 +1,6 @@
 import { LocalMemoryStorage } from './local-memory-storage.js?v=1.24.14';
 import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.24.14';
+import { retryOperation, waitForRetry } from './retry.js?v=1.24.18';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -64,7 +65,8 @@ function validateAuthoritativeRecord(record, chatId) {
 }
 
 export class MemoryPersistenceCoordinator {
-    constructor({ getChatId, getMetadata, readRemoteStore, saveMetadata, readAuthoritativeStore = null, readAuthoritativeHistory = null, commitAuthoritative = null, authoritativeAvailable = () => true, storage = null, durableStorage = globalThis.indexedDB ? new LocalMemoryStorage() : null, sessionStorage = null, locks = null, createJournalChannel = null, onStatus = () => {}, timeoutMs = 45000 }) {
+    constructor({ getChatId, getMetadata, readRemoteStore, saveMetadata, readAuthoritativeStore = null, readAuthoritativeHistory = null, commitAuthoritative = null, authoritativeAvailable = () => true, storage = null, durableStorage = globalThis.indexedDB ? new LocalMemoryStorage() : null, sessionStorage = null, locks = null, createJournalChannel = null, onStatus = () => {}, timeoutMs = 45000, retryDelay = waitForRetry }) {
+        this.retryDelay = retryDelay;
         this.getChatId = getChatId;
         this.getMetadata = getMetadata;
         this.readRemoteStore = readRemoteStore;
@@ -892,8 +894,7 @@ export class MemoryPersistenceCoordinator {
 
     async performReplacement(store, mutate, assertActive) {
         const chatId = String(this.getChatId()), epoch = this.epoch;
-        let state = await this.flush(chatId);
-        if (state.state === MEMORY_SAVE_STATES.UNKNOWN) state = await this.reread(chatId);
+        let state = await this.flushReplacement(chatId, epoch, true);
         if (state.state !== MEMORY_SAVE_STATES.CONFIRMED) throw Object.assign(new Error(`原记忆尚未确认，未替换：${state.detail}`), { code: 'SAVE_UNCONFIRMED' });
         if (String(this.getChatId()) !== chatId || this.epoch !== epoch) throw Object.assign(new Error('聊天已切换，取消旧聊天替换'), { code: 'CHAT_CHANGED' });
         assertActive();
@@ -919,7 +920,7 @@ export class MemoryPersistenceCoordinator {
                 }
             }
             resume({ retryPending: false });
-            state = await this.flush(chatId);
+            state = await this.flushReplacement(chatId, epoch);
             if (String(this.getChatId()) !== chatId || this.epoch !== epoch) throw Object.assign(new Error('保存期间聊天已切换，未发布替换结果'), { code: 'CHAT_CHANGED' });
             if (state.state !== MEMORY_SAVE_STATES.CONFIRMED) throw Object.assign(new Error(`替换尚未确认，原记忆保留：${state.detail}`), { code: 'SAVE_UNCONFIRMED' });
             const committed = this.getMetadata().cache_memory;
@@ -933,6 +934,32 @@ export class MemoryPersistenceCoordinator {
             }
         } finally { resume({ retryPending: false }); delete store.replacementView; }
         return result;
+    }
+
+    async flushReplacement(chatId, epoch, verify = false) {
+        const assertActive = () => {
+            if (String(this.getChatId()) !== chatId || this.epoch !== epoch)
+                throw Object.assign(new Error('聊天已切换，停止保存重试'), { code: 'CHAT_CHANGED' });
+        };
+        try {
+            return await retryOperation(async () => {
+                let state = await this.flush(chatId);
+                // A failed generation record need not have been uploaded first.
+                // Recheck an old failed/unknown read as well as a fresh session.
+                if (verify && !this.pending.has(chatId) && !['confirmed', 'conflict'].includes(state.state)) state = await this.reread(chatId);
+                if (state.state !== 'failed') return state;
+                throw Object.assign(new Error(state.detail), { saveState: state });
+            }, { assertActive, delay: this.retryDelay,
+                retryable: error => Boolean(error.saveState)
+                    && !/(?:冲突|完整性|身份|校验|不一致|日志.*(?:失败|无法)|本机.*(?:写入失败|读取失败))/u.test(error.message)
+                    && /超时|timeout|HTTP\s*(?:408|429|500|502|503|504)|network|fetch|网络|断开|连接|保存失败/iu.test(error.message),
+                onRetry: ({ attempt, waitMs, error }) => this.setState(chatId, MEMORY_SAVE_STATES.FAILED,
+                    `保存将在 ${waitMs / 1000} 秒后自动重试 ${attempt}/3：${error.message}`),
+            });
+        } catch (error) {
+            if (!error.saveState) throw error;
+            return error.saveState;
+        }
     }
 
     async process(chatId) {

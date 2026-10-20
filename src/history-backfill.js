@@ -1,15 +1,7 @@
 import { getAssistantMessages } from './utils.js?v=1.24.14';
 
-export function isRetryableSummaryError(error) {
-    if (['REQUEST_ABORTED', 'CHAT_CHANGED', 'SOURCE_CHANGED', 'ST_PROXY_ROUTE_MISSING'].includes(error.code)) return false;
-    if (['authentication_error', 'permission_error', 'endpoint_error'].includes(error.category)) return false;
-    if (error.code === 'REQUEST_TIMEOUT') return true;
-    // Prefer the actual upstream status; a proxy 200 may wrap an upstream failure.
-    const status = Number(error.status) || Number(String(error.diagnostics?.upstream ?? '').match(/HTTP (\d+)/)?.[1])
-        || Number(String(error.diagnostics?.proxy ?? '').match(/HTTP (\d+)/)?.[1]);
-    if (status && status !== 200) return [429, 502, 503, 504].includes(status);
-    return /\b(?:429|502|503|504)\b|gateway[ -]time.?out|timed out|请求超时|rate.?limit|too many requests/i.test(error.message);
-}
+import { waitForRetry } from './retry.js?v=1.24.18';
+export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.24.18';
 
 function aborted() {
     return Object.assign(new Error('历史补齐已取消'), { code: 'REQUEST_ABORTED' });
@@ -17,15 +9,6 @@ function aborted() {
 
 function idleState() {
     return { status: 'idle', total: 0, processed: 0, success: 0, failed: 0, skipped: 0, retries: 0, currentFloor: null, error: '' };
-}
-
-export function waitForRetry(ms, signal) {
-    return new Promise((resolve, reject) => {
-        if (signal.aborted) return reject(aborted());
-        const cancel = () => { clearTimeout(timer); reject(aborted()); };
-        const timer = setTimeout(() => { signal.removeEventListener('abort', cancel); resolve(); }, ms);
-        signal.addEventListener('abort', cancel, { once: true });
-    });
 }
 
 export class HistoryBackfill {
@@ -105,29 +88,22 @@ export class HistoryBackfill {
                     || (existing?.status === 'failed' && ['failed', 'missing-failed'].includes(mode));
                 if (!selected) this.state.skipped++;
                 else {
-                    for (let attempt = 0; ; attempt++) {
-                        await this.boundary();
-                        try {
-                            const record = await this.summarizer.summarizeMessage(entry.messageId, {
-                                overwrite: Boolean(existing), deferAggregates: true, signal: this.controller.signal,
-                                expectedFingerprint: entry.fingerprint,
-                            });
-                            if (record) this.state.success++;
-                            else this.state.skipped++;
-                            this.state.error = this.lastFailure;
-                            break;
-                        } catch (error) {
-                            if (['CHAT_CHANGED', 'REQUEST_ABORTED'].includes(error.code)) throw error;
-                            if (attempt < 2 && isRetryableSummaryError(error)) {
-                                this.publish({ retries: this.state.retries + 1, error: `第 ${entry.floor} 层将在 ${attempt ? 5 : 2} 秒后重试：${error.message}` }, runId);
-                                await this.delay(attempt ? 5000 : 2000, this.controller.signal);
-                                continue;
-                            }
-                            this.state.failed++;
-                            this.state.error = `第 ${entry.floor} 层：${error.message}`;
-                            this.lastFailure = this.state.error;
-                            break;
-                        }
+                    await this.boundary();
+                    try {
+                        const record = await this.summarizer.summarizeMessage(entry.messageId, {
+                            overwrite: Boolean(existing), deferAggregates: true, signal: this.controller.signal,
+                            expectedFingerprint: entry.fingerprint, retryDelay: this.delay,
+                            onRetry: ({ attempt, waitMs, error }) => this.publish({ retries: this.state.retries + 1,
+                                error: `第 ${entry.floor} 层将在 ${waitMs / 1000} 秒后自动重试 ${attempt}/3：${error.message}` }, runId),
+                        });
+                        if (record) this.state.success++;
+                        else this.state.skipped++;
+                        this.state.error = this.lastFailure;
+                    } catch (error) {
+                        if (['CHAT_CHANGED', 'REQUEST_ABORTED'].includes(error.code)) throw error;
+                        this.state.failed++;
+                        this.state.error = `第 ${entry.floor} 层：${error.message}`;
+                        this.lastFailure = this.state.error;
                     }
                 }
                 this.publish({ processed: this.state.processed + 1 }, runId);
