@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.22';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.22';
-import { stripStructuredSections } from './summary-format.js?v=1.24.22';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.22';
+import { INJECTION_MODES } from './defaults.js?v=1.24.23';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.23';
+import { stripStructuredSections } from './summary-format.js?v=1.24.23';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.23';
 
 // Original CP5 / Long50 coverage. Never inject all per-floor Summary Events.
 export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
@@ -106,44 +106,72 @@ const canonical = text => String(text).replace(/^\s*[-*•]\s*/u, '')
 
 // One read-only projection for strict boundary publication and non-strict mode.
 // Old CPs and Longs stay in the store; only uncovered durable facts are sent.
+// Publish only real enduring/relevant deltas. Never turn routine temporary
+// states into an ever-growing role sheet in the cache prompt.
+export function relevantSnapshotRows(store, throughFloor) {
+    const durable = /^(?:identity|relationship|knowledge|skill|attribute|reward|history|personality|preference)$/u;
+    const important = /(?:伤|疾病|毒|昏迷|限制|禁令|身份|关系|认知|秘密|调查|证据|能力|技能|等级|积分|点数|余额|股份|股权|债务|契约|承诺|禁忌|任务|计划|线索|物品归属|监控|药效|影响|危险|异能)/u;
+    const trivialDone = /(?:行李箱密码|便签位置|便利贴位置|临时站位|当前姿势|普通衣着|已成功开箱|已收拾完毕)/u;
+    return projectActiveState(store, throughFloor).filter(item => {
+        if (item.needsReview || !isTrackedActive(item) || item.category === 'history') return false;
+        if (item.kind === 'thread') return !/^(?:普通消息|随手问候|等待回复)$/u.test(item.key);
+        if (trivialDone.test(item.key + item.value) && item.lifetime === 'temporary') return false;
+        return durable.test(item.category ?? '') || important.test(item.key + ' ' + item.value);
+    });
+}
+
 export function currentInjectionBlocks(store, settings, mode = settings.injectionMode) {
-    const latest = checkpointModes.includes(mode) ? store.checkpoints.filter(isUsableMemory)
+    const useCP = checkpointModes.includes(mode);
+    const latest = useCP ? store.checkpoints.filter(isUsableMemory)
         .sort((a, b) => a.endFloor - b.endFloor || a.startFloor - b.startFloor).at(-1) : null;
     const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor), 0);
-    let content = latest ? latest.content : '';
-    if (latest && settings.activeStateEnabled) content = reconcileTrackedCheckpoint(content, store, through, latest.startFloor);
-    // Only the latest checkpoint supplies current statuses and open tasks.
-    // Its story is projected separately from CP5 / Long50 narratives.
-    content = stripStructuredSections(content, [...hiddenSections, 'Stage Story', 'Events', 'Story So Far']);
-    const blocks = historicalStoryBlocks(store, through, checkpointModes.includes(mode));
-    if (latest) blocks.push({ id: `checkpoint:${latest.id}`, type: 'checkpoint', startFloor: latest.startFloor, endFloor: latest.endFloor,
-        text: `[CHECKPOINT_${String(latest.id).split('-').at(-1)} | LATEST_CHECKPOINT | 截至第${latest.endFloor}层]\n${content}` });
-    // Equality only. Different observers and compound facts cannot be coalesced.
-    const seen = new Set(content.split('\n').map(canonical));
+    // One CP5/Long50 story per uncovered range; never all per-floor Summary.
+    const blocks = historicalStoryBlocks(store, through, useCP);
+    const records = settings.activeStateEnabled ? relevantSnapshotRows(store, through) : [];
+    const snapshotLines = records.map(row => '- ' + row.entity + ' · ' + row.key + '：' + row.value
+        + (row.kind === 'thread' && row.condition ? '；条件：' + row.condition : '')
+        + (row.acquisition === 'pending' ? '（未领取）' : ''));
+    // For older CPs whose source Summaries predate tracked Changes, keep only
+    // the last CP's known snapshot, NOT any older current-state sections.
+    if (latest && !readSection(latest.content, 'Stage Story')) {
+        for (const name of ['Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks']) {
+            const text = readSection(latest.content, name);
+            if (text && !/^(?:无|none)$/iu.test(text)) {
+                snapshotLines.push('[' + name + ']\n' + text);
+            }
+        }
+    }
+    if (snapshotLines.length) blocks.push({
+        id: 'state:latest', type: 'snapshot', startFloor: through, endFloor: through,
+        text: '[CURRENT_SNAPSHOT | 截至第' + through + '层]\n' + [...new Set(snapshotLines)].join('\n')
+    });
+    const printed = blocks.map(row => row.text).join('\n');
+    const seen = new Set(printed.split('\n').map(canonical));
     const uncovered = text => {
         const key = canonical(text);
-        if (!key || seen.has(key) || canonical(content).includes(key)) return false;
+        if (!key || seen.has(key) || canonical(printed).includes(key)) return false;
         seen.add(key); return true;
     };
-    const projection = projectLongFacts(store, through, { includeTracked: settings.activeStateEnabled });
-    const supplements = latest ? checkpointHistoricalFacts(store, through, content) : [];
-    const factLines = projection.facts.filter(row => row.status === 'active'
-        || row.status === 'superseded' && /(?:永久|不可逆|终身|失去.{0,8}(?:右臂|左臂|双腿|视力)|摧毁|重大债务)/u.test(row.text)).filter(row => uncovered(row.text)).map(row => `- ${row.id} | ${row.text}`);
-    for (const text of supplements) if (uncovered(text)) factLines.push(`- ${text}`);
-    // Legacy Longs lack typed facts: retain complete factual entries, dedupe only
-    // exact text. Never fall back to injecting all old Checkpoints without Longs.
+    const projection = projectLongFacts(store, through, { includeTracked: false });
+    const facts = projection.facts.filter(row => row.status === 'active'
+        || row.status === 'superseded' && /(?:永久|不可逆|终身|重大损失|重大债务)/u.test(row.text))
+        .filter(row => uncovered(row.text)).map(row => '- ' + row.id + ' | ' + row.text);
+    // Legacy Long formats may contain important durable history.
     for (const memory of projection.legacy) {
         const lines = stripStructuredSections(memory.content, hiddenSections).split('\n');
-        const kept = lines.filter(line => /^\s*\[[^\]\n]+\]\s*$/u.test(line) || !line.trim() || uncovered(line));
-        if (kept.some(line => line.trim() && !/^\s*\[/.test(line))) factLines.push(...kept);
+        for (const line of lines) if (line.trim() && !/^\s*\[/.test(line) && uncovered(line)) facts.push('- ' + line.trim());
     }
-    if (factLines.length) blocks.push({ id: 'long:current-facts', type: 'long', startFloor: 1, endFloor: through,
-        text: `[LONG_MEMORY]\n${factLines.join('\n')}` });
+    if (facts.length) blocks.push({
+        id: 'long:current-facts', type: 'long', startFloor: 1, endFloor: through,
+        text: '[LONG_MEMORY]\n' + facts.join('\n')
+    });
     const keepThrough = Math.max(through, ...Object.values(store.summaries ?? {}).filter(isUsableMemory).map(row => row.floor), 0);
-    const items = collectKeepItems(store, keepThrough).filter(row => row.status === 'active' && uncovered(row.text));
-    const keeps = formatKeepItems(items);
-    if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: through,
-        keepIds: items.map(row => row.id), text: `[KEEP]\n${keeps}` });
+    const keeps = collectKeepItems(store, keepThrough).filter(row => row.status === 'active' && uncovered(row.text));
+    const formatted = formatKeepItems(keeps);
+    if (formatted !== '无') blocks.push({
+        id: 'keep:active', type: 'keep', startFloor: 0, endFloor: through,
+        keepIds: keeps.map(row => row.id), text: '[KEEP]\n' + formatted
+    });
     return blocks;
 }
 

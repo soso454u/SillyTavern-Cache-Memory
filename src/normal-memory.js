@@ -5,6 +5,7 @@ const clean = value => String(value ?? '').trim();
 const activeThread = status => ['published', 'active', 'ready', 'unclaimed'].includes(status);
 const stableTrait = /(?:性格|性子|性情|个性|为人|脾气|生性|天性|素来|平时|通常|一贯|向来|总是|喜欢|喜爱|偏好|爱好|讨厌|厌恶|不喜欢|习惯|personality|temperament|by nature|always|usually|prefers?|likes?|hates?)/iu;
 const momentaryField = /^(?:(?:当前|此刻|本层|实时)的?)?(?:位置|所在地|姿势|坐姿|站姿|睡姿|衣着|穿着|表情|情绪|情绪灰条|心情|门轴响动)$|(?:物品|名牌|手卡|纸包|手机)(?:位置|持握状态)$/u;
+const shortDone = /(?:已成功开箱|已打开行李箱|已完成收拾|已经抵达|已收起便利贴|已经塞进手机壳)/u;
 const lastingConsequence = /(?:任务|期限|承诺|约定|秘密|隐瞒|不知情|知情|误信|调查|线索|证据|身份|关系|伤势|受伤|中毒|昏迷|失踪|监禁|禁令|权限|封锁|限制|威胁|债务|损失|过敏|手术)/u;
 
 export function selectNormalChanges(changes, known = []) {
@@ -17,6 +18,8 @@ export function selectNormalChanges(changes, known = []) {
         if (row.kind === 'thread' && old && !activeThread(old.status) && activeThread(row.status)) continue;
         const ended = row.kind === 'thread' ? !activeThread(row.status) : row.status === 'expired';
         if (!ended) {
+            if (row.kind === 'state' && row.lifetime === 'temporary' && shortDone.test(row.value)
+                && !lastingConsequence.test([row.key, row.value, row.condition].join(' '))) continue;
             if (['personality', 'preference', 'clothing'].includes(row.category) && !stableTrait.test(row.evidence)) continue;
             if (row.kind === 'state' && momentaryField.test(row.key)
                 && !lastingConsequence.test([row.key, row.value, row.evidence, row.condition].join(' '))) continue;

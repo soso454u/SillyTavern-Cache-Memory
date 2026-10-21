@@ -11,7 +11,7 @@ const hasMemoryValue = value => String(value).split('\n').some(line => {
     const text = line.trim().replace(/^(?:[-*•]|\d+[.)、])\s+/, '');
     return text && !/^```/.test(text) && !EMPTY.test(text);
 });
-const CHECKPOINT_FIELDS = ['Story So Far', 'Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks', 'Events', 'Important Facts'];
+const CHECKPOINT_FIELDS = ['Stage Story', 'Story So Far', 'Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks', 'Events', 'Important Facts'];
 
 export function cleanGeneratedResponse(value, source = '') {
     let text = String(value ?? '').trim();

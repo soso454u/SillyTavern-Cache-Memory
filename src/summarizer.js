@@ -1,15 +1,15 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.22';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.22';
-import { generationPrompt } from './generation-prompts.js?v=1.24.22';
-import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.22';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.22';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.22';
-import { extractSummarySource } from './summary-source.js?v=1.24.22';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.22';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.22';
-import { stateSummaryResults, parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, hasLastingResult, activeStateVersion } from './active-state.js?v=1.24.22';
-import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from './normal-memory.js?v=1.24.22';
-import { retryOperation, waitForRetry } from './retry.js?v=1.24.22';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.23';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.23';
+import { generationPrompt } from './generation-prompts.js?v=1.24.23';
+import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.23';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.23';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.23';
+import { extractSummarySource } from './summary-source.js?v=1.24.23';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.23';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.23';
+import { stateSummaryResults, parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, hasLastingResult, activeStateVersion } from './active-state.js?v=1.24.23';
+import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from './normal-memory.js?v=1.24.23';
+import { retryOperation, waitForRetry } from './retry.js?v=1.24.23';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -671,7 +671,9 @@ export class MemorySummarizer {
                 record.content = deduplicateCheckpoint(record.content);
                 // Project the response's validated resolutions before rendering its
                 // current fields, without publishing or changing existing records.
-                if (settings.activeStateEnabled) record.content = reconcileTrackedCheckpoint(record.content,
+                // Normal CP stores its five-floor STORY, not a second table
+                // of existing per-floor stateChanges. Ensemble/legacy stay compatible.
+                if (settings.activeStateEnabled && (settings.summaryMode === 'ensemble' || settings.memoryStrategy === 'legacy')) record.content = reconcileTrackedCheckpoint(record.content,
                     { ...this.generationStore(), checkpoints: [...this.generationStore().checkpoints.filter(cp => cp.id !== record.id), record] }, endFloor, startFloor);
                 return this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) });
             }, assertSources);

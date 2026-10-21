@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.22';
-import { generationPrompt } from './generation-prompts.js?v=1.24.22';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.22';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.22';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.22';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.22';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.22';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.22';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.22';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.22';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.22';
-import { parseFloorSummary } from './summarizer.js?v=1.24.22';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.22';
+import { applyUITheme } from './ui-theme.js?v=1.24.23';
+import { generationPrompt } from './generation-prompts.js?v=1.24.23';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.23';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.23';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.23';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.23';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.23';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.23';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.23';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.23';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.23';
+import { parseFloorSummary } from './summarizer.js?v=1.24.23';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.23';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.22';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.22';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.23';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.23';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -467,6 +467,7 @@ export function configTemplate() {
                         <small class="cache-memory-help" data-prompt-mode-help></small>
                         <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
                         <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
+                        <details><summary>人物状态／任务追踪提示词（与剧情共用一次 API 请求）</summary><textarea rows="1" data-prompt="state"></textarea><button type="button" class="menu_button" data-reset-prompt="state"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看本提示词完整内容</summary><textarea rows="16" readonly data-effective-prompt="state" aria-label="状态追踪提示词"></textarea></details></details>
                         <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="checkpoint" aria-label="实际完整提示词"></textarea></details></details>
                         <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="longMemory" aria-label="实际完整提示词"></textarea></details></details>
                     </section>

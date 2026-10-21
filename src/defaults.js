@@ -4,7 +4,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.19';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.24.19';
 
-export const PLUGIN_VERSION = '1.24.22';
+export const PLUGIN_VERSION = '1.24.23';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1474,12 +1474,60 @@ export const V12421_DEFAULT_PROMPTS = Object.freeze({
 
 [LONG_MEMORY]`),
 });
-// Keep narrative and live snapshot separate in the existing CP5 / Long50 calls.
-export const DEFAULT_PROMPTS = Object.freeze({
+// Retained solely to migrate unchanged v1.24.22 templates.
+export const V12422_DEFAULT_PROMPTS = Object.freeze({
     ...V12421_DEFAULT_PROMPTS,
     summary: V12421_DEFAULT_PROMPTS.summary.replace('[Event]', '[Event]\n按时间叙述本层实际剧情的起因、人物行动、关键选择与结果，像正常的小说梗概；不要写成状态清单。重要 NPC 根据剧情作用记录，删流水账但保留关键细节。\n'),
     checkpoint: V12421_DEFAULT_PROMPTS.checkpoint.replace('[Stage Story]', '[Stage Story]\n本次仅写这五层发生的剧情经过，保留起因、人物行动、重要 NPC、转折和结果；不重复旧阶段，不把角色状态或未完成事项当作剧情段落。\n'),
     longMemory: V12421_DEFAULT_PROMPTS.longMemory.replace('[STORY_ARC]', '[STORY_ARC]\n整合这五十层发生过的主要剧情及因果、关键对话和人物转折，不是任务/状态列表，不逐条复写 CP；状态由最新快照负责。\n'),
+});
+
+// Two user-editable prompt texts run in ONE existing Summary request.
+// Only the Changes projection, not the model call, is separated.
+export const IMPORTANT_STATE_PROMPT = `只从本层真实正文提取将来确实有用的新增／明确变化。重要人物（包括 NPC）的长期身份关系、持续秘密及逐人认知差、长期伤势／限制、技能属性、关键物品线索、尚未完成的重要任务／承诺／计划，以及明确的任务结算才值得记录。每条必须有原文证据；同事项复用原有 ID，未变化输出 []。
+临时表情、姿势、普通衣着、手机／便签／箱子位置、开箱后已结束动作、日常闲聊、未回复的普通消息，均不追踪。已完成／取消／失败任务只更新其状态，不再重新发布；奖励是否到账单独判断。
+不自动为每个角色建档，人物长期未登场也不推断遗忘。通常 0–3 条重大变化，剧情真的复杂时允许更多；禁止凑数、重复、猜测或输出整张状态表。只有新形成且长期不可遗忘的秘密、约束或关键后果才输出 KEEP；旧 KEEP 不复制。`;
+
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V12422_DEFAULT_PROMPTS,
+    summary: `你负责总结本层真正发生的剧情。只依据当前 assistant 正文和明确提供的 SOURCE_METADATA，不虚构时间、地点、心理、未发生情节，也不把未来预演或人物猜测写成现实。
+正文以故事为中心：谁在何处因何行动、说了什么重要的话、发生怎样的转折与结果。重要 NPC 依据实际作用记录，不默认 user／char 优先。简单事件简短，复杂事件保留有用细节；不要写成任务或人物状态列表。
+严格输出：
+[SUMMARY]
+[Title]
+本层剧情的简短标题。
+[Characters]
+实际参与事件的人物，路人可以省略。
+[StoryTime]
+只照录 SOURCE_METADATA 已知日期和时间，无则写无。
+[Location]
+只照录 SOURCE_METADATA 已知地点，无则写无。
+[Event]
+按剧情顺序自然叙述起因、行动、关键表态、事件发展与实际后果。不要重复无价值小动作；不要单列状态、任务、待办。`,
+    checkpoint: `你负责把第{{startFloor}}–{{endFloor}}层的五份剧情小摘要压缩为一份自然连贯的阶段剧情总结。以事件为主，按时间叙述起因、重要人物（包含有作用的 NPC）的行动、对话、转折、结果和延续影响。只叙述本五层实际发生的事情；不复制上一阶段故事，不把五层写成标签和任务列表。
+人物状态和待办由独立的 Changes 追踪快照继承，本 CP 不复写当前状态；已完成事项的重要后果可以作为过去事件记在剧情中，不当作待办。
+严格输出：
+[CHECKPOINT]
+[Stage Story]
+第{{startFloor}}–{{endFloor}}层的剧情小总结（有起因、经过和结果）。
+[RESOLVED_KEEP]
+仅有 NEW_SUMMARIES 逐字证据证明已结束的 keep-id | 原因 | 证据；无则写无。
+[SUPERSEDED_KEEP]
+仅有 NEW_SUMMARIES 逐字证据证明被替代的 keep-id | 新事实 | 证据；无则写无。
+[STATE_RESOLUTIONS]
+仅有本阶段明确证据的旧任务／状态结算，JSON 数组，无则 []。不生成当前角色表。`,
+    longMemory: `你负责把第{{startFloor}}–{{endFloor}}层的十份 CP 剧情（与该范围原有小摘要）压缩成一份长期剧情大总结。依据真实已发生事件按时间交代起因、行动、重要 NPC、冲突和转折、关键对话及结果。保留故事因果而非名词列表，不逐条抄十份 CP，也不复写旧情绪、物品摆放和待办状态。人物认知差不能错误合并；未来预演不可写成已发生。
+只有确有新增或变化的跨场景重大事实才更新长期事实增量；没有就写无，状态变化由独立追踪表维护。
+严格输出：
+[STORY_ARC]
+连贯的本五十层剧情大总结。
+[LONG_MEMORY]
+- 【人物/主题｜类别】本区间新增且确有长期价值的事实；无则写无。
+[UPDATED_FACTS]
+- fact-id | 替代后的事实 | NEW_SUMMARIES 的逐字证据；无则写无。
+[RETIRED_FACTS]
+- fact-id | 明确失效原因 | NEW_SUMMARIES 的逐字证据；无则写无。`,
+    state: IMPORTANT_STATE_PROMPT,
 });
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
@@ -1505,7 +1553,7 @@ export const ENSEMBLE_GENERATION = Object.freeze({
 });
 
 export function modePromptDefaults(settings, mode) {
-    return mode === 'ensemble' ? ENSEMBLE_PROMPTS : settings.memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
+    return mode === 'ensemble' ? { ...ENSEMBLE_PROMPTS, state: IMPORTANT_STATE_PROMPT } : settings.memoryStrategy === 'legacy' ? { ...LEGACY_PROMPTS, state: IMPORTANT_STATE_PROMPT } : DEFAULT_PROMPTS;
 }
 
 // A request captures its mode once. Switching modes never edits saved memories or injection snapshots.
@@ -1517,7 +1565,7 @@ export function memoryGenerationSettings(settings, mode = 'normal') {
     for (const stage of ['summary', 'checkpoint', 'longMemory']) {
         generation[`${stage}MaxTokens`] = Math.min(32000, Math.max(generation[`${stage}MaxTokens`], generation[`${stage}MaxLength`] * 3 + 1024));
     }
-    return { ...settings, ...generation, summaryMode, prompts: { ...ENSEMBLE_PROMPTS, ...settings.ensemblePrompts } };
+    return { ...settings, ...generation, summaryMode, prompts: { ...ENSEMBLE_PROMPTS, state: IMPORTANT_STATE_PROMPT, ...settings.ensemblePrompts } };
 }
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -1569,7 +1617,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];
@@ -1647,8 +1695,9 @@ export function normalizeSettings(saved = {}) {
         provider,
         injectionMode,
         prompts,
-        ensemblePrompts: Object.fromEntries(Object.entries(ENSEMBLE_PROMPTS).map(([key, fallback]) =>
+        ensemblePrompts: { ...Object.fromEntries(Object.entries(ENSEMBLE_PROMPTS).map(([key, fallback]) =>
             [key, typeof source.ensemblePrompts?.[key] === 'string' ? source.ensemblePrompts[key] : fallback])),
+            state: typeof source.ensemblePrompts?.state === 'string' ? source.ensemblePrompts.state : IMPORTANT_STATE_PROMPT },
         ensembleGeneration: Object.fromEntries(Object.entries(ENSEMBLE_GENERATION).map(([key, fallback]) =>
             [key, Math.round(number(source.ensembleGeneration?.[key], fallback, key.endsWith('Tokens') ? 32 : 50, key.endsWith('Tokens') ? 32000 : key.startsWith('summary') ? 5000 : key.startsWith('checkpoint') ? 12000 : 24000))])),
     };

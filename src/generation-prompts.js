@@ -1,5 +1,5 @@
-import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.22';
-import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from './active-state.js?v=1.24.22';
+import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.23';
+import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from './active-state.js?v=1.24.23';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
     .replace('category(skill/attribute/reward/item/identity/knowledge/effect)',
@@ -12,22 +12,20 @@ Changes 不是 State 的逐项抄录：情绪、姿势、临时衣着、普通�
 // Complete ensemble defaults already contain the extraction/aggregation contract.
 // Custom Summary templates without Changes still receive the original parser contract.
 export function generationPrompt(settings, stage) {
-    const prompt = settings.prompts[stage];
-    const completeEnsemble = settings.summaryMode === 'ensemble'
-        && (stage !== 'summary' || /\[Changes\]/i.test(prompt));
-    const extractionRules = settings.summaryMode === 'ensemble' ? STATE_EXTRACTION_RULES : NORMAL_STATE_EXTRACTION_RULES;
-    const rules = settings.activeStateEnabled && !completeEnsemble
-        ? stage === 'summary' ? extractionRules : STATE_AGGREGATION_RULES : '';
-    const budget = stage === 'summary' && settings.summaryMode !== 'ensemble' && !prompt.includes(NORMAL_SUMMARY_LENGTH_RULES)
-        ? `\n${NORMAL_SUMMARY_LENGTH_RULES}` : '';
-    const continuity = settings.summaryMode !== 'ensemble' && !prompt.includes(NORMAL_CONTINUITY_RULES)
-        ? `\n${NORMAL_CONTINUITY_RULES}` : '';
-    const lifecycle = stage === 'checkpoint' ? CHECKPOINT_LIFECYCLE_RULES : '';
-    // Keep custom prompts working; ensure CP/Long output still contains plot.
-    const story = stage === 'checkpoint' && !/\[Stage Story\]/i.test(prompt)
-        ? '\n[Stage Story] 同次生成中附带本次五层新增剧情的起因、经过和结果；最新状态另行继承，不能遗漏重要 NPC、伤势、秘密、认知差及未完成事项。'
-        : stage === 'longMemory' && !/\[STORY_ARC\]/i.test(prompt)
-            ? '\n[STORY_ARC] 同次生成中附带本次五十层按时序发展的历史剧情，含重要转折与人物行动；不要只罗列长期事实。'
-            : '';
-    return withGlobalPrompt(settings, prompt + continuity + budget + rules + lifecycle + story);
+    const prompt = settings.prompts[stage] ?? '';
+    const statePrompt = settings.prompts.state ?? '';
+    const extractionContract = settings.summaryMode === 'ensemble'
+        ? STATE_EXTRACTION_RULES
+        : NORMAL_STATE_EXTRACTION_RULES.replace('沿用 Summary 的 Open 和 State 叙述', '与剧情摘要分离，不需要 Summary 输出 State/Open');
+    if (stage === 'state') return withGlobalPrompt(settings, '【本层人物状态／任务追踪（与剧情摘要共用一次模型请求）】\n'
+        + statePrompt + '\n' + extractionContract);
+    if (stage === 'summary') {
+        const alreadyHasChanges = settings.summaryMode === 'ensemble' && /\[Changes\]/i.test(prompt);
+        const secondary = settings.activeStateEnabled ? '\n\n【第二套提示词：当前重大状态增量；同一次响应，不发送第二个请求】\n'
+            + statePrompt + '\n' + (alreadyHasChanges ? '' : extractionContract)
+            + '\n剧情总结结束后输出 [KEEP]（仅首次出现的长期关键事项，无则写无）和 [Changes]（JSON 数组，无变化 []）。不回显全部旧状态，不因每层保存状态而改变 RP 注入；只在 CP5 边界发布最新状态。' : '';
+        return withGlobalPrompt(settings, prompt + secondary);
+    }
+    // CP5 and Long50 prose are generated at existing boundaries, once each.
+    return withGlobalPrompt(settings, prompt);
 }

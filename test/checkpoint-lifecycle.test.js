@@ -216,3 +216,21 @@ test('145 saved summaries are not expanded into a huge prompt', () => {
     assert.doesNotMatch(text, /楼层剧情正文|旧状态28|HISTORICAL_STORY_/);
     assert.ok(text.length < 4500, String(text.length));
 });
+
+test('story-only CPs publish the separate meaningful snapshot only on CP5, never on a Summary', () => {
+    const store = createEmptyStore('a');
+    for (let n = 1; n <= 10; n++) put(store, n, n === 9 ? [
+        { kind:'state', entity:'医师', key:'已获知城主密信', value:'知道密信源头', category:'knowledge', lifetime:'permanent', status:'active', evidence:'医师获知密信' },
+        { kind:'state', entity:'旅人', key:'普通坐姿', value:'坐在窗边', category:'effect', lifetime:'temporary', status:'active', evidence:'旅人坐在窗边' }
+    ] : [], '楼层剧情' + n);
+    store.checkpoints.push(cp(1, '[CHECKPOINT]\n[Stage Story]\n第1至5层，旅人找回密信。'));
+    store.checkpoints.push(cp(2, '[CHECKPOINT]\n[Stage Story]\n第6至10层，医师提出新证据。'));
+    store.injectionSnapshot = { mode: settings.injectionMode, value: '旧缓存', blocks: [] };
+    const ignored = refreshSnapshot(store, settings, 'new summary');
+    assert.equal(ignored.value, '旧缓存');
+    const published = refreshSnapshot(store, settings, 'new checkpoint').value;
+    assert.match(published, /CHECKPOINT_STORY_1_5[\s\S]*找回密信/);
+    assert.match(published, /CHECKPOINT_STORY_6_10[\s\S]*新证据/);
+    assert.match(published, /CURRENT_SNAPSHOT[\s\S]*医师.*密信/);
+    assert.doesNotMatch(published, /普通坐姿|旧缓存|记忆读取规则/);
+});
