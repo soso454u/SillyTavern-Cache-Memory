@@ -1,6 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.25.3';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.25.3';
-import { fnv1a } from './utils.js?v=1.25.3';
+import { INJECTION_MODES } from './defaults.js?v=1.26.0';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.26.0';
+import { fnv1a } from './utils.js?v=1.26.0';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -25,19 +25,19 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
     if (!shouldRefreshInjection(settings, reason)) return { value: store.injectionSnapshot?.value ?? '', changed: false, skipped: true };
     const previous = store.injectionSnapshot;
     const mode = effectiveInjectionMode(settings);
-    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 4]);
+    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 4, Boolean(settings.historyHandoff)]);
     // A plugin upgrade is not a publication boundary. Preserve even old-format
     // snapshots until the next CP/Long commit or explicit rebuild.
     let previousMode = previous?.mode;
     try { previousMode ??= JSON.parse(previous?.signature ?? 'null')?.[2]; } catch { /* Older snapshots may lack a signature. */ }
     if (reason === 'chat changed' && previous && settings.strictCacheMode && settings.enabled && mode !== INJECTION_MODES.NONE
         && (!previousMode || previousMode === mode)) return { value: previous.value, changed: false };
-    const blocks = settings.enabled && mode !== INJECTION_MODES.NONE && settings.strictCacheMode
+    const blocks = settings.enabled && mode !== INJECTION_MODES.NONE && (settings.strictCacheMode || settings.historyHandoff)
         ? currentInjectionBlocks(sourceStore, settings, mode) : [];
     const value = !settings.enabled || mode === INJECTION_MODES.NONE ? '' : settings.strictCacheMode
         ? renderInjectionBlocks(blocks, sourceStore) : buildInjection(sourceStore, settings);
     const changed = value !== (previous?.value ?? '');
-    store.injectionSnapshot = { signature, mode, blocks, value, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
+    store.injectionSnapshot = { signature, mode, blocks, value, historyHandoff: Boolean(settings.historyHandoff), reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
     return { value, changed, migrated: Boolean(previous && previous.signature !== signature) };
 }
 

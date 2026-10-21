@@ -1,8 +1,9 @@
-import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.25.3';
-import { INJECTION_MODES } from './defaults.js?v=1.25.3';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.3';
-import { stripStructuredSections } from './summary-format.js?v=1.25.3';
-import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.25.3';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.26.0';
+import { INJECTION_MODES } from './defaults.js?v=1.26.0';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.26.0';
+import { stripStructuredSections } from './summary-format.js?v=1.26.0';
+import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.26.0';
+import { historyPublicationLimit } from './history-handoff.js?v=1.26.0';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
@@ -16,7 +17,7 @@ export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
             const key = JSON.stringify([row.memory.startFloor, row.memory.endFloor, row.story?.trim()]);
             if (!meaningful(row.story) || arcKeys.has(key)) return false; arcKeys.add(key); return true;
         });
-    const result = arcs.map(({ memory, story }) => ({ id: `story:long:${memory.id}`, type: 'long-story',
+    const result = arcs.map(({ memory, story }) => ({ id: `story:long:${memory.id}`, type: 'long-story', coversHistory: true,
         startFloor: memory.startFloor, endFloor: memory.endFloor,
         text: `[LONG_STORY_${memory.startFloor}_${memory.endFloor}]\n${story.trim()}` }));
     if (!includeCP) return result.sort((a, b) => a.startFloor - b.startFloor);
@@ -35,6 +36,7 @@ export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
         const narrative = story || (meaningful(prose.replace(/^\s*\[CHECKPOINT\]\s*/iu, '')) ? prose
             : stripStructuredSections(cp.content, hiddenSections).replace(/\[(Characters|Current State|Secrets & Knowledge|Open Threads|Continuity Locks)\]/gu, '[历史记录 · $1]'));
         const block = { id: `checkpoint:${cp.id}`, type: 'checkpoint', startFloor: cp.startFloor, endFloor: cp.endFloor,
+            coversHistory: Boolean(story || meaningful(prose.replace(/^\s*\[CHECKPOINT\]\s*/iu, ''))),
             text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${cp.startFloor}–${cp.endFloor}层 · 历史剧情]\n${narrative}` };
         if (meaningful(narrative.replace(/^\s*\[CHECKPOINT\]\s*/iu, ''))) result.push(block);
     }
@@ -120,9 +122,11 @@ export function relevantSnapshotRows(store, throughFloor) {
 
 export function currentInjectionBlocks(store, settings, mode = settings.injectionMode) {
     const useCP = checkpointModes.includes(mode);
-    const latest = useCP ? store.checkpoints.filter(isUsableMemory)
+    const limit = settings.historyHandoff ? historyPublicationLimit(store, isUsableMemory) : Infinity;
+    const eligible = item => isUsableMemory(item) && item.endFloor <= limit;
+    const latest = useCP ? store.checkpoints.filter(eligible)
         .sort((a, b) => a.endFloor - b.endFloor || a.startFloor - b.startFloor).at(-1) : null;
-    const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor), 0);
+    const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(eligible).map(row => row.endFloor), 0);
     // One CP5/Long50 story per uncovered range; never all per-floor Summary.
     const blocks = historicalStoryBlocks(store, through, useCP);
     // Old CPs contain repeated role sheets in addition to plot. Keep their

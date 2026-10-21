@@ -1,12 +1,13 @@
 {
   "display_name": "缓存记忆 / Cache Memory",
   "loading_order": 20,
+  "generate_interceptor": "cacheMemoryHistoryInterceptor",
   "requires": [],
   "optional": [],
   "js": "index.js",
   "css": "style.css",
   "author": "SillyTavern Community",
-  "version": "1.25.3",
+  "version": "1.26.0",
   "homePage": "https://github.com/soso454u/SillyTavern-Cache-Memory",
   "auto_update": true,
   "extension_hot_reload": {

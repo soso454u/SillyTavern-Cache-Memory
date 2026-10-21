@@ -1,0 +1,43 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>正文与记忆衔接 · 合成验证</title>
+<style>body{margin:0;background:#25252b;color:#ddd;font:16px/1.5 sans-serif}#results{white-space:pre-wrap}</style>
+<div id="extensions_settings2"></div><div id="chat"></div><pre id="results">正在验证…</pre>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { refreshSnapshot } from '../src/cache-control.js';
+import { filterCoveredHistory } from '../src/history-handoff.js';
+import { getAssistantMessages } from '../src/utils.js';
+let settings = normalizeSettings(), publications = 0;
+const chat = [], metadata = {}, results = window.handoffResults = [];
+for(let n=1;n<=10;n++) chat.push({name:'旅人',is_user:true,send_date:`u${n}`,mes:`请求${n}`},{name:'守卫',send_date:`a${n}`,gen_started:`g${n}`,mes:`答复${n}`});
+const store = new MemoryStore({getChatId:()=> 'synthetic-handoff',getMetadata:()=>metadata,saveMetadata:()=>{}});
+for(const entry of getAssistantMessages(chat)) store.addSummary({messageId:entry.messageId,floor:entry.floor,event:`合成事件${entry.floor}`,status:'frozen'});
+for(const endFloor of [5,10]) store.addCheckpoint({id:`cp-${endFloor}`,startFloor:endFloor-4,endFloor,content:`[CHECKPOINT]\n[Stage Story]\n合成历史${endFloor}`,status:'frozen'});
+const updateInjection = reason => {publications++;return refreshSnapshot(store.current(),settings,reason);};
+const ui = window.handoffUI = new CacheMemoryUI({store,getSettings:()=>settings,updateSettings:patch=>settings=normalizeSettings({...settings,...patch}),
+    persistSettings:async()=>{},getChat:()=>chat,updateInjection,apiClient:{hasApiKey:()=>false,complete:()=>{throw Error('禁止调用模型');}},summarizer:{isSummarizing:()=>false}});
+ui.mountSettings();
+const check=(name,passed)=>{results.push({name,passed:Boolean(passed)});if(!passed)throw Error(name);};
+try {
+    document.querySelector('[data-open-settings]').click();
+    document.querySelector('[data-settings-tab="injection"]').click();
+    const panel = document.querySelector('[data-settings-panel="injection"]');
+    const toggle = panel.querySelector('[data-setting="historyHandoff"]');
+    check('默认关闭且说明可见',!panel.hidden&&!toggle.checked&&panel.textContent.includes('停用原来按深度清空'));
+    const before=JSON.stringify(chat),records=JSON.stringify(store.current().checkpoints);
+    toggle.click();
+    check('打开立即保存并重建一次注入',settings.historyHandoff&&publications===1);
+    check('仅发送第一阶段',store.current().injectionSnapshot.blocks.filter(b=>b.type==='checkpoint').length===1);
+    const snapshot=store.current().injectionSnapshot;
+    const result=filterCoveredHistory(structuredClone(chat),chat,snapshot,snapshot.value,{summaries:store.current().summaries});
+    check('最近五轮保留完整请求和回复',result.removed===10&&result.messages.length===10&&result.messages[0].mes==='请求6');
+    check('聊天和阶段记录未改变',JSON.stringify(chat)===before&&JSON.stringify(store.current().checkpoints)===records);
+    toggle.click();
+    check('关闭恢复原注入策略',!settings.historyHandoff&&publications===2&&store.current().injectionSnapshot.blocks.filter(b=>b.type==='checkpoint').length===2);
+    toggle.click();
+    check('页面无横向溢出',document.documentElement.scrollWidth<=innerWidth);
+    document.querySelector('#results').textContent=JSON.stringify(results,null,2);
+}catch(error){document.querySelector('#results').textContent=`失败：${error.stack}`;window.handoffFailure=error.message;}
+</script></html>

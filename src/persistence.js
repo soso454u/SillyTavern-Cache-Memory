@@ -1,6 +1,6 @@
-import { LocalMemoryStorage } from './local-memory-storage.js?v=1.25.3';
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.25.3';
-import { retryOperation, waitForRetry } from './retry.js?v=1.25.3';
+import { LocalMemoryStorage } from './local-memory-storage.js?v=1.26.0';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.26.0';
+import { retryOperation, waitForRetry } from './retry.js?v=1.26.0';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
