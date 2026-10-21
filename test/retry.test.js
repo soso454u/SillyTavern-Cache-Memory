@@ -51,7 +51,7 @@ function fixture(count = 1) {
             calls.push(request);
             if (calls.length < 4) throw Object.assign(new Error('HTTP 504'), { status: 504 });
             return { content: request.systemPrompt.includes('[CHECKPOINT]') ? '[CHECKPOINT]\n[Story So Far]\n合成阶段'
-                : request.systemPrompt.includes('[LONG_MEMORY]') ? '[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无'
+                : request.systemPrompt.includes('[LONG_MEMORY]') ? '[STORY_ARC]\n已保存阶段的剧情整合。\n[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无'
                     : '[SUMMARY]\n[Title]\n合成摘要\n[Event]\n合成正文事件\n[KEEP]\n无' };
         } } });
     return { store, summarizer, chat, calls, waits };

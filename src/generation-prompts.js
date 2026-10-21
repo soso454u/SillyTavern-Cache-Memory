@@ -1,6 +1,6 @@
-import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.25.2';
-import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.25.2';
-import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.25.2';
+import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.25.3';
+import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.25.3';
+import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.25.3';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
     .replace('category(skill/attribute/reward/item/identity/knowledge/effect)',

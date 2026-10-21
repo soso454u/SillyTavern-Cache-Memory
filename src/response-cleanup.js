@@ -1,5 +1,5 @@
-import { parseStructuredSummary } from './summary-format.js?v=1.25.2';
-import { readSection } from './continuity.js?v=1.25.2';
+import { parseStructuredSummary } from './summary-format.js?v=1.25.3';
+import { readSection } from './continuity.js?v=1.25.3';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
 const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
@@ -72,6 +72,9 @@ export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } 
         if (fields.some(hasMemoryValue)) return text;
         if (/\[CHECKPOINT\]|\[Current State\]|\[Characters\]|\[Events\]/i.test(text + '\n' + prompt)) return fail();
     } else {
+        const story = readSection(text, 'STORY_ARC');
+        if (hasMemoryValue(story)) return text;
+        if (/\[STORY_ARC\]/i.test(prompt)) throw Object.assign(new Error('Long Memory 响应缺少 STORY_ARC 剧情大总结，原记忆保留'), { code: 'INVALID_MEMORY_RESPONSE' });
         const fields = ['LONG_MEMORY', 'UPDATED_FACTS', 'RETIRED_FACTS'];
         if (fields.some(name => new RegExp(`^\\s*\\[${name}\\]\\s*$`, 'im').test(text))) {
             // All three sections may legitimately say "无" when no new fact is established.

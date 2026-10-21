@@ -164,7 +164,7 @@ test('incremental checkpoints carry prior state and KEEP; fact extraction append
             inputs.push(request.userContent);
             if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) {
                 factCalls += 1;
-                return { content: factCalls === 1 ? '[LONG_MEMORY]\n- 【姜梨/陆雾｜约定】姜梨答应十二月前陪陆雾回巴黎见外婆\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' : '[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' };
+                return { content: factCalls === 1 ? '[STORY_ARC]\n本阶段互动引出了新的旅行约定。\n[LONG_MEMORY]\n- 【姜梨/陆雾｜约定】姜梨答应十二月前陪陆雾回巴黎见外婆\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' : '[STORY_ARC]\n人物在后续阶段继续处理日常与约定。\n[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' };
             }
             return { content: `[CHECKPOINT]\n[Current State]\n${'人物当前状态'.repeat(100)}` };
         },
@@ -238,7 +238,7 @@ test('story metadata flows from summaries into checkpoints, long memories and KE
 
     const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 3, longMemoryInterval: 3 }), getChat: () => loadedChat(store), apiClient: {
         complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]')
-            ? '[LONG_MEMORY]\n- 【姜梨｜秘密】姜梨曾公开秘密\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无'
+            ? '[STORY_ARC]\n姜梨在酒店公开了秘密。\n[LONG_MEMORY]\n- 【姜梨｜秘密】姜梨曾公开秘密\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无'
             : `[CHECKPOINT]\n[Current State]\n已公开\n[RESOLVED_KEEP]\n- ${keep.id} | 秘密已公开 | 姜梨公开了秘密` }),
     } });
     const checkpoint = await summarizer.generateCheckpoint(1, 3);
@@ -360,7 +360,7 @@ test('automatic incremental stages feed new facts into the next state and never 
             if (userContent.startsWith('正文')) return { content: `[SUMMARY]\n[Event]\n${userContent}\n[KEEP]\n- 姜梨答应十二月前陪陆雾回巴黎见外婆` };
             if (userContent.startsWith('[EXISTING_LONG_FACTS]')) {
                 factCalls += 1;
-                return { content: factCalls === 1 ? '[LONG_MEMORY]\n- 【姜梨/陆雾｜约定】十二月前去巴黎' : '[LONG_MEMORY]\n无' };
+                return { content: factCalls === 1 ? '[STORY_ARC]\n本阶段互动引出了新的旅行约定。\n[LONG_MEMORY]\n- 【姜梨/陆雾｜约定】十二月前去巴黎' : '[STORY_ARC]\n人物在后续阶段继续处理日常与约定。\n[LONG_MEMORY]\n无' };
             }
             stateInputs.push(userContent);
             return { content: '[CHECKPOINT]\n[Current State]\n当前状态' };
@@ -381,7 +381,7 @@ test('KEEP and stable facts survive 100 incremental checkpoints through floor 10
     };
     store.addLongMemory({ id: 'long-001', startFloor: 0, endFloor: 0, memoryKind: 'facts', factUpdates: [{ id: 'fact-stable', action: 'add', text: '陆雾不知道姜梨看过那封邮件' }], status: 'frozen', frozen: true });
     const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings(), getChat: () => loadedChat(store), apiClient: {
-        complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n无' : '[CHECKPOINT]\n[Current State]\n当前普通场景状态' }),
+        complete: async ({ userContent }) => ({ content: userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[STORY_ARC]\n本区间普通场景的剧情整合。\n[LONG_MEMORY]\n无' : '[CHECKPOINT]\n[Current State]\n当前普通场景状态' }),
     } });
     for (let end = 10; end <= 1000; end += 10) {
         await summarizer.generateCheckpoint(end - 9, end);
@@ -395,8 +395,8 @@ test('KEEP and stable facts survive 100 incremental checkpoints through floor 10
     const output = buildInjection(memory, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT }));
     assert.match(output, /陆雾不知道姜梨看过那封邮件/);
     assert.match(output, /十二月前陪陆雾回巴黎见外婆/);
-    assert.match(output, /CHECKPOINT_/);
-    assert.doesNotMatch(output, /RECENT_SUMMARY/); // Latest CP stays usable even at a Long boundary.
+    assert.match(output, /LONG_STORY_/);
+    assert.doesNotMatch(output, /CHECKPOINT_|RECENT_SUMMARY/); // Complete Long stories cover all stages through 1000.
 });
 
 test('Long Memory section edits preserve separate tracked state and untouched historical updates', () => {

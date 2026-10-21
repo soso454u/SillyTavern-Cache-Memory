@@ -12,7 +12,7 @@ import { threeWayMerge } from '../server-plugin/cache-memory-memory/index.mjs';
 
 const refusal = "I'm sorry, but I cannot fulfill this request.";
 const cp = '[CHECKPOINT]\n[Story So Far]\n张医生交给林青一封信。\n[Current State]\n林青仍在诊室。';
-const long = '[LONG_MEMORY]\n- 【张医生｜身份】张医生是林青的主治医生。\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无';
+const long = '[STORY_ARC]\n张医生交信，林青收下后离开诊室。\n[LONG_MEMORY]\n- 【张医生｜身份】张医生是林青的主治医生。\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无';
 const summary = '[SUMMARY]\n[Title]\n诊室\n[Characters]\n林青、张医生\n[Event]\n张医生交给林青一封信。\n[Quote]\n"Keep it safe."';
 
 for (const [kind, text, prompt] of [['Summary', summary, DEFAULT_PROMPTS.summary], ['Checkpoint', cp, DEFAULT_PROMPTS.checkpoint], ['Long Memory', long, DEFAULT_PROMPTS.longMemory]]) {
@@ -46,8 +46,11 @@ test('inline and fragmented multi-line thought markup leaves valid Event content
     assert.equal(cleanGeneratedResponse('<think>x</think><analysis>y</analysis>正常正文'), '正常正文');
 });
 
-test('valid no-new-facts Long result and existing custom plain output stay compatible', () => {
-    assert.equal(prepareMemoryResponse('[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无', 'Long Memory', { prompt: DEFAULT_PROMPTS.longMemory }).startsWith('[LONG_MEMORY]'), true);
+test('narrative Long may have no new facts, while old custom fact-only output stays compatible', () => {
+    const oldFacts = '[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无';
+    assert.equal(prepareMemoryResponse('[STORY_ARC]\n医生交还信件，两人暂时休战。\n' + oldFacts, 'Long Memory', { prompt: DEFAULT_PROMPTS.longMemory }).startsWith('[STORY_ARC]'), true);
+    assert.equal(prepareMemoryResponse(oldFacts, 'Long Memory', { prompt: '仅输出 [LONG_MEMORY] 长期事实' }), oldFacts);
+    assert.throws(() => prepareMemoryResponse(oldFacts, 'Long Memory', { prompt: DEFAULT_PROMPTS.longMemory }), /STORY_ARC/);
     assert.equal(prepareMemoryResponse('The doctor returns to work.', 'Summary', { prompt: '直接输出一句剧情总结' }), 'The doctor returns to work.');
 });
 

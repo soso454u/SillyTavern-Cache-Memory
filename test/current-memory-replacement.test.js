@@ -36,7 +36,7 @@ function fixture(count = 5, authority = false) {
         commitMemory: (mutate, active) => persistence.commitReplacement(store, mutate, active),
         apiClient: { complete: async request => { requests.push(request); return { content: request.systemPrompt.includes('[CHECKPOINT]')
             ? '[CHECKPOINT]\n[Current State]\n新版阶段正文' : request.systemPrompt.includes('[LONG_MEMORY]')
-                ? '[LONG_MEMORY]\n新版长期正文\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' : '[SUMMARY]\n[Title]\n新版\n[Event]\n新版摘要正文\n[KEEP]\n无' }; } } });
+                ? '[STORY_ARC]\n新版长期剧情梗概。\n[LONG_MEMORY]\n新版长期正文\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' : '[SUMMARY]\n[Title]\n新版\n[Event]\n新版摘要正文\n[KEEP]\n无' }; } } });
     const seed = () => { remote = structuredClone(store.current()); persistence.pending.clear(); persistence.activate('a', store.current()); };
     return { chat, store, persistence, summarizer, requests, seed, get remote() { return remote; }, set fail(v) { fail = v; }, set duringWrite(fn) { duringWrite = fn; }, set remote(v) { remote = v; } };
 }

@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.25.2';
-import { applyUITheme } from './ui-theme.js?v=1.25.2';
-import { generationPrompt } from './generation-prompts.js?v=1.25.2';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.25.2';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.25.2';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.25.2';
-import { HistoryBackfill } from './history-backfill.js?v=1.25.2';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.25.2';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.2';
-import { buildStructuredSummary } from './summary-format.js?v=1.25.2';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.2';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.25.2';
-import { parseFloorSummary } from './summarizer.js?v=1.25.2';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.25.2';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.25.3';
+import { applyUITheme } from './ui-theme.js?v=1.25.3';
+import { generationPrompt } from './generation-prompts.js?v=1.25.3';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.25.3';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.25.3';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.25.3';
+import { HistoryBackfill } from './history-backfill.js?v=1.25.3';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.25.3';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.3';
+import { buildStructuredSummary } from './summary-format.js?v=1.25.3';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.3';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.25.3';
+import { parseFloorSummary } from './summarizer.js?v=1.25.3';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.25.3';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.25.2';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.25.2';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.25.3';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.25.3';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -37,9 +37,19 @@ const LONG_MEMORY_SECTIONS = Object.freeze([
     ['longMemory', 'LONG_MEMORY', '必要前情'],
     ['updatedFacts', 'UPDATED_FACTS', '长期事实更新'],
     ['retiredFacts', 'RETIRED_FACTS', '已结束的历史事实'],
+    ['storyArc', 'STORY_ARC', '本段剧情大总结'],
     ['trackedState', 'CURRENT_TRACKED_STATE', '角色状态'],
     ...CHECKPOINT_SECTIONS,
 ]);
+
+const longMemoryFields = fields => [...LONG_MEMORY_SECTIONS.filter(([key]) => key === 'storyArc' && Object.hasOwn(fields, key)),
+    ...LONG_MEMORY_SECTIONS.filter(([key], index) => key !== 'storyArc' && (index < 3 || Object.hasOwn(fields, key)))];
+export function hasLongStory(content) {
+    const text = readSection(content, 'STORY_ARC');
+    return Boolean(text.trim()) && !/^(?:[-*•]\s*)?(?:无|none|无新增)[。.]?$/iu.test(text.trim());
+}
+const isLegacyLong = memory => !hasLongStory(memory.content) && (memory.memoryKind === 'facts'
+    || /\[(?:LONG_MEMORY|UPDATED_FACTS|RETIRED_FACTS)\]/iu.test(String(memory.content ?? '')));
 
 const trackedStatusLabel = status => ({ active: '有效', published: '已发布', ready: '待结算', unclaimed: '待领取', completed: '已完成', failed: '失败', cancelled: '已取消', expired: '已结束' }[status] || status);
 
@@ -205,15 +215,15 @@ export function parseLongMemorySections(content) {
     const parts = text.split(/^\s*\[([^\]\n]+)\]\s*$/m);
     const names = parts.filter((_, index) => index % 2 === 1).map(name => name.toUpperCase());
     // Custom formats remain fully visible and editable without losing extra sections.
-    if (parts[0].trim() || !names.includes('LONG_MEMORY') || new Set(names).size !== names.length
+    if (parts[0].trim() || !names.some(name => ['LONG_MEMORY', 'STORY_ARC'].includes(name)) || new Set(names).size !== names.length
         || names.some(name => !LONG_MEMORY_SECTIONS.some(([, section]) => section.toUpperCase() === name))) return null;
     return Object.fromEntries(LONG_MEMORY_SECTIONS.filter(([, section], index) => index < 3 || names.includes(section.toUpperCase()))
         .map(([key, section]) => [key, readSection(text, section)]));
 }
 
 export function buildLongMemoryContent(fields) {
-    return LONG_MEMORY_SECTIONS.filter(([key], index) => index < 3 || Object.hasOwn(fields, key))
-        .flatMap(([key, section], index) => [`[${section}]`, String(fields[key] ?? '').trim() || (index < 3 ? '无' : '')]).join('\n');
+    return longMemoryFields(fields).flatMap(([key, section]) => [`[${section}]`, String(fields[key] ?? '').trim()
+        || (['longMemory', 'updatedFacts', 'retiredFacts'].includes(key) ? '无' : '')]).join('\n');
 }
 
 function notify(type, message) {
@@ -1957,12 +1967,14 @@ export class CacheMemoryUI {
         const ready = plan?.longMemories ?? [], blocked = plan?.blockedLongMemories ?? [];
         section.append(this.element('h4', '', '大总结合成'), this.element('p', '', '每50层合成一份大总结，替代已覆盖的小总结：1–50、51–100，再接101–105等阶段。自定义间隔按设置执行。'));
         if (ready.length) section.append(this.element('p', '', `可生成：${compactRanges(ready.map(row => [row.startFloor, row.endFloor]))}。每段调用一次摘要模型。`));
-        else section.append(this.element('p', '', blocked.length ? '当前没有来源完整的待生成大总结。' : '当前没有待生成的大总结。'));
+        else section.append(this.element('p', '', blocked.length ? '当前没有来源完整的待生成大总结。' : '当前没有缺失的大总结。已有记录不会由“生成缺失”重写；可展开记录，点击“重新生成本段”。'));
+        const legacy = this.store.current().longMemories.filter(row => isUsableMemory(row) && isLegacyLong(row));
+        if (legacy.length) section.append(this.element('p', '', `有 ${legacy.length} 份旧格式记录，没有独立的新版剧情段。可展开记录逐份重新生成；不会自动覆盖。`));
         if (blocked.length) section.append(this.element('p', '', `来源小总结缺口：${blocked.map(row => `${row.startFloor}–${row.endFloor}层（从第${row.missingFrom}层缺起）`).join('；')}。可先到阶段总结页检查。`));
         const actions = this.element('div', 'cache-memory-actions');
         const generate = this.element('button', 'menu_button', `生成缺失大总结（${ready.length}段）`);
         generate.dataset.fillLongMemories = ''; generate.type = 'button';
-        generate.disabled = !ready.length || this.isMissingCheckpointBackfillActive() || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
+        generate.disabled = !ready.length || Boolean(this.regeneratingLongId) || this.isMissingCheckpointBackfillActive() || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
         generate.title = '调用摘要模型，仅使用已有小总结；不生成或重写楼层摘要、阶段总结。';
         const stop = this.element('button', 'menu_button', '安全停止'); stop.type = 'button'; stop.dataset.cancelMissingCheckpoints = ''; stop.disabled = !this.isMissingCheckpointBackfillActive();
         actions.append(generate, stop); section.append(actions, this.element('small', 'cache-memory-help', '只使用已有小总结，不自动重做历史。重新注入只更新发送内容，不会生成大总结。'));
@@ -2323,20 +2335,22 @@ export class CacheMemoryUI {
         root.append(this.element('h4', '', '已保存的 Long Memory（点击展开查看全文）'));
         for (const memory of [...this.store.current().longMemories].sort((a, b) => b.startFloor - a.startFloor)) {
             root.append(this.foldCard({ key: `long:${memory.id}`, group: 'facts', type: 'long', id: memory.id,
-                title: `${memory.id}｜${memory.startFloor}–${memory.endFloor}层`, status: memoryHealth(memory).label,
+                title: `${memory.id}｜${memory.startFloor}–${memory.endFloor}层`, status: `${memoryHealth(memory).label}${hasLongStory(memory.content) ? ' · 剧情大总结' : isLegacyLong(memory) ? ' · 旧格式记录' : ''}`,
                 renderBody: body => {
                     body.append(this.line('有效性', memoryHealth(memory).label),
                         this.line('剧情日期/时间范围', memory.storyStartTime && memory.storyEndTime ? `${memory.storyStartTime} → ${memory.storyEndTime}` : memory.storyStartTime || memory.storyEndTime));
                     const fields = parseLongMemorySections(memory.content);
+                    if (isLegacyLong(memory)) body.append(this.element('p', 'cache-memory-help', '这是已保存的旧格式记录，没有独立的新版剧情段。下方“重新生成本段”按本区间的小总结和当前大总结提示词调用模型整理；“生成缺失”会跳过已有记录。'));
                     if (this.isEditing('long', memory.id)) {
-                        this.inlineEditor(body, fields ? LONG_MEMORY_SECTIONS.filter(([key]) => Object.hasOwn(fields, key)).map(([key, section, label]) => ({
+                        this.inlineEditor(body, fields ? longMemoryFields(fields).map(([key, section, label]) => ({
                             key, label: `${label} · ${section}`, value: fields[key], multiline: true, rows: 5,
                         })) : [{ key: 'rawContent', label: '原始 Long Memory（自定义或旧格式）', value: memory.content, multiline: true, rows: 14 }]);
                         return;
                     }
                     if (fields) {
                         const sections = this.element('div', 'cache-memory-structured-sections');
-                        for (const [key, , label] of LONG_MEMORY_SECTIONS.filter(([key]) => Object.hasOwn(fields, key))) {
+                        for (const [key, , label] of longMemoryFields(fields).filter(([key]) => String(fields[key] ?? '').trim()
+                            && !/^(?:[-*•]\s*)?(?:无|none)[。.]?$/iu.test(String(fields[key]).trim()))) {
                             const section = this.element('section', 'cache-memory-structured-section');
                             section.append(this.element('h5', '', label), this.element('p', '', fields[key] || '无'));
                             sections.append(section);
@@ -2345,6 +2359,11 @@ export class CacheMemoryUI {
                     } else body.append(this.element('div', 'cache-memory-raw-content', memory.content));
                     const actions = this.element('div', 'cache-memory-actions');
                     actions.innerHTML = '<button type="button" class="menu_button" data-manager-action="edit">编辑</button>';
+                    const regenerate = this.element('button', 'menu_button', this.regeneratingLongId === memory.id ? '正在重新生成…' : '重新生成本段');
+                    regenerate.type = 'button'; regenerate.dataset.managerAction = 'regenerate';
+                    regenerate.disabled = Boolean(this.regeneratingLongId) || this.isMissingCheckpointBackfillActive() || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
+                    regenerate.title = `调用摘要模型，仅重新生成第${memory.startFloor}–${memory.endFloor}层大总结`;
+                    actions.append(regenerate);
                     if (memory.checkpointIds?.length) {
                         const button = this.element('button', 'menu_button', '查看来源阶段记忆');
                         button.dataset.locateType = 'Checkpoint'; button.dataset.locateId = memory.checkpointIds[0]; actions.append(button);
@@ -3148,8 +3167,13 @@ export class CacheMemoryUI {
         } else if (action === 'edit') {
             this.beginInlineEdit(type, id);
         } else if (action === 'regenerate') {
-            const existing = type === 'summary' ? this.store.getSummary(id) : true;
-            if (existing && existing.status !== 'failed' && !await this.showPluginDialog({ title: '重新生成记忆', message: '仅按该条记忆的固定来源重新生成并替换它。继续？', confirmLabel: '确认重新生成' })) return;
+            const existing = type === 'summary' ? this.store.getSummary(id) : type === 'long' ? this.store.current().longMemories.find(row => row.id === id) : true;
+            const chatId = type === 'long' ? this.store.current().chatId : null;
+            const version = type === 'long' ? JSON.stringify(existing) : '';
+            if (existing && existing.status !== 'failed' && !await this.showPluginDialog({ title: type === 'long' ? '重新生成本段大总结' : '重新生成记忆',
+                message: type === 'long' ? `将调用摘要模型，按第${existing.startFloor}–${existing.endFloor}层已有小总结重新生成并替换本条${existing.manualEdited ? '（含人工编辑内容）' : ''}。其他区间保持。`
+                    : '仅按该条记忆的固定来源重新生成并替换它。继续？', confirmLabel: '确认重新生成' })) return;
+            if (type === 'long' && (chatId !== this.store.current().chatId || version !== JSON.stringify(this.store.current().longMemories.find(row => row.id === id)))) throw new Error('确认期间聊天或本段记忆已变化，请重新操作');
             button.disabled = true;
             try { await this.regenerate(type, type === 'summary' ? card.dataset.messageId || id : id); } catch (error) { notify('error', error.message); }
         }
@@ -3300,9 +3324,30 @@ export class CacheMemoryUI {
             const item = this.store.current().checkpoints.find(entry => entry.id === id);
             return this.summarizer.enqueueForCurrentChat(() => this.summarizer.generateCheckpoint(item.startFloor, item.endFloor, { overwrite: true, allowMissing: true }));
         }
+        if (this.regeneratingLongId) throw new Error('已有大总结正在重新生成，请等待完成');
         const item = this.store.current().longMemories.find(entry => entry.id === id);
-        const checkpoints = this.store.current().checkpoints.filter(entry => item.checkpointIds.includes(entry.id));
-        return this.summarizer.enqueueForCurrentChat(() => this.summarizer.generateLongMemory(checkpoints, { overwrite: true }));
+        if (!item) throw new Error('未找到这份大总结，原记忆保留');
+        const expected = JSON.stringify(item);
+        this.regeneratingLongId = id; this.renderManager?.();
+        try {
+            return await this.summarizer.enqueueForCurrentChat(() => {
+                if (JSON.stringify(this.store.current().longMemories.find(entry => entry.id === id)) !== expected) throw new Error('排队期间本段记忆已变化，原记忆保留');
+                // Fixed range is authoritative. Older records may have no IDs,
+                // stale IDs, or an incomplete source list; never shrink a Long
+                // to whichever linked CP happens to remain.
+                const checkpoints = this.store.current().checkpoints.filter(entry => isUsableMemory(entry)
+                    && entry.startFloor >= item.startFloor && entry.endFloor <= item.endFloor).sort((a, b) => a.startFloor - b.startFloor);
+                let next = item.startFloor;
+                for (const checkpoint of checkpoints) {
+                    if (checkpoint.startFloor !== next) throw new Error('本段来源小总结有缺口或重叠，未请求模型，原记忆保留');
+                    next = checkpoint.endFloor + 1;
+                }
+                if (next !== item.endFloor + 1) throw new Error('本段来源小总结尚未完整，未请求模型，原记忆保留');
+                return this.summarizer.generateLongMemory(checkpoints, { overwrite: true });
+            });
+        } finally {
+            this.regeneratingLongId = null; this.renderManager?.();
+        }
     }
 
     async importMergeFile(event) {

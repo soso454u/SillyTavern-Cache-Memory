@@ -1,16 +1,16 @@
-import { selectedTableRecords } from './character-tables.js?v=1.25.2';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.25.2';
-import { memoryGenerationSettings } from './defaults.js?v=1.25.2';
-import { generationPrompt } from './generation-prompts.js?v=1.25.2';
-import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.25.2';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.25.2';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.25.2';
-import { extractSummarySource } from './summary-source.js?v=1.25.2';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.25.2';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.25.2';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.25.2';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.25.2';
-import { retryOperation, waitForRetry } from './retry.js?v=1.25.2';
+import { selectedTableRecords } from './character-tables.js?v=1.25.3';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.25.3';
+import { memoryGenerationSettings } from './defaults.js?v=1.25.3';
+import { generationPrompt } from './generation-prompts.js?v=1.25.3';
+import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.25.3';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.25.3';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.25.3';
+import { extractSummarySource } from './summary-source.js?v=1.25.3';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.25.3';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.25.3';
+import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.25.3';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.25.3';
+import { retryOperation, waitForRetry } from './retry.js?v=1.25.3';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -778,7 +778,11 @@ export class MemorySummarizer {
             .sort((a, b) => a.floor - b.floor).map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
         const sourceSummaries = this.store.currentSummaries(this.getChat())
             .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor);
-        const storyMetadata = storyMetadataRange(sourceSummaries);
+        const storyMetadata = storyMetadataRange([...sourceSummaries, ...sorted]);
+        // A manual rewrite can use CPs while floor sources are unloaded. Keep
+        // known range dates when the available sources provide no replacement.
+        storyMetadata.storyStartTime ||= existing?.storyStartTime || '';
+        storyMetadata.storyEndTime ||= existing?.storyEndTime || '';
         const sourceVersions = Object.fromEntries(sourceSummaries.map(item => [item.messageId, summaryVersion(item)]));
         const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.generationStore(), endFloor) : null;
         const checkpointVersions = sorted.map(item => JSON.stringify(item));

@@ -182,7 +182,7 @@ test('new Long reuses known NPC facts after fifty quiet floors, drops exact dupl
     for (let startFloor = 51; startFloor <= 100; startFloor += 5) f.store.addCheckpoint({ id: `cp-${startFloor}`,
         startFloor, endFloor: startFloor + 4, content: '[CHECKPOINT]\n[Story So Far]\n新阶段的因果\n[Characters]\n修桥工乙：渡口负责人\n[Open Threads]\n无', status: 'frozen' });
     f.summarizer.apiClient.complete = async request => { f.requests.push(request); return { content:
-        `[LONG_MEMORY]\n- ${knownFact}\n- 【医生丙｜认知差】医生丙仍不知道桥下暗门\n[UPDATED_FACTS]\n- fact-old-npc | ${knownFact} | 渡口负责人，因过去塌桥而守桥\n[RETIRED_FACTS]\n无` }; };
+        `[STORY_ARC]\n医生丙与渡口负责人的阶段互动。\n[LONG_MEMORY]\n- ${knownFact}\n- 【医生丙｜认知差】医生丙仍不知道桥下暗门\n[UPDATED_FACTS]\n- fact-old-npc | ${knownFact} | 渡口负责人，因过去塌桥而守桥\n[RETIRED_FACTS]\n无` }; };
     const before = structuredClone(f.store.current());
     const result = await f.summarizer.generateLongMemory(f.store.current().checkpoints);
     assert.equal(f.requests.length, 1); assert.match(f.requests[0].userContent, /fact-old-npc/);

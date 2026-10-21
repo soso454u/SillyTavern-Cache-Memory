@@ -66,7 +66,7 @@ test('missing fingerprints and unloaded sources preserve generated CP/Long and d
     assert.equal(memoryHealth(store.current().checkpoints[0]).code, 'valid');
     let requests = 0;
     const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings({ checkpointInterval: 2, longMemoryInterval: 2 }),
-        apiClient: { complete: async () => { requests++; return { content: '[LONG_MEMORY]\n- 重要长期事实' }; } } });
+        apiClient: { complete: async () => { requests++; return { content: '[STORY_ARC]\n已有阶段中的重要历史。\n[LONG_MEMORY]\n- 重要长期事实' }; } } });
     await summarizer.generateDueLongMemories();
     assert.equal(requests, 1); assert.equal(store.current().longMemories.length, 1);
 });

@@ -20,7 +20,7 @@ function fixture(count = 208) {
             const type = request.systemPrompt.includes('[CHECKPOINT]') ? 'Checkpoint' : request.systemPrompt.includes('[LONG_MEMORY]') ? 'Long Memory' : 'Summary';
             calls.push(type);
             return { content: type === 'Checkpoint' ? '[CHECKPOINT]\n[Current State]\n阶段内容'
-                : type === 'Long Memory' ? '[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' : '[SUMMARY]\n[Title]\n补齐\n[Event]\n补齐内容\n[KEEP]\n无' };
+                : type === 'Long Memory' ? '[STORY_ARC]\n已保存阶段的剧情整合。\n[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' : '[SUMMARY]\n[Title]\n补齐\n[Event]\n补齐内容\n[KEEP]\n无' };
         } } });
     const checkpoint = start => store.addCheckpoint({ id: `cp-${start}`, startFloor: start, endFloor: start + 4, content: `原阶段${start}`, status: 'frozen', frozen: true });
     const long = start => store.addLongMemory({ id: `long-${start}`, startFloor: start, endFloor: start + 49, content: `原长期${start}`, status: 'frozen', frozen: true });
