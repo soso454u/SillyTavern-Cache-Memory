@@ -49,11 +49,11 @@ test('new defaults and reset templates preserve structure, NPC rules and custom 
     for (const name of Object.keys(DEFAULT_PROMPTS)) {
         const custom = `${V1200_DEFAULT_PROMPTS[name]}\n自定义内容`;
         assert.equal(normalizeSettings({ prompts: { [name]: custom } }).prompts[name], custom);
-        for (const variable of V1200_DEFAULT_PROMPTS[name].match(/{{\w+}}/g)) assert.ok(DEFAULT_PROMPTS[name].includes(variable));
+        for (const variable of (V1200_DEFAULT_PROMPTS[name] ?? '').match(/{{\w+}}/g) ?? []) if (variable !== '{{floor}}') assert.ok(DEFAULT_PROMPTS[name].includes(variable));
     }
-    assert.match(DEFAULT_PROMPTS.summary, /候选奖励、待领取奖励不等于已获得/);
-    assert.match(DEFAULT_PROMPTS.checkpoint, /条件满足待结算仍保留/);
-    assert.match(DEFAULT_PROMPTS.longMemory, /UPDATED_FACTS 更新原 fact-id/);
+    assert.match(DEFAULT_PROMPTS.summary, /任务条件和重要后果/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /任务完成与奖励领取分开/);
+    assert.match(DEFAULT_PROMPTS.longMemory, /UPDATED_FACTS/);
     assert.equal(normalizeSettings({ injectionMaxTokens: 2800 }).injectionMaxTokens, undefined);
 });
 
@@ -230,8 +230,8 @@ test('maintenance snapshot is retained on reload and rebuilt at the next permitt
     assert.equal(f.store.current().injectionSnapshot.needsRebuild, true);
     assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed').value, frozen);
     const next = refreshSnapshot(f.store.current(), settings, 'new checkpoint');
-    assert.equal(f.store.current().injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
-    assert.match(next.value, /LATEST_CHECKPOINT/);
+    assert.equal(f.store.current().injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 2);
+    assert.match(next.value, /CHECKPOINT_/);
     assert.equal(f.store.current().injectionSnapshot.needsRebuild, undefined);
 });
 

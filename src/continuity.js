@@ -1,7 +1,7 @@
-import { fnv1a } from './utils.js?v=1.24.19';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.19';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.24.19';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.24.19';
+import { fnv1a } from './utils.js?v=1.25.0';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.25.0';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.25.0';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.25.0';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
@@ -189,6 +189,7 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
             const matches = [...facts.values()].filter(fact => fact.status === 'active' && (fact.stateId === item.id
                 || isAtomicTrackedEntry(fact.text, item) || [...item.history, item].some(old => matchesTrackedValue(fact.text, item, old.value, old.key))));
             if (matches.some(fact => fact.floor > item.sourceFloor)) continue;
+            if (includeTracked === 'existing' && !matches.length) continue;
             const id = matches[0]?.id ?? item.id;
             for (const duplicate of matches.slice(1)) facts.set(duplicate.id, { ...duplicate, status: 'superseded' });
             facts.set(id, { id, stateId: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: item.needsReview ? 'needs-review' : item.status === 'active' ? 'active' : 'retired',

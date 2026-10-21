@@ -1,5 +1,5 @@
-import { parseStructuredSummary } from './summary-format.js?v=1.24.19';
-import { fnv1a } from './utils.js?v=1.24.19';
+import { parseStructuredSummary } from './summary-format.js?v=1.25.0';
+import { fnv1a } from './utils.js?v=1.25.0';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
@@ -253,6 +253,10 @@ export function reconcileTrackedCheckpoint(content, store, throughFloor, startFl
         const existing = result.match(marker);
         const retained = (existing?.[2] ?? '').split('\n').filter(line => !rows.some(item =>
             /^\s*-?\s*已结束\s/u.test(line) && matchesTrackedFact({ text: line }, item)
+            // A settled task's explicitly named field cannot remain open merely
+            // because its old progress also lists conditions or rewards.
+            || section === 'Open Threads' && item.kind === 'thread' && !isTrackedActive(item)
+                && matchesTrackedFact({ text: line }, item)
             || isAtomicTrackedEntry(line, item) && (item.sourceFloor >= throughFloor || !isTrackedActive(item))
             || [...item.history, item].some(old => matchesTrackedValue(line, item, old.value, old.key))));
         // Model prose may carry newer Summary evidence; don't overwrite it with

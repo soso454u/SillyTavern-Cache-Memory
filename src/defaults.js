@@ -1,10 +1,11 @@
-import { normalizeThemeMode } from './ui-theme.js?v=1.24.19';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.24.19';
+import { normalizeCharacterTables } from './character-tables.js?v=1.25.0';
+import { normalizeThemeMode } from './ui-theme.js?v=1.25.0';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.25.0';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.19';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.24.19';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.0';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.25.0';
 
-export const PLUGIN_VERSION = '1.24.23';
+export const PLUGIN_VERSION = '1.25.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1488,7 +1489,7 @@ export const IMPORTANT_STATE_PROMPT = `只从本层真实正文提取将来确�
 临时表情、姿势、普通衣着、手机／便签／箱子位置、开箱后已结束动作、日常闲聊、未回复的普通消息，均不追踪。已完成／取消／失败任务只更新其状态，不再重新发布；奖励是否到账单独判断。
 不自动为每个角色建档，人物长期未登场也不推断遗忘。通常 0–3 条重大变化，剧情真的复杂时允许更多；禁止凑数、重复、猜测或输出整张状态表。只有新形成且长期不可遗忘的秘密、约束或关键后果才输出 KEEP；旧 KEEP 不复制。`;
 
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V12423_DEFAULT_PROMPTS = Object.freeze({
     ...V12422_DEFAULT_PROMPTS,
     summary: `你负责总结本层真正发生的剧情。只依据当前 assistant 正文和明确提供的 SOURCE_METADATA，不虚构时间、地点、心理、未发生情节，也不把未来预演或人物猜测写成现实。
 正文以故事为中心：谁在何处因何行动、说了什么重要的话、发生怎样的转折与结果。重要 NPC 依据实际作用记录，不默认 user／char 优先。简单事件简短，复杂事件保留有用细节；不要写成任务或人物状态列表。
@@ -1529,6 +1530,49 @@ export const DEFAULT_PROMPTS = Object.freeze({
 - fact-id | 明确失效原因 | NEW_SUMMARIES 的逐字证据；无则写无。`,
     state: IMPORTANT_STATE_PROMPT,
 });
+// Both modes share this compact narrative pipeline. "advanced" now enables
+// optional tables, never another long Summary / CP / Long prompt family.
+export const DEFAULT_PROMPTS = Object.freeze({
+    summary: `你是剧情摘要记录员，只总结本层正文中实际发生或被明确获知的事。不要续写。
+长度：标题、人物、事件合用约 {{maxLength}} 字；复杂剧情最多略超约15%，不设最低字数。默认约350–400字，禁止逐动作复述整段原文。
+事件中保留：关键人物（含有作用的NPC）→ 必要起因 → 关键动作／选择 → 转折与结果。推动剧情、体现关系边界、改变物品归属或揭示信息的动作必须保留；普通姿势、重复动作、修辞和重复背景可省略。
+关键台词自然放进 Event：承诺、拒绝、威胁、秘密揭露、关键否认等，措辞会影响后续时保留简短原话及说话人；其他对话转述。不要另列台词清单或重复原话。
+保留必要身份、关系、任务条件和重要后果；各人物的已知／未知／误信分别写清。未来预演、原剧情、梦境、猜测只记录来源与获知，不能写成现实经历。只照录 SOURCE_METADATA 的时间地点，未知写无。
+只输出以下栏目，事件是一段简明梗概，不另写人物表、状态表或待办清单：
+[SUMMARY]
+[Title]
+短标题
+[Characters]
+本层关键人物
+[StoryTime]
+已知日期时间，无则无
+[Location]
+已知地点，无则无
+[Event]
+本层关键事件、动作、必要原话及结果`,
+    checkpoint: `把第{{startFloor}}–{{endFloor}}层的 NEW_SUMMARIES 压缩成一份阶段总结，目标约{{maxLength}}字。
+保留本阶段的起因、关键人物与NPC、关键动作和选择、影响后续的短句原话、转折及结果。合并重复，省略无用小动作，不逐层抄写，不续写；旧背景只用于理解，不再次发生。
+任务完成与奖励领取分开，人物各自认知和未来预演来源不能混淆。输出剧情梗概，不展开角色档案、任务表或当前状态表。无字数硬截断。
+[CHECKPOINT]
+[Stage Story]
+本阶段简明剧情
+[RESOLVED_KEEP]
+仅在本阶段明确兑现／结束时：keep-id | 原因 | NEW_SUMMARIES 中至少4字的连续原句；无则无
+[SUPERSEDED_KEEP]
+仅在本阶段明确替代时：keep-id | 新事实 | NEW_SUMMARIES 中至少4字的连续原句；无则无`,
+    longMemory: `把第{{startFloor}}–{{endFloor}}层的阶段总结整合成长期总结，目标约{{maxLength}}字。
+保存理解后续所需的主线因果、重要NPC、关键动作／选择、必要原话、关系转折、秘密与各自认知、未完成条件及长期后果。合并重复，不逐段抄写，不把旧地点、旧情绪或已完成动作写成现在；未来预演与现实分开。不要展开角色表格。无字数硬截断。
+[STORY_ARC]
+本区间主要剧情与后果
+[LONG_MEMORY]
+只补充故事未涵盖、确有长期影响的事实；没有则无
+[UPDATED_FACTS]
+fact-id | 替代后的事实 | NEW_SUMMARIES 的连续原句；没有则无
+[RETIRED_FACTS]
+fact-id | 明确失效原因 | NEW_SUMMARIES 的连续原句；没有则无`,
+    state: IMPORTANT_STATE_PROMPT,
+});
+
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
     'f0e493be', '5cff9164', '92f409f1',
@@ -1552,20 +1596,17 @@ export const ENSEMBLE_GENERATION = Object.freeze({
     summaryMaxTokens: 4096, checkpointMaxTokens: 8192, longMemoryMaxTokens: 12288,
 });
 
-export function modePromptDefaults(settings, mode) {
-    return mode === 'ensemble' ? { ...ENSEMBLE_PROMPTS, state: IMPORTANT_STATE_PROMPT } : settings.memoryStrategy === 'legacy' ? { ...LEGACY_PROMPTS, state: IMPORTANT_STATE_PROMPT } : DEFAULT_PROMPTS;
-}
+export function modePromptDefaults() { return DEFAULT_PROMPTS; }
 
-// A request captures its mode once. Switching modes never edits saved memories or injection snapshots.
 export function memoryGenerationSettings(settings, mode = 'normal') {
     const summaryMode = ['advanced', 'ensemble'].includes(mode) ? 'ensemble' : 'normal';
-    if (summaryMode !== 'ensemble') return { ...settings, summaryMode };
-    const generation = { ...ENSEMBLE_GENERATION, ...settings.ensembleGeneration };
-    // Leave room for Chinese text, structured deltas and output tags, even with an old small token setting.
-    for (const stage of ['summary', 'checkpoint', 'longMemory']) {
-        generation[`${stage}MaxTokens`] = Math.min(32000, Math.max(generation[`${stage}MaxTokens`], generation[`${stage}MaxLength`] * 3 + 1024));
-    }
-    return { ...settings, ...generation, summaryMode, prompts: { ...ENSEMBLE_PROMPTS, state: IMPORTANT_STATE_PROMPT, ...settings.ensemblePrompts } };
+    const characterTables = normalizeCharacterTables(settings.characterTables);
+    const activeStateEnabled = summaryMode === 'ensemble' && settings.activeStateEnabled !== false
+        && Object.values(characterTables).some(Boolean);
+    // Keep former ensemble settings saved for compatibility, but never let
+    // enabling tables replace story prompts or silently expand story budgets.
+    return { ...settings, memoryStrategy: 'incremental', summaryMode, characterTables, activeStateEnabled,
+        prompts: { ...DEFAULT_PROMPTS, ...settings.prompts } };
 }
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -1574,6 +1615,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     showWandButton: true,
     autoSummarize: true,
     activeStateEnabled: true,
+    characterTables: normalizeCharacterTables(),
     independentApi: true,
     memoryStrategy: 'incremental',
     checkpointInterval: 5,
@@ -1614,10 +1656,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
 export function normalizeSettings(saved = {}) {
     const { injectionMaxTokens: _removedInjectionBudget, timeoutMs: _removedRequestTimeout, ...source } = saved && typeof saved === 'object' ? saved : {};
     const memoryStrategy = source.memoryStrategy === 'legacy' ? 'legacy' : 'incremental';
-    const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
+    const defaults = DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];
@@ -1695,6 +1737,7 @@ export function normalizeSettings(saved = {}) {
         provider,
         injectionMode,
         prompts,
+        characterTables: normalizeCharacterTables(source.characterTables),
         ensemblePrompts: { ...Object.fromEntries(Object.entries(ENSEMBLE_PROMPTS).map(([key, fallback]) =>
             [key, typeof source.ensemblePrompts?.[key] === 'string' ? source.ensemblePrompts[key] : fallback])),
             state: typeof source.ensemblePrompts?.state === 'string' ? source.ensemblePrompts.state : IMPORTANT_STATE_PROMPT },

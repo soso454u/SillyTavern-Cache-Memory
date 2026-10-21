@@ -88,26 +88,20 @@ test('same task for different people and each knowledge holder remain separate; 
     assert.match(result, /旅人 · 密道认知：知道密道/); assert.match(result, /守卫 · 密道认知：不知道密道/);
 });
 
-test('CP response resolves temporary states in the existing request and the same projection survives reload, injection and Long selection', async () => {
+test('new CP requests produce narrative without a second role sheet or a new state extraction request', async () => {
     const metadata = {}, chat = Array.from({ length: 5 }, (_, i) => ({ name: '旅人', mes: `正文${i}`, gen_started: `g${i}` }));
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
-    const injury = state('伤势', '左腿骨折'); const entries = getAssistantMessages(chat);
-    for (const entry of entries) store.addSummary({ messageId: entry.messageId, floor: entry.floor, event: entry.floor === 5 ? '旅人左腿骨折已痊愈，恢复行走。' : '旅人受伤休养。',
-        stateChanges: entry.floor === 1 ? [{ ...injury, id: stateId(injury) }] : [], status: 'frozen', frozen: true });
+    const entries = getAssistantMessages(chat), injury = state('伤势', '左腿骨折');
+    for (const entry of entries) store.addSummary({ messageId: entry.messageId, floor: entry.floor, event: '旅人在暴雨中救出村民', status: 'frozen', stateChanges: entry.floor === 1 ? [{ ...injury, id: stateId(injury) }] : [] });
     const before = structuredClone(store.current()); let calls = 0;
-    const resolution = { ...injury, id: stateId(injury), value: '左腿骨折已痊愈，恢复行走', status: 'expired', confirmed: true, evidence: '左腿骨折已痊愈，恢复行走' };
-    const summarizer = new MemorySummarizer({ store, getSettings: () => settings, getChat: () => chat, apiClient: { complete: async request => {
-        calls++; assert.match(request.systemPrompt, /STATE_RESOLUTIONS/); assert.match(request.userContent, /SUMMARY_RESULTS/);
-        return { content: `[CHECKPOINT]\n[Current State]\n- 旅人 · 伤势：左腿骨折\n[STATE_RESOLUTIONS]\n${JSON.stringify([resolution])}` };
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => settings, apiClient: { complete: async request => {
+        calls++; assert.doesNotMatch(request.systemPrompt, /STATE_RESOLUTIONS|CURRENT_TRACKED_STATE/);
+        assert.doesNotMatch(request.userContent, /CURRENT_TRACKED_STATE|SUMMARY_RESULTS/);
+        return { content: '[CHECKPOINT]\n[Stage Story]\n旅人在暴雨中救出村民，左腿受伤。' };
     } } });
-    await summarizer.generateCheckpoint(1, 5);
-    assert.equal(calls, 1);
-    assert.equal(projectActiveState(JSON.parse(JSON.stringify(store.current())))[0].status, 'expired');
-    assert.doesNotMatch(currentInjectionBlocks(store.current(), settings)[0].text, /STATE_RESOLUTIONS|左腿骨折/);
-    assert.deepEqual(trackedFactUpdates([], store.current(), 5), []);
-    assert.deepEqual(store.current().summaries, before.summaries);
-    assert.deepEqual(store.current().stateOverrides, before.stateOverrides);
-    assert.deepEqual(store.current().injectionSnapshot, before.injectionSnapshot);
+    const cp = await summarizer.generateCheckpoint(1, 5); assert.equal(calls, 1);
+    assert.doesNotMatch(cp.content, /Current State|state-|伤势：/);
+    assert.deepEqual(store.current().summaries, before.summaries); assert.deepEqual(store.current().stateOverrides, before.stateOverrides);
 });
 
 test('role UI renders completed transient states in a separate history group instead of the current character table', async () => {
@@ -173,7 +167,7 @@ test('legacy-format chats also generate a cumulative next CP without rewriting t
     store.addCheckpoint(old); const previous = structuredClone(store.current().checkpoints[0]);
     let calls = 0;
     const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => ({ ...settings, memoryStrategy: 'legacy' }), apiClient: { complete: async request => {
-        calls++; assert.match(request.userContent, /PREVIOUS_STATE[\s\S]*承诺偿还债务/);
+        calls++; assert.match(request.userContent, /PREVIOUS_CONTEXT[\s\S]*承诺偿还债务/);
         return { content: '[CHECKPOINT]\n[Story So Far]\n医师是旅人的恩人\n[Open Threads]\n旅人承诺偿还债务' };
     } } });
     const next = await summarizer.generateCheckpoint(6, 10);
@@ -188,10 +182,10 @@ test('no per-floor Summary replay and current state comes from latest CP', () =>
     store.checkpoints.push(cp(2, '[Stage Story]\n守卫公开作证。\n[Current State]\n新地点\n[Open Threads]\n新任务'));
     const before = structuredClone(store);
     const text = buildInjection(store, { ...settings, strictCacheMode: false });
-    assert.match(text, /HISTORICAL_CONTEXT[\s\S]*密信/);
-    assert.match(text, /CHECKPOINT_STORY_6_10[\s\S]*守卫公开作证/);
+    assert.match(text, /CHECKPOINT_[\s\S]*密信/);
+    assert.match(text, /CHECKPOINT_[^\n]+6–10层[\s\S]*守卫公开作证/);
     // New Stage Story never replays its old Current State/Open Threads.
-    assert.doesNotMatch(text, /新地点|新任务/);
+    assert.match(text, /LEGACY_CONTEXT[\s\S]*新地点[\s\S]*新任务/); // Existing mixed-format context stays readable; new CPs do not generate it.
     assert.doesNotMatch(text, /旧地点|旧任务|很长的楼层剧情|记忆读取规则/);
     assert.deepEqual(store, before);
 });
@@ -203,9 +197,9 @@ test('Long50 covers its CP5 stories, not the next uncovered CP', () => {
         memoryKind: 'facts', factUpdates: [{ action: 'add', id: 'fact-a', text: '证据仍在' }], status: 'frozen', frozen: true });
     const text = buildInjection(store, { ...settings, strictCacheMode: false });
     assert.match(text, /LONG_STORY_1_50[\s\S]*长篇剧情整合/);
-    assert.match(text, /CHECKPOINT_STORY_51_55[\s\S]*阶段剧情11/);
-    assert.doesNotMatch(text, /CHECKPOINT_STORY_1_5|旧状态1|旧状态10/);
-    assert.doesNotMatch(text, /旧状态11/);
+    assert.match(text, /CHECKPOINT_[^\n]+51–55层[\s\S]*阶段剧情11/);
+    assert.doesNotMatch(text, /CHECKPOINT_STORY_1_5|旧状态(?:1|10)(?:\n|$)/);
+    assert.match(text, /LEGACY_CONTEXT[\s\S]*旧状态11/); // Existing mixed CP context is preserved once, not regenerated.
     assert.match(text, /证据仍在/);
 });
 
@@ -220,7 +214,7 @@ test('145 saved summaries are not expanded into a huge prompt', () => {
 });
 
 test('story-only CPs publish the separate meaningful snapshot only on CP5, never on a Summary', () => {
-    const store = createEmptyStore('a');
+    const store = createEmptyStore('a'); store.summaryMode = 'advanced'; settings.characterTables = { characters: true, knowledge: true, tasks: true };
     for (let n = 1; n <= 10; n++) put(store, n, n === 9 ? [
         { kind:'state', entity:'医师', key:'已获知城主密信', value:'知道密信源头', category:'knowledge', lifetime:'permanent', status:'active', evidence:'医师获知密信' },
         { kind:'state', entity:'旅人', key:'普通坐姿', value:'坐在窗边', category:'effect', lifetime:'temporary', status:'active', evidence:'旅人坐在窗边' }
@@ -231,8 +225,8 @@ test('story-only CPs publish the separate meaningful snapshot only on CP5, never
     const ignored = refreshSnapshot(store, settings, 'new summary');
     assert.equal(ignored.value, '旧缓存');
     const published = refreshSnapshot(store, settings, 'new checkpoint').value;
-    assert.match(published, /CHECKPOINT_STORY_1_5[\s\S]*找回密信/);
-    assert.match(published, /CHECKPOINT_STORY_6_10[\s\S]*新证据/);
-    assert.match(published, /CURRENT_SNAPSHOT[\s\S]*医师.*密信/);
+    assert.match(published, /CHECKPOINT_[\s\S]*找回密信/);
+    assert.match(published, /CHECKPOINT_[^\n]+6–10层[\s\S]*新证据/);
+    assert.match(published, /CHARACTER_TABLES[\s\S]*医师.*密信/);
     assert.doesNotMatch(published, /普通坐姿|旧缓存|记忆读取规则/);
 });

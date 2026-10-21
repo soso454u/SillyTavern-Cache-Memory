@@ -383,7 +383,7 @@ test('238 floors retain all records and replace the inflated snapshot with facts
         assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore(f.chat)).value, value);
     }
     const dynamic = buildInjection(effective, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.LONG_CHECKPOINT_RECENT }));
-    assert.equal((dynamic.match(/RECENT_SUMMARY_/g) ?? []).length, 3); // Only the explicit recent-tail mode includes floors 236–238.
+    assert.equal((dynamic.match(/RECENT_SUMMARY_/g) ?? []).length, 0); // Only the explicit recent-tail mode includes floors 236–238.
     assert.match(dynamic, /不可逆重大历史51/); assert.match(dynamic, /旧 Swipe 的长期事实/);
     assert.deepEqual(f.chat, originalChat); assert.equal(f.requests.length, 0);
     // Unverifiable legacy cascade flags are never permission to replay every
@@ -395,7 +395,7 @@ test('238 floors retain all records and replace the inflated snapshot with facts
     const legacy = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
     const noFallback = refreshSnapshot(legacy.current(), settings, 'manual reinject', legacy.effectiveStore(f.chat)).value;
     assert.doesNotMatch(noFallback, /RECENT_SUMMARY_/);
-    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'long').length, 1);
+    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'long-story').length, 4);
     assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'checkpoint').length, 1);
 });
 
@@ -506,10 +506,10 @@ test('real-shaped flags and old Swipe references retain all raw aggregates while
 
     const value = refreshSnapshot(f.store.current(), settings, 'new checkpoint', effective).value;
     const blocks = f.store.current().injectionSnapshot.blocks;
-    assert.equal(blocks.filter(b => b.type === 'long').length, 1);
-    assert.equal(blocks.filter(b => b.type === 'checkpoint').length, 1);
+    assert.equal(blocks.filter(b => b.type === 'long-story').length, 4);
+    assert.equal(blocks.filter(b => b.type === 'checkpoint').length, 7);
     assert.equal(blocks.filter(b => b.type === 'summary').length, 0);
-    assert.equal(memoryOverviewStats(f.store.current(), entries, settings).injectedCheckpoints, 1);
+    assert.equal(memoryOverviewStats(f.store.current(), entries, settings).injectedCheckpoints, 7);
     assert.doesNotMatch(value, /废弃 Swipe/);
     assert.match(value, /不可逆重大历史0/); assert.match(value, /重大历史47/);
     assert.match(value, /甲知道秘密，乙不知道/);

@@ -1,19 +1,20 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.23';
-import { generationPrompt } from './generation-prompts.js?v=1.24.23';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.23';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.23';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.23';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.23';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.23';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.23';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.23';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.23';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.23';
-import { parseFloorSummary } from './summarizer.js?v=1.24.23';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.23';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.25.0';
+import { applyUITheme } from './ui-theme.js?v=1.25.0';
+import { generationPrompt } from './generation-prompts.js?v=1.25.0';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.25.0';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.25.0';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.25.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.25.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.25.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.25.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.0';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.25.0';
+import { parseFloorSummary } from './summarizer.js?v=1.25.0';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.25.0';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.23';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.23';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.25.0';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.25.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -39,6 +40,8 @@ const LONG_MEMORY_SECTIONS = Object.freeze([
     ['trackedState', 'CURRENT_TRACKED_STATE', '角色状态'],
     ...CHECKPOINT_SECTIONS,
 ]);
+
+const trackedStatusLabel = status => ({ active: '有效', published: '已发布', ready: '待结算', unclaimed: '待领取', completed: '已完成', failed: '失败', cancelled: '已取消', expired: '已结束' }[status] || status);
 
 export function estimateTokenCount(value) {
     let tokens = 0;
@@ -155,7 +158,8 @@ export function memoryOverviewStats(store, assistants, settings) {
         if (details.length) issues.push(`${type} 待处理 ${details.length} 段（${details.slice(0, 8).map(row => `${row.id || '未生成'} 第${row.startFloor}–${row.endFloor}层：${row.label}`).join('；')}）。`);
     }
     const injectionValue = String(safeStore.injectionSnapshot?.value ?? '');
-    const blockCount = (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'checkpoint').length;
+    const blockCount = (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'checkpoint'
+        || block.type === 'story' && /^(?:story:cp:|story:legacy:)/u.test(block.id ?? '')).length;
     // Count outer injection blocks, not their inner [CHECKPOINT] format header.
     const textCount = injectionValue.match(/^\[(?:LATEST_CHECKPOINT|CHECKPOINT_[^\]\n]+|CHECKPOINT\s*\|[^\]\n]+)\]/gm)?.length ?? 0;
     return {
@@ -165,6 +169,11 @@ export function memoryOverviewStats(store, assistants, settings) {
         activeLongFacts: projectLongFacts(safeStore).facts.filter(item => isTrackedActive(item)).length,
         activeKeeps: collectKeepItems(safeStore).filter(item => isTrackedActive(item)).length,
         injectedCheckpoints: safeStore.injectionSnapshot?.blocks?.length ? blockCount : textCount,
+        injectedTables: (safeStore.injectionSnapshot?.blocks ?? []).filter(block => ['table', 'snapshot'].includes(block.type)).length,
+        injectionExplanation: !checkpoints.length ? (usableSummaries.length < checkpointInterval
+            ? `当前仅有 ${usableSummaries.length} 条可用摘要，尚未凑齐 ${checkpointInterval} 层阶段总结；重新注入不会自动生成。`
+            : '已有摘要但阶段总结尚未生成，请在概览检查聚合进度。')
+            : !blockCount && !textCount ? '已有阶段总结尚未进入冻结快照；可手动重新注入，或等待原有发布边界。' : '',
         estimatedTokens: estimateTokenCount(injectionValue),
         recentBodyWindow: '由 SillyTavern 上下文设置控制',
         storedSummaryRecords: Object.keys(safeStore.summaries).length,
@@ -302,8 +311,9 @@ function managerPanelTemplate() {
     return `
         <section id="${MANAGER_ID}" class="cache-memory-tab-panel cache-memory-manager-panel" role="tabpanel" data-settings-panel="manager" hidden>
             <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
-                <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">未解决事项</button><button type="button" data-manager-view="states">角色状态</button><button type="button" data-manager-view="checkpoints">阶段记忆</button><button type="button" data-manager-view="long">长期记忆 Long Memory</button>
+                <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段总结</button><button type="button" data-manager-view="long">长期总结</button><button type="button" data-manager-view="tables">角色表格</button>
             </nav>
+            <details class="cache-memory-advanced-records"><summary>高级资料与旧版记录</summary><div class="cache-memory-actions"><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">旧版任务记录</button><button type="button" data-manager-view="states">旧版角色状态</button></div><small>原始数据保留，普通使用不必管理这些分类。</small></details>
             <div data-manager-overview-only>
             <div class="cache-memory-manager-toolbar">
                 <button type="button" class="menu_button" data-save-memory title="以当前本机记忆为准上传，覆盖前备份服务器原数据">上传记忆到服务器</button>
@@ -357,7 +367,7 @@ export function configTemplate() {
                     </div>
                     <div class="cache-memory-header-actions"><div class="cache-memory-theme-controls" role="group" aria-label="界面主题"><button type="button" data-theme-mode="light" aria-label="日间模式" title="日间模式" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button><button type="button" data-theme-mode="dark" aria-label="夜间模式" title="夜间模式" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z"/></svg></button><button type="button" data-theme-mode="system" aria-label="跟随系统深浅色" title="跟随系统深浅色" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M12 4v13"/></svg></button></div><button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button></div>
                 </header>
-                <div class="cache-memory-mode-switch"><div class="cache-memory-mode-buttons" role="group" aria-label="当前聊天总结模式"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>普通总结</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>群像详细总结</span><small data-summary-current hidden>当前</small></button></div></div>
+                <div class="cache-memory-mode-switch"><div class="cache-memory-mode-buttons" role="group" aria-label="当前聊天角色表格开关"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>基础记忆</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>角色表格</span><small data-summary-current hidden>当前</small></button></div></div>
                 <div class="cache-memory-task-feedback cache-memory-status" data-cache-status data-state="idle" role="status" aria-live="polite" hidden></div>
                 <div class="cache-memory-config-status cache-memory-status" data-freeze-status data-state="success" hidden></div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
@@ -374,24 +384,20 @@ export function configTemplate() {
                         <div class="cache-memory-switches">
                             <label class="cache-memory-toggle"><span><strong>启用插件</strong><small>显示楼层记忆并启用处理流程</small></span><input type="checkbox" data-setting="enabled"></label>
                             <label class="cache-memory-toggle"><span><strong>自动生成小总结</strong><small>正常回复结束后自动排队</small></span><input type="checkbox" data-setting="autoSummarize"></label>
-                            <label class="cache-memory-toggle"><span><strong>任务与角色状态管理</strong><small>复用摘要请求；每层保存，仍只在原缓存边界发布</small></span><input type="checkbox" data-setting="activeStateEnabled"></label>
                             <label class="cache-memory-toggle"><span><strong>使用独立模型接口</strong><small>不占用 SillyTavern 当前聊天模型</small></span><input type="checkbox" data-setting="independentApi"></label>
                             <label class="cache-memory-toggle"><span><strong>严格缓存模式</strong><small>小总结仅后台保存，主 Prompt 只在边界更新</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
                         <div class="cache-memory-grid">
-                            <label>记忆策略<select data-setting="memoryStrategy"><option value="incremental">增量状态 + 长期事实 + KEEP</option><option value="legacy">兼容旧版分段摘要</option></select></label>
                             <label>过滤策略<select data-setting="summaryFilterMode"><option value="${SUMMARY_FILTER_MODES.DEFAULT}">默认（推荐）</option><option value="${SUMMARY_FILTER_MODES.CUSTOM}">自定义标签</option><option value="${SUMMARY_FILTER_MODES.FULL}">不过滤（完整正文）</option></select></label>
                             <label data-custom-filter>正文标签（按优先级，用逗号或换行分隔）<textarea rows="1" data-setting="summaryFilterTags" placeholder="content, context, story"></textarea></label>
                             <label>阶段记忆间隔（层）<input type="number" min="1" max="1000" data-setting="checkpointInterval"></label>
                             <label>长期记忆间隔（层）<input type="number" min="1" max="10000" data-setting="longMemoryInterval"></label>
                             <label>小总结目标长度<input type="number" min="50" data-setting="summaryMaxLength"></label>
-                            <label>阶段状态目标长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
-                            <label>长期事实目标长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
-                            <label data-legacy-setting>旧版近期小总结数量<input type="number" min="0" data-setting="recentSummaryCount"></label>
-                            <label data-legacy-setting>旧版近期阶段记忆数量<input type="number" min="0" data-setting="recentCheckpointCount"></label>
+                            <label>阶段总结目标长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
+                            <label>长期总结目标长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
                         </div>
-                        <small class="cache-memory-help">默认每 5 层提交 Checkpoint、每 50 层提交分段 Long Memory；已有自定义间隔保留。后台增量状态和 KEEP 不会逐层刷新严格模式的 Prompt。</small>
+                        <small class="cache-memory-help">默认每 5 层提交 Checkpoint、每 50 层提交分段 Long Memory；已有自定义间隔保留。角色表格默认关闭；开启后可在“角色表格”中勾选要维护的表。摘要长度保持相同，严格模式仍只在边界更新注入。</small>
                     </section>
                     ${managerPanelTemplate()}
 
@@ -454,7 +460,7 @@ export function configTemplate() {
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
                         <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择发送请求时附加到上下文的冻结记忆层。</p></div></div>
-                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入（缓存最安全）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（新安装默认）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">长期记忆 + 阶段记忆 + 近期小总结</option></select></label>
+                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入（缓存最安全）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（新安装默认）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">旧版近期模式（按阶段总结发送）</option></select></label>
                         <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>严格模式不注入逐层小总结；Checkpoint / Long Memory 提交后更新一次，其余楼层逐字冻结。Long Memory 边界可替换其覆盖的阶段注入，原始记录仍保留。</span></div>
                         <p class="cache-memory-warning" data-cache-mode-warning></p>
                         <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>仅记录 hash、过滤来源和字符数；不记录正文</small></span><input type="checkbox" data-setting="cacheDebug"></label>
@@ -462,14 +468,14 @@ export function configTemplate() {
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
-                        <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>两套模板分别自动保存；切换只影响以后生成的记忆。</p></div></div>
-                        <div class="cache-memory-mode-switch cache-memory-prompt-mode"><div class="cache-memory-mode-buttons" role="group" aria-label="提示词模式"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>普通总结</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>群像详细总结</span><small data-summary-current hidden>当前</small></button></div></div>
+                        <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>基础摘要、阶段总结、长期总结共用一套剧情模板；角色表格规则单独设置。</p></div></div>
+                        <div class="cache-memory-mode-switch cache-memory-prompt-mode"><div class="cache-memory-mode-buttons" role="group" aria-label="角色表格开关"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>基础记忆</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>角色表格</span><small data-summary-current hidden>当前</small></button></div></div>
                         <small class="cache-memory-help" data-prompt-mode-help></small>
                         <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
-                        <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
-                        <details><summary>人物状态／任务追踪提示词（与剧情共用一次 API 请求）</summary><textarea rows="1" data-prompt="state"></textarea><button type="button" class="menu_button" data-reset-prompt="state"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看本提示词完整内容</summary><textarea rows="16" readonly data-effective-prompt="state" aria-label="状态追踪提示词"></textarea></details></details>
-                        <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="checkpoint" aria-label="实际完整提示词"></textarea></details></details>
-                        <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复本模式默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="longMemory" aria-label="实际完整提示词"></textarea></details></details>
+                        <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
+                        <details><summary>可选角色表格规则（与摘要同一次请求）</summary><textarea rows="1" data-prompt="state"></textarea><button type="button" class="menu_button" data-reset-prompt="state"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看本提示词完整内容</summary><textarea rows="16" readonly data-effective-prompt="state" aria-label="状态追踪提示词"></textarea></details></details>
+                        <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="checkpoint" aria-label="实际完整提示词"></textarea></details></details>
+                        <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="longMemory" aria-label="实际完整提示词"></textarea></details></details>
                     </section>
                 </div>
             </div>
@@ -771,12 +777,12 @@ export class CacheMemoryUI {
                 element.title = hasChat ? `${label}${active ? '：当前聊天正在使用' : '：点击切换，仅影响以后生成的记忆'}` : '打开聊天后可选择总结模式';
             }
             const modeHelp = scope.querySelector('[data-prompt-mode-help]');
-            if (modeHelp) modeHelp.textContent = `${settings.summaryMode === 'ensemble' ? '群像详细总结' : '普通总结'} · 编辑后自动保存，恢复默认仅影响本模式。展开可查看含全局及必要状态规则的完整提示词。`;
+            if (modeHelp) modeHelp.textContent = '基础摘要、阶段总结、长期总结共用一套规则；角色表格独立勾选，不增加摘要长度。自定义提示词仍会保留。';
             this.renderPromptPreviews(scope);
             const warning = scope.querySelector('[data-cache-mode-warning]');
             if (warning) warning.textContent = settings.strictCacheMode
                 ? `近期小总结会每轮改变 Prompt，不适合严格缓存模式。当前实际策略：${effectiveInjectionMode(settings)}；近期模式会自动降级到 Checkpoint 边界。`
-                : '严格缓存模式已关闭：当前长期事实、KEEP、近期小总结等动态内容可能逐层改变 Prompt Prefix。';
+                : '严格缓存模式已关闭：当前长期事实、KEEP 等动态内容可能改变 Prompt Prefix。';
             for (const element of scope.querySelectorAll('[data-legacy-setting]')) element.hidden = settings.memoryStrategy !== 'legacy';
             for (const element of scope.querySelectorAll('[data-custom-filter]')) element.hidden = settings.summaryFilterMode !== SUMMARY_FILTER_MODES.CUSTOM;
             for (const element of scope.querySelectorAll('[data-setting]')) {
@@ -1017,6 +1023,12 @@ export class CacheMemoryUI {
                 modelSelect.value = '';
                 return;
             }
+            const tableToggle = event.target.closest('[data-character-table]');
+            if (tableToggle) {
+                const characterTables = { ...normalizeCharacterTables(this.getSettings().characterTables), [tableToggle.dataset.characterTable]: tableToggle.checked };
+                this.updateSettings({ characterTables }); this.markSettingsDirty(); this.renderManager();
+                this.updateInjection('settings changed'); return;
+            }
             const element = event.target.closest('[data-setting]');
             if (!element) return;
             const key = element.dataset.setting;
@@ -1030,10 +1042,7 @@ export class CacheMemoryUI {
                 this.apiFormRevision++;
                 if (previousApiBaseUrl.trim()) root.querySelector('[data-api-key]').value = '';
             }
-            const modeGenerationKey = /^(summary|checkpoint|longMemory)Max(Length|Tokens)$/.test(key);
-            if (modeGenerationKey && this.generationSettings().summaryMode === 'ensemble') {
-                this.updateSettings({ ensembleGeneration: { ...this.getSettings().ensembleGeneration, [key]: value } });
-            } else this.updateSettings({ [key]: value, ...(key === 'apiBaseUrl' ? { provider: API_PROVIDERS.OPENAI_COMPATIBLE } : {}) });
+            this.updateSettings({ [key]: value, ...(key === 'apiBaseUrl' ? { provider: API_PROVIDERS.OPENAI_COMPATIBLE } : {}) });
             if (key === 'apiBaseUrl') {
                 this.updateSettings({ model: this.apiClient.savedConnectionModel?.() ?? '' });
                 if (!previousApiBaseUrl.trim()) void this.saveInputApiKey(root);
@@ -1080,7 +1089,7 @@ export class CacheMemoryUI {
             }
             const element = event.target.closest('[data-prompt]');
             if (!element) return;
-            const key = this.generationSettings().summaryMode === 'ensemble' ? 'ensemblePrompts' : 'prompts';
+            const key = 'prompts';
             this.updateSettings({ [key]: { ...this.getSettings()[key], [element.dataset.prompt]: element.value } });
             this.renderPromptPreviews(root);
             this.markSettingsDirty();
@@ -1097,10 +1106,16 @@ export class CacheMemoryUI {
                 this.markSettingsDirty();
                 return;
             }
+            if (event.target.closest('button[data-enable-character-tables]')) {
+                this.store.setSummaryMode('advanced'); this.updateSettings({ activeStateEnabled: true });
+                this.populateSettings(); this.renderManager(); this.updateInjection('settings changed'); return;
+            }
             const mode = event.target.closest('button[data-summary-mode]');
             if (mode) {
                 if (!this.store?.current().chatId || mode.disabled) return;
                 this.store.setSummaryMode(mode.dataset.summaryMode === 'ensemble' ? 'advanced' : 'normal');
+                if (mode.dataset.summaryMode === 'ensemble') this.updateSettings({ activeStateEnabled: true });
+                this.updateInjection('settings changed');
                 this.populateSettings();
                 this.renderManager();
                 return;
@@ -1157,7 +1172,7 @@ export class CacheMemoryUI {
                 const name = reset.dataset.resetPrompt;
                 const mode = this.generationSettings().summaryMode;
                 const defaults = modePromptDefaults(this.getSettings(), mode);
-                const key = mode === 'ensemble' ? 'ensemblePrompts' : 'prompts';
+                const key = 'prompts';
                 this.updateSettings({ [key]: { ...this.getSettings()[key], [name]: defaults[name] } });
                 this.markSettingsDirty();
                 this.populateSettings();
@@ -1641,6 +1656,7 @@ export class CacheMemoryUI {
         else if (this.managerView === 'checkpoints') content.append(this.renderCheckpointPage());
         else if (this.managerView === 'long') content.append(this.renderLongMemoryPage());
         else if (this.managerView === 'facts') content.append(this.renderFactPage());
+        else if (this.managerView === 'tables') content.append(this.renderCharacterTablesPage());
         else if (['threads', 'states'].includes(this.managerView)) content.append(this.renderTrackedPage(this.managerView === 'threads' ? 'thread' : 'state'));
         else content.append(this.renderKeepPage());
         this.renderSummaryAudit();
@@ -1895,7 +1911,8 @@ export class CacheMemoryUI {
             health.append(this.element('p', '', '当前应有的 Summary、Checkpoint 与 Long Memory 均已生成。'));
         }
         const diagnostics = this.manager.querySelector('[data-memory-diagnostics]');
-        if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 当前注入 CP ${overview.injectedCheckpoints} 条 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
+        if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 阶段总结已存 ${overview.checkpoints.actual}/${overview.checkpoints.expected} · 已注入阶段总结 ${overview.injectedCheckpoints} 条 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
+        if (overview.injectionExplanation) health.append(this.element('p', '', overview.injectionExplanation));
         if (this.showSummaryHealthDetails) {
             const detailSection = this.element('div', 'cache-memory-summary-health-details');
             detailSection.append(this.element('h5', '', '摘要异常明细'));
@@ -1934,18 +1951,46 @@ export class CacheMemoryUI {
         return root;
     }
 
-    renderTrackedPage(kind) {
+    renderCharacterTablesPage() {
+        const root = this.element('div', 'cache-memory-manager-page cache-memory-character-tables');
+        const enabled = characterTablesEnabled(this.store.current(), this.getSettings());
+        root.append(this.element('h4', '', '角色表格'), this.element('p', '', '只维护你勾选的表。基础摘要仍保持简短，关键动作和台词留在事件里。'));
+        const choices = this.element('div', 'cache-memory-table-choices');
+        const selected = normalizeCharacterTables(this.getSettings().characterTables);
+        for (const table of CHARACTER_TABLES) {
+            const label = this.element('label', 'cache-memory-toggle');
+            const input = this.element('input'); input.type = 'checkbox'; input.checked = selected[table.key]; input.dataset.characterTable = table.key;
+            const text = this.element('span'); text.append(this.element('strong', '', table.label), this.element('small', '', table.description));
+            label.append(input, text); choices.append(label);
+        }
+        root.append(choices);
+        if (!enabled) {
+            root.append(this.element('p', '', '角色表格当前关闭。可先选择需要的表，再开启；旧记录仍保存在高级资料中。'));
+            const button = this.element('button', 'menu_button', '开启角色表格'); button.dataset.enableCharacterTables = 'true'; root.append(button);
+            return root;
+        }
+        root.append(this.element('p', '', '表格随新剧情更新，不增加单独请求。点击字段可编辑，已结束事项收在历史中。'));
+        if (!Object.values(selected).some(Boolean)) root.append(this.element('p', '', '目前未选择任何表，不会提取或注入表格内容。'));
+        for (const table of CHARACTER_TABLES.filter(table => selected[table.key])) {
+            const section = this.element('section', 'cache-memory-character-table-section');
+            section.append(this.element('h4', '', table.label), this.renderTrackedPage('all', table.key)); root.append(section);
+        }
+        return root;
+    }
+
+    renderTrackedPage(kind, tableSection = null) {
         const root = this.element('div', 'cache-memory-manager-page');
-        root.append(this.element('p', '', '来源变更的记录标为待核对，不参与当前状态整理。结束事项保留历史；长时间未提及不会自动结束。手动操作不调用模型，原冻结快照在下个既有边界更新。'));
-        const rows = projectActiveState(this.store.effectiveStore(this.getChat())).filter(item => item.kind === kind);
+        root.append(this.element('p', '', tableSection ? '旧资料可继承；只有明确变更或结束才更新，暂时未提及不会清空。' : '来源变更的记录标为待核对，不参与当前状态整理。结束事项保留历史；长时间未提及不会自动结束。手动操作不调用模型，原冻结快照在下个既有边界更新。'));
+        const rows = projectActiveState(this.store.effectiveStore(this.getChat())).filter(item => (kind === 'all' || item.kind === kind) && (!tableSection || tableForRecord(item) === tableSection));
         const active = rows.filter(item => !item.needsReview && isTrackedActive(item));
         const archived = rows.filter(item => !item.needsReview && !isTrackedActive(item));
         const review = rows.filter(item => item.needsReview);
         const formFor = (item = {}) => {
+            const recordKind = item.kind || (tableSection === 'tasks' || kind === 'thread' ? 'thread' : 'state');
             const form = this.element('form', 'cache-memory-tracked-form');
             const fields = [
-                ['entity', '人物完整身份', item.entity ?? ''], ['key', kind === 'thread' ? '稳定事项名称' : '技能/属性/道具名称', item.key ?? ''],
-                ['value', kind === 'thread' ? '当前进度 / 结算结果' : '最新确认值', item.value ?? ''],
+                ['entity', '人物完整身份', item.entity ?? ''], ['key', recordKind === 'thread' ? '事项名称' : tableSection ? '资料名称' : '技能/属性/道具名称', item.key ?? ''],
+                ['value', recordKind === 'thread' ? '当前进度 / 结算结果' : '最新确认值', item.value ?? ''],
                 ['condition', '完成 / 结束条件', item.condition ?? ''], ['actors', '关联人物（逗号分隔）', (item.actors ?? []).join(', ')],
                 ['sourceFloor', '来源楼层（必须已有有效摘要）', item.sourceFloor ?? getAssistantMessages(this.getChat()).at(-1)?.floor ?? 1],
             ];
@@ -1955,28 +2000,29 @@ export class CacheMemoryUI {
                 input.name = name; input.value = String(value); if (name === 'sourceFloor') { input.type = 'number'; input.min = '1'; }
                 label.append(input); form.append(label);
             }
-            for (const [name, title, options] of [['status', '状态', kind === 'thread' ? [['published', '已发布'], ['active', '进行中'], ['ready', '条件满足待结算'], ['unclaimed', '结算后待领取奖励'], ['completed', '已完成'], ['failed', '失败'], ['cancelled', '已取消']] : [['active', '有效'], ['expired', '已失效']]], ['lifetime', '持续类型', [['permanent', '长期'], ['temporary', '临时']]], ['acquisition', '奖励领取', [['obtained', '已获得 / 不适用'], ['pending', '尚未领取']]]]) {
+            for (const [name, title, options] of [['status', '状态', recordKind === 'thread' ? [['published', '已发布'], ['active', '进行中'], ['ready', '条件满足待结算'], ['unclaimed', '结算后待领取奖励'], ['completed', '已完成'], ['failed', '失败'], ['cancelled', '已取消']] : [['active', '有效'], ['expired', '已失效']]], ['lifetime', '持续类型', [['permanent', '长期'], ['temporary', '临时']]], ['acquisition', '奖励领取', [['obtained', '已获得 / 不适用'], ['pending', '尚未领取']]]]) {
                 const label = this.element('label', '', title), select = this.element('select'); select.name = name;
                 for (const [value, text] of options) { const option = this.element('option', '', text); option.value = value; select.append(option); }
-                select.value = item[name] ?? (name === 'status' ? 'active' : name === 'acquisition' ? 'obtained' : kind === 'thread' ? 'temporary' : 'permanent');
+                select.value = item[name] ?? (name === 'status' ? 'active' : name === 'acquisition' ? 'obtained' : recordKind === 'thread' ? 'temporary' : 'permanent');
                 label.append(select); form.append(label);
             }
             const button = this.element('button', 'menu_button', item.id ? '保存纠错 / 完成 / 取消' : '添加已确认记录'); button.type = 'submit'; form.append(button);
             form.addEventListener('submit', event => {
                 event.preventDefault();
                 const updates = Object.fromEntries([...form.querySelectorAll('[name]')].map(input => [input.name, input.value]));
-                try { this.store.editTrackedState({ ...updates, id: item.id, kind, actors: updates.actors.split(/[,，]/).map(text => text.trim()).filter(Boolean), sourceFloor: Number(updates.sourceFloor) }); this.renderManager(); }
+                try { this.store.editTrackedState({ ...updates, id: item.id, kind: recordKind, category: item.category || ({ characters: 'identity', relationships: 'relationship', knowledge: 'knowledge', tasks: 'task' }[tableSection]), actors: updates.actors.split(/[,，]/).map(text => text.trim()).filter(Boolean), sourceFloor: Number(updates.sourceFloor) }); this.renderManager(); }
                 catch (error) { notify('error', error.message); }
             }, { signal: this.controller.signal });
             return form;
         };
-        const add = this.element('details', 'cache-memory-card'); add.append(this.element('summary', '', '手动添加 / 从旧 Open 字段登记'), formFor()); root.append(add);
-        const advanced = kind === 'state' && this.store.current().summaryMode === 'advanced';
+        const add = this.element('details', 'cache-memory-card'); add.append(this.element('summary', '', tableSection ? '手动添加记录' : '手动添加 / 从旧 Open 字段登记'), formFor()); root.append(add);
+        const advanced = Boolean(tableSection) || kind === 'state' && this.store.current().summaryMode === 'advanced';
         const people = new Map();
         const personBody = (name, section = '当前记录') => {
             const groupKey = `${section}:${name}`;
             if (!people.has(groupKey)) {
                 const group = this.element('details', 'cache-memory-card cache-memory-person');
+                group.open = Boolean(tableSection) && section === '当前记录';
                 group.append(this.element('summary', '', `${name} · ${section}`));
                 const table = this.element('table', 'cache-memory-person-table');
                 const head = this.element('thead'); head.innerHTML = '<tr><th>资料</th><th>当前值 / 历史结果</th><th>来源</th></tr>';
@@ -1990,7 +2036,7 @@ export class CacheMemoryUI {
             for (const item of items) {
                 const card = this.element('details', 'cache-memory-card');
                 card.append(this.element('summary', '', `${item.needsReview ? '⚠ 待核对 · ' : ''}${item.entity} · ${item.key} · ${item.value}`));
-                card.append(this.element('p', '', `${item.id} · 来源第 ${item.sourceFloor} 层 · ${item.status} · ${item.lifetime}`));
+                card.append(this.element('p', '', `${item.id} · 来源第 ${item.sourceFloor} 层 · ${trackedStatusLabel(item.status)} · ${item.lifetime === 'temporary' ? '临时' : '长期'}`));
                 card.append(this.element('p', '', `证据：${item.evidence || '用户确认'}；条件：${item.condition || '未提供'}`));
                 for (const prior of item.history) card.append(this.element('small', 'cache-memory-state-history', `第 ${prior.sourceFloor} 层：${prior.value} (${prior.status})`));
                 card.append(formFor(item));
@@ -2002,7 +2048,7 @@ export class CacheMemoryUI {
                     const button = this.element('button', 'cache-memory-person-field', title);
                     button.type = 'button'; button.dataset.personField = item.id; button.setAttribute('aria-expanded', 'false');
                     detail.append(button);
-                    row.append(detail, this.element('td', '', item.value), this.element('td', '', `第 ${item.sourceFloor} 层 · ${item.status}`));
+                    row.append(detail, this.element('td', '', item.value), this.element('td', '', `第 ${item.sourceFloor} 层 · ${trackedStatusLabel(item.status)}`));
                     const editorRow = this.element('tr'); editorRow.hidden = true;
                     const editorCell = this.element('td'); editorCell.colSpan = 3; editorCell.append(card); editorRow.append(editorCell);
                     button.addEventListener('click', () => { editorRow.hidden = false; card.open = !card.open; this.resizeTextareas(card); }, { signal: this.controller.signal });
@@ -2011,7 +2057,7 @@ export class CacheMemoryUI {
                 } else root.append(card);
             }
         }
-        if (advanced) {
+        if (advanced && !tableSection) {
             for (const fact of projectLongFacts(this.store.current()).facts.filter(item => item.status === 'active')) {
                 if (rows.some(item => fact.stateId === item.id)) continue;
                 const tracked = fact.text.match(/^(.+?)\s·\s([^：:]+)[：:]\s*(.*)$/s);
@@ -2417,8 +2463,9 @@ export class CacheMemoryUI {
         }
         const sections = this.element('div', 'cache-memory-structured-sections');
         for (const [key, , label] of CHECKPOINT_SECTIONS) {
+            if (!fields[key] || /^(?:无|none)[。.]?$/iu.test(fields[key].trim())) continue;
             const section = this.element('section', 'cache-memory-structured-section');
-            section.append(this.element('h5', '', label), this.element('p', '', fields[key] || '无'));
+            section.append(this.element('h5', '', label), this.element('p', '', fields[key]));
             sections.append(section);
         }
         body.append(sections);
@@ -2437,8 +2484,14 @@ export class CacheMemoryUI {
                 else if (record.status === 'failed') body.append(this.element('pre', '', formatSummaryFailure(record)));
                 else if (this.isEditing('summary', summaryId)) this.inlineEditor(body, this.summaryEditorFields(record));
                 else {
-                    body.append(this.line('标题', record.title), this.line('剧情日期/时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`), this.line('人物', record.characters), this.line('事件', record.event),
-                        this.line('状态', record.state), this.line('Open', record.open), this.line('原话', record.quote), this.line('KEEP', record.keep));
+                    body.append(this.line('标题', record.title), this.line('剧情日期/时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`), this.line('人物', record.characters), this.line('事件', record.event));
+                    const extra = [['旧版状态', record.state], ['旧版待办', record.open], ['旧版原话', record.quote], ['KEEP', record.keep]]
+                        .filter(([, text]) => text && !/^(?:无|none)[。.]?$/iu.test(text.trim()));
+                    if (extra.length) {
+                        const legacy = this.element('details', 'cache-memory-legacy-summary');
+                        legacy.append(this.element('summary', '', '查看旧版附加资料（原文保留）'));
+                        for (const [label, text] of extra) legacy.append(this.line(label, text)); body.append(legacy);
+                    }
                 }
                 if (this.isEditing('summary', summaryId)) return;
                 const actions = this.element('div', 'cache-memory-actions');

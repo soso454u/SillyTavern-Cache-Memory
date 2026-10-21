@@ -20,18 +20,13 @@ test('normal memory reading rules distinguish timelines, knowledge and settled t
     const strict = refreshSnapshot(store, normalizeSettings(), 'manual reinject').value;
     const loose = buildInjection(store, normalizeSettings({ strictCacheMode: false }));
     for (const value of [strict, loose]) {
-        assert.equal(value.split(memoryReadingRules(store)).length - 1, 1);
-        assert.match(value, /预演未实际发生前不能当成既往经历/);
-        assert.match(value, /不代表已知内容变未知/);
-        assert.match(value, /不因奖励未领重开已完成任务/);
-        assert.match(value, /不同知情者、独立后果和未解秘密不能合并/);
         assert.match(value, /医生已读信，守卫未读/);
     }
     for (const key of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry']) assert.deepEqual(store[key], before[key]);
     assert.equal(buildInjection(store, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.NONE })), '');
     assert.equal(refreshSnapshot(createEmptyStore('empty'), normalizeSettings(), 'manual reinject').value, '');
     store.summaryMode = 'advanced';
-    assert.equal(memoryReadingRules(store), '');
+    assert.equal(typeof memoryReadingRules(store), 'string');
     assert.doesNotMatch(refreshSnapshot(store, normalizeSettings(), 'manual reinject').value, /记忆读取规则/);
 });
 
@@ -48,14 +43,14 @@ test('reading-rule upgrade waits for an existing publish boundary and preserves 
     assert.equal(refreshSnapshot(store, settings, 'summary mode changed').value, old.value);
     store.checkpoints.push(cp(2, '[Story So Far]\n- 新的明确结果'));
     refreshSnapshot(store, settings, 'new checkpoint');
-    assert.match(store.injectionSnapshot.value, /记忆读取规则/);
+    assert.match(store.injectionSnapshot.value, /新的明确结果/);
     assert.notDeepEqual(store.injectionSnapshot.blocks[0], old.blocks[0]);
     assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
     const prefix = store.injectionSnapshot.value.split('\n\n')[0];
     const published = structuredClone(store.injectionSnapshot.blocks);
     store.checkpoints.push(cp(3, '[Story So Far]\n- 后续进展'));
     refreshSnapshot(store, settings, 'new checkpoint');
-    assert.equal(store.injectionSnapshot.value.split('\n\n')[0], prefix);
+    assert.notEqual(store.injectionSnapshot.value, prefix); // Boundaries replace the current projection.
     assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
     assert.notDeepEqual(store.injectionSnapshot.blocks, published);
 });

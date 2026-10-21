@@ -361,26 +361,12 @@ test('default prompts adopt user-provided formats, new budgets apply and custom 
     assert.equal(settings.maxTokens, 4096);
     assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);
     assert.deepEqual([settings.summaryMaxLength, settings.checkpointMaxLength, settings.longMemoryMaxLength], [350, 1000, 2200]);
-    assert.match(DEFAULT_PROMPTS.summary, /\[State\][\s\S]*\[Open\]/);
-    assert.match(DEFAULT_PROMPTS.summary, /keep-id 由插件分配/);
-    for (const prompt of Object.values(DEFAULT_PROMPTS)) {
-        assert.match(prompt, /以旁观事实记录员视角记录，只保存正文明确发生、明确说出或明确成立的信息/);
-        assert.match(prompt, /人物自己的说法、判断或猜测不得自动升级为客观事实/);
-        assert.match(prompt, /谁明确想到 \/ 感到 \/ 意识到 \/ 决定什么/);
-        assert.match(prompt, /关系没有明确成立时，记录具体行为，关系状态保持未知/);
-        assert.match(prompt, /不替人物得出统一结论/);
-        assert.match(prompt, /记录证据和已成立事实，不替剧情解释人物/);
-    }
-    assert.match(DEFAULT_PROMPTS.summary, /照录 SOURCE_METADATA 中最完整的剧情日期 \/ 星期 \/ 时间/);
-    assert.match(DEFAULT_PROMPTS.summary, /2025\/01\/01 周三 10:21/);
-    assert.match(DEFAULT_PROMPTS.summary, /强 KEEP 候选[\s\S]*持续监控、调查或追踪/);
-    assert.match(DEFAULT_PROMPTS.summary, /不得因为“多数楼层可以写无”而强行省略/);
-    assert.match(DEFAULT_PROMPTS.summary, /已有 KEEP 或 Long Fact 再次出现时，不要重复创建/);
-    assert.match(DEFAULT_PROMPTS.checkpoint, /\[RESOLVED_KEEP\][\s\S]*NEW_SUMMARIES 中的逐字证据[\s\S]*\[SUPERSEDED_KEEP\]/);
-    assert.match(DEFAULT_PROMPTS.checkpoint, /【剧情日期\/时间与地点】[\s\S]*完整剧情日期时间[\s\S]*无需在 Checkpoint 正文重复计算或输出/);
-    assert.doesNotMatch(DEFAULT_PROMPTS.checkpoint, /^\[KEEP\]$/m);
+    assert.match(DEFAULT_PROMPTS.summary, /\[Event\]/);
+    assert.doesNotMatch(DEFAULT_PROMPTS.summary, /\[State\]|\[Open\]/);
+    assert.match(DEFAULT_PROMPTS.summary, /关键动作/); assert.match(DEFAULT_PROMPTS.summary, /关键台词自然放进 Event/);
+    assert.match(DEFAULT_PROMPTS.summary, /SOURCE_METADATA/);
+    assert.match(DEFAULT_PROMPTS.checkpoint, /\[RESOLVED_KEEP\][\s\S]*\[SUPERSEDED_KEEP\]/);
     assert.match(DEFAULT_PROMPTS.longMemory, /\[UPDATED_FACTS\][\s\S]*\[RETIRED_FACTS\]/);
-    assert.match(DEFAULT_PROMPTS.longMemory, /【剧情日期\/时间】[\s\S]*时间范围同样使用完整剧情日期时间[\s\S]*缺失时间不得推算或补全/);
     const custom = normalizeSettings({ timeoutMs: 60000, prompts: { summary: '自定义模板' } });
     assert.equal(Object.hasOwn(custom, 'timeoutMs'), false);
     assert.equal(custom.prompts.summary, '自定义模板');

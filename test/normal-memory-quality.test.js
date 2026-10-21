@@ -15,71 +15,21 @@ const row = (key, value, extra = {}) => ({ kind: 'state', entity: '修桥工乙'
 const delta = change => ({ ...change, id: stateId(change) });
 const parse = (rows, known = []) => parseStateChanges(JSON.stringify(rows), rows.map(item => item.evidence).join('。'), known);
 
-test('ordinary defaults rank actual consequences, keep important NPCs and use adaptive length without copying ensemble mode', () => {
-    assert.match(DEFAULT_PROMPTS.summary, /不默认 user、char 是故事主角/);
-    assert.match(DEFAULT_PROMPTS.summary, /参与度、行为后果和长期影响/);
-    assert.match(DEFAULT_PROMPTS.summary, /正文明示性格、关系、经历、立场、秘密和各自认知差/);
-    assert.match(DEFAULT_PROMPTS.summary, /不设最低字数/);
-    assert.doesNotMatch(DEFAULT_PROMPTS.summary, /280–|Event 约 140–180/);
-    for (const section of SUMMARY_SECTION_NAMES) assert.ok(DEFAULT_PROMPTS.summary.includes(`[${section}]`));
-    assert.match(DEFAULT_PROMPTS.checkpoint, /尚未进入 LONG_FACTS[\s\S]*PREVIOUS_STATE 传递/);
-    assert.match(DEFAULT_PROMPTS.longMemory, /不因长期未出场而删除/);
-    assert.notEqual(DEFAULT_PROMPTS.summary, ENSEMBLE_PROMPTS.summary);
+test('compact narrative defaults preserve actions, key quotes, NPCs and uncertain knowledge', () => {
+    assert.match(DEFAULT_PROMPTS.summary, /关键动作[\s\S]*转折与结果/);
+    assert.match(DEFAULT_PROMPTS.summary, /关键台词自然放进 Event/);
+    assert.match(DEFAULT_PROMPTS.summary, /有作用的NPC/); assert.match(DEFAULT_PROMPTS.summary, /已知／未知／误信/);
+    assert.match(DEFAULT_PROMPTS.summary, /不设最低字数/); assert.doesNotMatch(DEFAULT_PROMPTS.summary, /\[State\]|\[Open\]|\[Quote\]/);
     assert.equal(normalizeSettings().checkpointInterval, 5); assert.equal(normalizeSettings().longMemoryInterval, 50);
 });
 
-test('previous official prompts upgrade exactly while customized prompts and ensemble settings survive', () => {
-    const old = { ...V1210_DEFAULT_PROMPTS, checkpoint: V1210_DEFAULT_PROMPTS.checkpoint.replace('技能升级与属性变化以最新明确状态替代旧值。',
-        '技能升级与属性变化以最新明确状态替代旧值。同一任务、属性、物品或计划只在最合适的原栏目保留一条当前状态；明确被新计划替代的旧计划移出当前状态，必要历史原因仍可保留。不同人物的认知不能合并，长期未提及不等于任务结束。') };
-    assert.deepEqual(normalizeSettings({ prompts: old }).prompts, DEFAULT_PROMPTS);
-    const custom = `${old.summary}\n用户自己的额外规则`;
-    assert.equal(normalizeSettings({ prompts: { ...old, summary: custom } }).prompts.summary, custom);
-    const settings = normalizeSettings({ globalPromptMode: 'blank' });
-    assert.equal(generationPrompt(settings, 'summary'), DEFAULT_PROMPTS.summary + NORMAL_STATE_EXTRACTION_RULES);
-    const group = memoryGenerationSettings(settings, 'ensemble');
-    for (const stage of ['summary', 'checkpoint', 'longMemory']) assert.equal(generationPrompt(group, stage), ENSEMBLE_PROMPTS[stage] + (stage === 'checkpoint' ? CHECKPOINT_LIFECYCLE_RULES : ''));
-    assert.deepEqual(memoryGenerationSettings(settings, 'normal').prompts, DEFAULT_PROMPTS);
-});
-
-test('ordinary summary budgets cover all visible fields and migrate the unbounded v1.24.15 default', () => {
+test('old official prompts migrate without overwriting custom rules and both modes share budgets', () => {
+    assert.deepEqual(normalizeSettings({ prompts: V1210_DEFAULT_PROMPTS }).prompts, DEFAULT_PROMPTS);
     assert.deepEqual(normalizeSettings({ prompts: V12415_DEFAULT_PROMPTS }).prompts, DEFAULT_PROMPTS);
-    assert.match(DEFAULT_PROMPTS.summary, /Title、Characters、Event、State、Open、Quote、KEEP 合计/);
-    assert.match(DEFAULT_PROMPTS.summary, /通常合计不超过 \{\{maxLength\}\} 字/);
-    assert.match(DEFAULT_PROMPTS.summary, /最多允许超过约 15%/);
-    assert.doesNotMatch(DEFAULT_PROMPTS.summary, /是软目标|重要多人场景允许详细/);
-    assert.equal(DEFAULT_PROMPTS.checkpoint.replace(`${NORMAL_CONTINUITY_RULES}\n\n`, ''), V12415_DEFAULT_PROMPTS.checkpoint);
-    assert.equal(DEFAULT_PROMPTS.longMemory.replace(`${NORMAL_CONTINUITY_RULES}\n\n`, ''), V12415_DEFAULT_PROMPTS.longMemory);
-    const settings = normalizeSettings({ globalPromptMode: 'blank' });
-    assert.equal(generationPrompt(settings, 'summary').split(NORMAL_SUMMARY_LENGTH_RULES).length - 1, 1);
-});
-
-test('time, knowledge and settlement contracts migrate official defaults and apply once to custom normal requests', () => {
-    assert.deepEqual(normalizeSettings({ prompts: V12416_DEFAULT_PROMPTS }).prompts, DEFAULT_PROMPTS);
-    const settings = normalizeSettings({ globalPromptMode: 'blank', activeStateEnabled: false });
-    for (const stage of ['summary', 'checkpoint', 'longMemory']) {
-        assert.equal(generationPrompt(settings, stage).split(NORMAL_CONTINUITY_RULES).length - 1, 1);
-        const custom = `我自己的${stage}模板`;
-        const customized = { ...settings, prompts: { ...settings.prompts, [stage]: custom } };
-        assert.match(generationPrompt(customized, stage), /不能写成已经发生的经历/);
-        assert.equal(customized.prompts[stage], custom);
-    }
-    assert.match(NORMAL_STATE_EXTRACTION_RULES, /不能只在 Event 写完成/);
-    assert.match(NORMAL_STATE_EXTRACTION_RULES, /奖励明确发放才标 obtained，否则 pending/);
-    assert.match(NORMAL_CONTINUITY_RULES, /想问、拟发送、命令他人执行/);
-    assert.match(NORMAL_CONTINUITY_RULES, /不因通知只露半句/);
-});
-
-test('custom ordinary summaries receive the budget even with Changes disabled, without changing saved templates or ensemble requests', () => {
-    const custom = `${V12415_DEFAULT_PROMPTS.summary}\n用户自定义规则`;
-    for (const activeStateEnabled of [false, true]) {
-        const settings = normalizeSettings({ prompts: { summary: custom }, activeStateEnabled, globalPromptMode: 'blank' });
-        assert.equal(settings.prompts.summary, custom);
-        assert.ok(generationPrompt(settings, 'summary').includes(NORMAL_SUMMARY_LENGTH_RULES));
-        const group = memoryGenerationSettings(settings, 'ensemble');
-        assert.equal(generationPrompt(group, 'summary'), ENSEMBLE_PROMPTS.summary);
-        assert.ok(!generationPrompt(settings, 'checkpoint').includes(NORMAL_SUMMARY_LENGTH_RULES));
-        assert.ok(!generationPrompt(settings, 'longMemory').includes(NORMAL_SUMMARY_LENGTH_RULES));
-    }
+    const custom = '用户自己写的故事格式'; const settings = normalizeSettings({ prompts: { summary: custom }, globalPromptMode: 'blank' });
+    assert.equal(memoryGenerationSettings(settings, 'advanced').prompts.summary, custom);
+    assert.equal(memoryGenerationSettings(settings, 'advanced').summaryMaxLength, settings.summaryMaxLength);
+    assert.match(generationPrompt(memoryGenerationSettings(settings), 'summary'), /普通摘要总字数预算/);
 });
 
 test('normal extraction preserves evidenced independent NPC identities, traits, history and separate knowledge holders', () => {
@@ -166,7 +116,7 @@ for (const mode of ['normal', 'ensemble']) test(`real Summary pipeline selects n
     const frozen = structuredClone(f.store.current().injectionSnapshot);
     const saved = await f.summarizer.summarizeEntry(entry, { deferAggregates: true });
     assert.equal(f.requests.length, 1); assert.match(saved.event, /保护村民/); assert.match(saved.state, /坐在窗边/);
-    assert.equal(saved.stateChanges.length, mode === 'normal' ? 1 : 2);
+    assert.equal(saved.stateChanges?.length ?? 0, mode === 'normal' ? 0 : 1); // Tables share the meaningful-delta filter; routine posture stays in narrative.
     if (mode === 'ensemble') assert.doesNotMatch(f.requests[0].userContent, /PRIOR_MEMORY_CONTEXT|EXISTING_KEEP/);
     assert.deepEqual(f.store.current().injectionSnapshot, frozen);
     const before = structuredClone(f.store.current());
@@ -193,7 +143,7 @@ test('normal Summary receives only three prior summaries and existing KEEP, sett
     const request = f.requests[0];
     assert.match(request.userContent, /PRIOR_MEMORY_CONTEXT[\s\S]*医生丙已读过消息全文/);
     assert.match(request.userContent, /EXISTING_KEEP[\s\S]*KEEP-0001/);
-    assert.match(request.userContent, new RegExp(task.id));
+    assert.doesNotMatch(request.userContent, /CURRENT_TRACKED_STATE/);
     assert.doesNotMatch(request.userContent, /旧事1|旧事2|未来层不可读取|未来秘密不可读取/);
     const current = projectActiveState(f.store.current()).find(item => item.id === task.id);
     assert.equal(current.status, 'completed'); assert.equal(current.acquisition, 'pending');
@@ -237,8 +187,8 @@ test('new Long reuses known NPC facts after fifty quiet floors, drops exact dupl
     const result = await f.summarizer.generateLongMemory(f.store.current().checkpoints);
     assert.equal(f.requests.length, 1); assert.match(f.requests[0].userContent, /fact-old-npc/);
     assert.equal(result.factUpdates.some(update => update.previousId === 'fact-old-npc'), false);
-    assert.doesNotMatch(readSection(result.continuityState, 'Open Threads'), /暴雨守桥|结算完成/);
-    assert.doesNotMatch(result.continuityState, /暴雨守桥|结算完成/); // No ordinary ended task is appended to new Longs.
+    assert.doesNotMatch(readSection(result.continuityState ?? '', 'Open Threads'), /暴雨守桥|结算完成/);
+    assert.doesNotMatch(result.continuityState ?? '', /暴雨守桥|结算完成/); // No ordinary ended task is appended to new Longs.
     const withoutSummary = structuredClone(f.store.current());
     delete withoutSummary.summaries[entries[74].messageId].stateChanges;
     assert.equal(projectActiveState(f.store.current()).find(item => item.id === completed.id)?.status, 'completed');

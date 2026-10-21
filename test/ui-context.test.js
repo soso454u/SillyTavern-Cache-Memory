@@ -30,7 +30,7 @@ test('memory manager is a settings tab instead of a second dialog', () => {
     const html = configTemplate();
     assert.match(html, /data-settings-tab="manager"/);
     assert.deepEqual([...html.matchAll(/data-manager-view="([^"]+)"/g)].map(match => match[1]),
-        ['overview', 'summaries', 'facts', 'keeps', 'threads', 'states', 'checkpoints', 'long']);
+        ['overview', 'summaries', 'checkpoints', 'long', 'tables', 'facts', 'keeps', 'threads', 'states']);
     assert.match(html, /id="cache-memory-manager"[^>]+data-settings-panel="manager"/);
     assert.doesNotMatch(html, /data-manager-back|data-manager-close|aria-label="记忆管理"/);
     assert.doesNotMatch(html, /data-save-settings/);

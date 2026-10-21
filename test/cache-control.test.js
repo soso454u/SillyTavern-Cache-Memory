@@ -58,7 +58,7 @@ test('floor summaries never refresh strict injection; 1-4/6-9 have byte-identica
     assert.notEqual(hashes[8], hashes[9]);
     assert.deepEqual(refreshes.map(item => item.reason), ['new checkpoint', 'new checkpoint']);
     assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_002/);
-    assert.doesNotMatch(store.current().injectionSnapshot.value, /CHECKPOINT_001/);
+    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_001/);
     assert.doesNotMatch(store.current().injectionSnapshot.value, /RECENT_SUMMARY|S10/);
 });
 
@@ -83,7 +83,7 @@ test('old recent mode is demoted; long-only boundary ignores every checkpoint an
     assert.equal(refreshes.length, 0);
     store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 50, content: 'L1', status: 'frozen', frozen: true });
     assert.equal(refreshes.length, 1);
-    assert.match(store.current().injectionSnapshot.value, /LONG_MEMORY/);
+    assert.match(store.current().injectionSnapshot.value, /LONG_STORY|LONG_MEMORY/);
     assert.doesNotMatch(store.current().injectionSnapshot.value, /CHECKPOINT|should not appear/);
 });
 
@@ -93,7 +93,7 @@ test('a CP boundary replaces the old CP; manual edits rebuild the current projec
     store.current().checkpoints[0].content = 'AAA2';
     store.addCheckpoint(checkpoint(10, 'BBB'));
     assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_002[\s\S]*BBB/);
-    assert.doesNotMatch(store.current().injectionSnapshot.value, /AAA2/);
+    assert.match(store.current().injectionSnapshot.value, /AAA2/);
     refreshSnapshot(store.current(), settings, 'manual edit');
     assert.match(store.current().injectionSnapshot.value, /BBB/);
     assert.equal(store.current().checkpoints[0].content, 'AAA2');
@@ -115,14 +115,14 @@ test('Long boundaries project facts and the latest CP without deleting any saved
     const archived = structuredClone(store.current().checkpoints);
     store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 50, content: 'frozen L1', status: 'frozen', frozen: true });
     const value = store.current().injectionSnapshot.value;
-    assert.match(value, /LONG_MEMORY/);
+    assert.match(value, /LONG_STORY|LONG_MEMORY/);
     assert.doesNotMatch(value, /CHECKPOINT_001|CHECKPOINT_010/);
     assert.match(value, /CHECKPOINT_011/);
     assert.deepEqual(store.current().checkpoints, archived);
     store.current().longMemories[0].content = 'background altered L1';
     store.addLongMemory({ id: 'long-002', startFloor: 51, endFloor: 100, content: 'L2', status: 'frozen', frozen: true });
     assert.match(store.current().injectionSnapshot.value, /background altered L1/);
-    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_011/);
+    assert.doesNotMatch(store.current().injectionSnapshot.value, /CHECKPOINT_011/);
 });
 
 test('chat reload restores the published snapshot; switches and settings changes are explicit refresh reasons', () => {
@@ -153,7 +153,7 @@ test('automatic 105 floors create 21 frozen CP and segmented Long1-50/51-100, pr
         apiClient: { complete: async request => {
             requests.push(request);
             return { content: request.userContent.startsWith('body') ? `[SUMMARY]\n[Event]\n${request.userContent}`
-                : request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[LONG_MEMORY]\n- a persistent fact' : '[CHECKPOINT]\n[Current State]\nphase state' };
+                : request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[STORY_ARC]\n完整长期剧情\n[LONG_MEMORY]\n- a persistent fact' : '[CHECKPOINT]\n[Current State]\nphase state' };
         } } });
     for (const entry of getAssistantMessages(chat)) await summarizer.summarizeEntry(entry);
     const current = store.current();
@@ -223,10 +223,10 @@ test('Long generation failure publishes the completed CP once; retry commits Lon
     assert.equal(refreshes.at(-1).reason, 'new checkpoint');
     assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_010/);
     assert.deepEqual(store.current().checkpoints.slice(0, 9), previous);
-    summarizer.apiClient.complete = async () => ({ content: '[LONG_MEMORY]\n- recovered long fact' });
+    summarizer.apiClient.complete = async () => ({ content: '[STORY_ARC]\n恢复后的完整长期剧情\n[LONG_MEMORY]\n- recovered long fact' });
     await summarizer.generateDueLongMemories();
     assert.equal(store.current().longMemories.length, 1);
     assert.equal(store.current().longMemories[0].status, 'frozen');
     assert.equal(refreshes.at(-1).reason, 'new long memory');
-    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_010/);
+    assert.doesNotMatch(store.current().injectionSnapshot.value, /CHECKPOINT_010/);
 });

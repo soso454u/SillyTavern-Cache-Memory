@@ -1,45 +1,41 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.23';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.23';
-import { stripStructuredSections } from './summary-format.js?v=1.24.23';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.23';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.25.0';
+import { INJECTION_MODES } from './defaults.js?v=1.25.0';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.0';
+import { stripStructuredSections } from './summary-format.js?v=1.25.0';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.25.0';
+
+export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
 // Original CP5 / Long50 coverage. Never inject all per-floor Summary Events.
 export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
     const valid = item => isUsableMemory(item) && item.endFloor <= throughFloor;
     const meaningful = text => Boolean(text?.trim()) && !/^(?:无|无新增|none)[。.!]?$/iu.test(text.trim());
-    const arcs = store.longMemories.filter(valid).map(memory => ({
-        memory, story: readSection(memory.content, 'STORY_ARC')
-    })).filter(row => meaningful(row.story));
-    const result = arcs.map(row => ({
-        id: 'story:long:' + row.memory.id, type: 'story',
-        startFloor: row.memory.startFloor, endFloor: row.memory.endFloor,
-        text: '[LONG_STORY_' + row.memory.startFloor + '_' + row.memory.endFloor + ']\n' + row.story.trim()
-    }));
-    if (!includeCP) return result.sort((a, b) => a.startFloor - b.startFloor);
-    const seen = new Set();
-    let legacy = null;
-    const cps = store.checkpoints.filter(valid).sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
-    for (const cp of cps) {
-        const id = cp.startFloor + ':' + cp.endFloor;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        if (arcs.some(row => row.memory.startFloor <= cp.startFloor && row.memory.endFloor >= cp.endFloor)) continue;
-        const stage = readSection(cp.content, 'Stage Story') || readSection(cp.content, 'Events');
-        if (meaningful(stage)) result.push({
-            id: 'story:cp:' + cp.id, type: 'story', startFloor: cp.startFloor, endFloor: cp.endFloor,
-            text: '[CHECKPOINT_STORY_' + cp.startFloor + '_' + cp.endFloor + ']\n' + stage.trim()
+    const arcKeys = new Set();
+    const arcs = store.longMemories.filter(valid).map(memory => ({ memory, story: readSection(memory.content, 'STORY_ARC') || (memory.memoryKind !== 'facts' ? stripStructuredSections(memory.content, hiddenSections) : '') }))
+        .filter(row => {
+            const key = JSON.stringify([row.memory.startFloor, row.memory.endFloor, row.story?.trim()]);
+            if (!meaningful(row.story) || arcKeys.has(key)) return false; arcKeys.add(key); return true;
         });
-        else {
-            // Older checkpoints have cumulative history, not separate stage plots.
-            // Retain only the most recent copy; do NOT expand floor Summaries.
-            const previous = readSection(cp.content, 'Story So Far');
-            if (meaningful(previous)) legacy = {
-                id: 'story:legacy:' + cp.id, type: 'story', startFloor: cp.startFloor, endFloor: cp.endFloor,
-                text: '[HISTORICAL_CONTEXT | 截至第' + cp.endFloor + '层]\n' + previous.trim()
-            };
-        }
+    const result = arcs.map(({ memory, story }) => ({ id: `story:long:${memory.id}`, type: 'long-story',
+        startFloor: memory.startFloor, endFloor: memory.endFloor,
+        text: `[LONG_STORY_${memory.startFloor}_${memory.endFloor}]\n${story.trim()}` }));
+    if (!includeCP) return result.sort((a, b) => a.startFloor - b.startFloor);
+    const latestCP = store.checkpoints.filter(valid).sort((a, b) => a.endFloor - b.endFloor).at(-1);
+    const seen = new Set();
+    let cumulative = null;
+    for (const cp of store.checkpoints.filter(valid).sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor)) {
+        const key = `${cp.startFloor}:${cp.endFloor}`;
+        if (seen.has(key) || arcs.some(({ memory }) => memory.startFloor <= cp.startFloor && memory.endFloor >= cp.endFloor)) continue;
+        seen.add(key);
+        const story = readSection(cp.content, 'Stage Story') || readSection(cp.content, 'Events');
+        const block = { id: `checkpoint:${cp.id}`, type: 'checkpoint', startFloor: cp.startFloor, endFloor: cp.endFloor,
+            text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${cp.startFloor}–${cp.endFloor}层]\n${story || stripStructuredSections(readSection(cp.content, 'Story So Far') ? reconcileTrackedCheckpoint(cp.content, store, throughFloor, cp.startFloor) : cp.content, [...hiddenSections, ...(cp !== latestCP ? ['Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks'] : [])])}` };
+        // Older world-state CPs are cumulative. Keep their latest complete
+        // context once. Plain legacy CPs are per-range and keep their coverage.
+        if (!story && (cp.memoryKind === 'state' || meaningful(readSection(cp.content, 'Story So Far')))) cumulative = block;
+        else if (meaningful(story || cp.content)) result.push(block);
     }
-    if (legacy) result.push(legacy);
+    if (cumulative) result.push(cumulative);
     return result.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
 }
 
@@ -127,24 +123,34 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
     const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor), 0);
     // One CP5/Long50 story per uncovered range; never all per-floor Summary.
     const blocks = historicalStoryBlocks(store, through, useCP);
-    const records = settings.activeStateEnabled ? relevantSnapshotRows(store, through) : [];
-    const snapshotLines = records.map(row => '- ' + row.entity + ' · ' + row.key + '：' + row.value
-        + (row.kind === 'thread' && row.condition ? '；条件：' + row.condition : '')
-        + (row.acquisition === 'pending' ? '（未领取）' : ''));
-    // For older CPs whose source Summaries predate tracked Changes, keep only
-    // the last CP's known snapshot, NOT any older current-state sections.
-    if (latest && !readSection(latest.content, 'Stage Story')) {
-        for (const name of ['Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks']) {
-            const text = readSection(latest.content, name);
-            if (text && !/^(?:无|none)$/iu.test(text)) {
-                snapshotLines.push('[' + name + ']\n' + text);
-            }
-        }
+    // Mixed v1.24.21–23 CPs already contain extra current context. Keep only
+    // the latest such context for compatibility, without adding it to new CPs.
+    if (latest && readSection(latest.content, 'Stage Story')) {
+        const names = ['Story So Far', 'Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks']
+            .filter(name => { const text = readSection(latest.content, name); return text && !/^(?:无|none)[。.]?$/iu.test(text.trim()); });
+        const projected = names.length ? reconcileTrackedCheckpoint(latest.content, store, through, latest.startFloor) : '';
+        const context = names.flatMap(name => {
+            // Keep the original historical causes, but reconcile current fields
+            // against explicit results. Do not append a new role sheet to a
+            // story-only CP or add repeated historical task rows here.
+            const text = readSection(name === 'Story So Far' ? latest.content : projected, name);
+            return text && !/^(?:无|none)[。.]?$/iu.test(text.trim()) ? [`[${name}]\n${text}`] : [];
+        });
+        if (context.length) blocks.push({ id: 'legacy:latest-context', type: 'legacy-context', startFloor: latest.startFloor,
+            endFloor: latest.endFloor, text: '[LEGACY_CONTEXT]\n' + context.join('\n') });
     }
-    if (snapshotLines.length) blocks.push({
-        id: 'state:latest', type: 'snapshot', startFloor: through, endFloor: through,
-        text: '[CURRENT_SNAPSHOT | 截至第' + through + '层]\n' + [...new Set(snapshotLines)].join('\n')
-    });
+    // Tables are optional, separately labelled, and frozen at the same CP/Long
+    // boundary. Never append their rows into Summary, CP or Long prose.
+    if (characterTablesEnabled(store, settings)) {
+        const records = selectedTableRecords(relevantSnapshotRows(store, through), settings);
+        const tables = CHARACTER_TABLES.flatMap(table => {
+            const lines = records.filter(row => tableForRecord(row) === table.key).map(row =>
+                `- ${row.entity} · ${row.key}：${row.value}${row.condition ? `；条件：${row.condition}` : ''}${row.acquisition === 'pending' ? '（未领取）' : ''}`);
+            return lines.length ? [`【${table.label}】`, ...lines] : [];
+        });
+        if (tables.length) blocks.push({ id: 'tables:current', type: 'table', startFloor: through, endFloor: through,
+            text: `[CHARACTER_TABLES | 截至第${through}层]\n${tables.join('\n')}` });
+    }
     const printed = blocks.map(row => row.text).join('\n');
     const seen = new Set(printed.split('\n').map(canonical));
     const uncovered = text => {
@@ -152,10 +158,13 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         if (!key || seen.has(key) || canonical(printed).includes(key)) return false;
         seen.add(key); return true;
     };
-    const projection = projectLongFacts(store, through, { includeTracked: false });
+    const projection = projectLongFacts(store, through, { includeTracked: 'existing' });
     const facts = projection.facts.filter(row => row.status === 'active'
-        || row.status === 'superseded' && /(?:永久|不可逆|终身|重大损失|重大债务)/u.test(row.text))
+        || row.status === 'superseded' && /(?:永久|不可逆|终身|失去.{0,8}(?:右臂|左臂|双腿|视力)|摧毁|重大损失|重大债务)/u.test(row.text))
         .filter(row => uncovered(row.text)).map(row => '- ' + row.id + ' | ' + row.text);
+    if (latest && !readSection(latest.content, 'Stage Story')) {
+        for (const text of checkpointHistoricalFacts(store, through, printed)) if (uncovered(text)) facts.push('- ' + text);
+    }
     // Legacy Long formats may contain important durable history.
     for (const memory of projection.legacy) {
         const lines = stripStructuredSections(memory.content, hiddenSections).split('\n');

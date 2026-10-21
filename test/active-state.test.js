@@ -81,12 +81,13 @@ test('checkpoint retains quiet active tasks even if model omits them; completed 
 
 test('same Summary request extracts state, no additional calls; disabled mode preserves original request body', async () => {
     for (const enabled of [true, false]) {
-        const settings = normalizeSettings({ activeStateEnabled: enabled }), metadata = {}, requests = [];
+        const settings = normalizeSettings({ activeStateEnabled: enabled, characterTables: { characters: true, relationships: true, knowledge: true, tasks: true } }), metadata = {}, requests = [];
         const chat = [{ name: '林', mes: task.evidence, gen_started: 'one' }];
         const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata: () => {} });
         const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => settings, apiClient: { complete: async request => {
             requests.push(request); return { content: `[SUMMARY]\n[Event]\n${task.evidence}\n[Open]\n松开的那只手\n[KEEP]\n无\n[Changes]\n${JSON.stringify([task])}` };
         } } });
+        if (enabled) store.setSummaryMode('advanced');
         await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
         assert.equal(requests.length, 1); assert.equal(projectActiveState(store.current()).length, enabled ? 1 : 0);
         assert.equal(requests[0].userContent, task.evidence);
@@ -112,9 +113,9 @@ test('large retained history publishes only the latest complete CP and changes o
     store.checkpoints = Array.from({ length: 30 }, (_, i) => ({ id: `checkpoint-${i}`, startFloor: i * 5 + 1, endFloor: i * 5 + 5, content: `剧情${i}\n${'汉'.repeat(2000)}`, status: 'frozen' }));
     refreshSnapshot(store, settings, 'new checkpoint');
     const frozen = store.injectionSnapshot.value;
-    assert.ok(frozen.length < 6000); assert.equal(store.injectionSnapshot.budget, undefined);
+    assert.ok(frozen.length > 60000); assert.equal(store.injectionSnapshot.budget, undefined);
     assert.ok(frozen.includes(`剧情29\n${'汉'.repeat(2000)}`));
-    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 30);
     assert.equal(store.checkpoints.length, 30); assert.match(frozen, /剧情29/);
     put(store, 151, [task]); assert.equal(refreshSnapshot(store, settings, 'new summary').value, frozen);
 });
