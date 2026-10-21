@@ -44,14 +44,14 @@ test('reading-rule upgrade waits for an existing publish boundary and preserves 
     store.checkpoints.push(cp(2, '[Story So Far]\n- 新的明确结果'));
     refreshSnapshot(store, settings, 'new checkpoint');
     assert.match(store.injectionSnapshot.value, /新的明确结果/);
-    assert.notDeepEqual(store.injectionSnapshot.blocks[0], old.blocks[0]);
-    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.deepEqual(store.injectionSnapshot.blocks[0], old.blocks[0]);
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 2);
     const prefix = store.injectionSnapshot.value.split('\n\n')[0];
     const published = structuredClone(store.injectionSnapshot.blocks);
     store.checkpoints.push(cp(3, '[Story So Far]\n- 后续进展'));
     refreshSnapshot(store, settings, 'new checkpoint');
     assert.notEqual(store.injectionSnapshot.value, prefix); // Boundaries replace the current projection.
-    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 3);
     assert.notDeepEqual(store.injectionSnapshot.blocks, published);
 });
 

@@ -134,13 +134,14 @@ test('strict snapshots preserve published bytes, deduplicate only new current li
     assert.equal(refreshSnapshot(store, settings, 'new summary').value, before.value);
     store.checkpoints.push(cp('checkpoint-002', 6, content));
     refreshSnapshot(store, settings, 'new checkpoint');
-    assert.notDeepEqual(store.injectionSnapshot.blocks[0], before.blocks[0]);
-    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.deepEqual(store.injectionSnapshot.blocks[0], before.blocks[0]);
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 2);
     const second = store.injectionSnapshot.blocks.find(row => row.id === 'checkpoint:checkpoint-002').text;
-    assert.match(second, /身份：医生|观察：Lv.1/); assert.match(second, /因曾经的误会/);
+    assert.doesNotMatch(second, /身份：医生|观察：Lv.1/); assert.match(second, /因曾经的误会/);
+    assert.match(store.injectionSnapshot.blocks.find(row => row.type === 'legacy-context').text, /身份：医生|观察：Lv.1/);
     put(store, 11, [{ ...skill, value: 'Lv.2' }]);
     store.checkpoints.push(cp('checkpoint-003', 11, content)); refreshSnapshot(store, settings, 'new checkpoint');
-    assert.match(store.injectionSnapshot.blocks.at(-1).text, /观察：Lv.2/);
+    assert.match(store.injectionSnapshot.blocks.find(row => row.type === 'legacy-context').text, /观察：Lv.2/);
     assert.deepEqual(store.checkpoints[0].content, content);
 });
 

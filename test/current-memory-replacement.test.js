@@ -339,7 +339,7 @@ test('only the explicitly replaced floor has its duplicates removed after readba
     assert.equal(Object.values(f.remote.summaries).filter(row => row.floor === 1).length, 1);
 });
 
-test('238 floors retain all records and replace the inflated snapshot with facts plus one CP at the next boundary', async () => {
+test('238 floors retain all records and replace the inflated snapshot with Long coverage and seven uncovered CPs', async () => {
     const { refreshSnapshot } = await import('../src/cache-control.js');
     const { buildInjection } = await import('../src/injection.js');
     const { aggregateVersion } = await import('../src/memory-store.js');
@@ -396,7 +396,7 @@ test('238 floors retain all records and replace the inflated snapshot with facts
     const noFallback = refreshSnapshot(legacy.current(), settings, 'manual reinject', legacy.effectiveStore(f.chat)).value;
     assert.doesNotMatch(noFallback, /RECENT_SUMMARY_/);
     assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'long-story').length, 4);
-    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'checkpoint').length, 1);
+    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'checkpoint').length, 7);
 });
 
 test('confirmed matching alternate becomes the sole current Summary; unrelated partial-load records remain untouched', async () => {
@@ -468,7 +468,7 @@ test('same-body regeneration, metadata rebinding and reparsing cannot retire fro
     assert.equal(f.requests.length, 0);
 });
 
-test('real-shaped flags and old Swipe references retain all raw aggregates while projecting one current CP', async () => {
+test('real-shaped flags and old Swipe references retain all raw aggregates and uncovered stage coverage', async () => {
     const { aggregateVersion } = await import('../src/memory-store.js');
     const { refreshSnapshot } = await import('../src/cache-control.js');
     const { memoryOverviewStats } = await import('../src/ui.js');

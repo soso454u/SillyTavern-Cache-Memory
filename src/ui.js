@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.25.0';
-import { applyUITheme } from './ui-theme.js?v=1.25.0';
-import { generationPrompt } from './generation-prompts.js?v=1.25.0';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.25.0';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.25.0';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.25.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.25.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.25.0';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.25.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.0';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.25.0';
-import { parseFloorSummary } from './summarizer.js?v=1.25.0';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.25.0';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.25.1';
+import { applyUITheme } from './ui-theme.js?v=1.25.1';
+import { generationPrompt } from './generation-prompts.js?v=1.25.1';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.25.1';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.25.1';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.25.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.25.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.25.1';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.1';
+import { buildStructuredSummary } from './summary-format.js?v=1.25.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.1';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.25.1';
+import { parseFloorSummary } from './summarizer.js?v=1.25.1';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.25.1';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.25.0';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.25.0';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.25.1';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.25.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';

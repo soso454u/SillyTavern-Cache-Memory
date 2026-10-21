@@ -18,10 +18,11 @@ function put(store, floor, changes, event = '', fields = {}) {
 }
 const cp = (n, content) => ({ id: `checkpoint-${n}`, startFloor: n * 5 - 4, endFloor: n * 5, memoryKind: 'state', frozen: true, status: 'frozen', content });
 
-test('27 saved CPs without Long publish one latest CP; reload and ordinary updates preserve old snapshot bytes', () => {
+test('27 saved CPs without Long publish all stage stories and one current context; ordinary updates preserve frozen bytes', () => {
     const store = createEmptyStore('a');
-    for (let n = 1; n <= 27; n++) store.checkpoints.push(cp(n, `[Current State]\n当前地点${n}\n[Secrets & Knowledge]\n守卫不知道密道`));
-    store.checkpoints[0].content += '\n[Characters]\n医师：秘密组织的联络者\n[Story So Far]\n旧城永久毁灭，旅人因救援失去右臂';
+    for (let n = 1; n <= 27; n++) store.checkpoints.push(cp(n, `[Story So Far]\n第${n}阶段的独立剧情\n[Current State]\n当前地点${n}\n[Secrets & Knowledge]\n守卫不知道密道`));
+    store.checkpoints[0].content = store.checkpoints[0].content.replace('第1阶段的独立剧情', '旧城永久毁灭，旅人因救援失去右臂')
+        + '\n[Characters]\n医师：秘密组织的联络者';
     put(store, 1, [state('身份', '救援队长', { category: 'identity', lifetime: 'permanent' })]);
     store.keepRegistry.k = { text: '旅人承诺归还医师的戒指', status: 'active', sourceFloor: 1 };
     store.keepRegistry.empty = { text: '无（本层未形成独立长期事项。）', status: 'active', sourceFloor: 5 };
@@ -30,9 +31,9 @@ test('27 saved CPs without Long publish one latest CP; reload and ordinary updat
     assert.equal(refreshSnapshot(store, settings, 'chat changed').value, '旧冻结全文');
     put(store, 136, []); assert.equal(refreshSnapshot(store, settings, 'new summary').value, '旧冻结全文');
     const text = refreshSnapshot(store, settings, 'new checkpoint').value;
-    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 27);
     for (const value of ['当前地点27', '守卫不知道密道', '秘密组织的联络者', '旧城永久毁灭', '救援队长', '承诺归还医师的戒指']) assert.ok(text.includes(value), value);
-    assert.doesNotMatch(text, /当前地点26|CHECKPOINT_26|本层未形成独立/);
+    assert.match(text, /CHECKPOINT_26/); assert.doesNotMatch(text, /当前地点26|本层未形成独立/);
     for (const section of ['checkpoints', 'longMemories', 'keepRegistry']) assert.deepEqual(store[section], before[section]);
     assert.equal(buildInjection(store, { ...settings, strictCacheMode: false }), text);
 });

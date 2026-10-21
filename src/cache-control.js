@@ -1,6 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.25.0';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.25.0';
-import { fnv1a } from './utils.js?v=1.25.0';
+import { INJECTION_MODES } from './defaults.js?v=1.25.1';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.25.1';
+import { fnv1a } from './utils.js?v=1.25.1';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;

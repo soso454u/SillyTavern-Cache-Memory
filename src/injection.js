@@ -1,8 +1,8 @@
-import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.25.0';
-import { INJECTION_MODES } from './defaults.js?v=1.25.0';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.0';
-import { stripStructuredSections } from './summary-format.js?v=1.25.0';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.25.0';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.25.1';
+import { INJECTION_MODES } from './defaults.js?v=1.25.1';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.1';
+import { stripStructuredSections } from './summary-format.js?v=1.25.1';
+import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.25.1';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
@@ -20,22 +20,24 @@ export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
         startFloor: memory.startFloor, endFloor: memory.endFloor,
         text: `[LONG_STORY_${memory.startFloor}_${memory.endFloor}]\n${story.trim()}` }));
     if (!includeCP) return result.sort((a, b) => a.startFloor - b.startFloor);
-    const latestCP = store.checkpoints.filter(valid).sort((a, b) => a.endFloor - b.endFloor).at(-1);
     const seen = new Set();
-    let cumulative = null;
     for (const cp of store.checkpoints.filter(valid).sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor)) {
         const key = `${cp.startFloor}:${cp.endFloor}`;
         if (seen.has(key) || arcs.some(({ memory }) => memory.startFloor <= cp.startFloor && memory.endFloor >= cp.endFloor)) continue;
         seen.add(key);
-        const story = readSection(cp.content, 'Stage Story') || readSection(cp.content, 'Events');
+        const story = readSection(cp.content, 'Stage Story') || readSection(cp.content, 'Events') || readSection(cp.content, 'Story So Far');
+        // Every uncovered CP keeps its own place in the timeline, including old
+        // cumulative formats. Remove repeated role sheets, never whole stages.
+        const prose = stripStructuredSections(cp.content,
+            [...hiddenSections, 'Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks']);
+        // Some very old CPs have no story field at all. Their only record is
+        // retained as dated history instead of silently losing the whole range.
+        const narrative = story || (meaningful(prose.replace(/^\s*\[CHECKPOINT\]\s*/iu, '')) ? prose
+            : stripStructuredSections(cp.content, hiddenSections).replace(/\[(Characters|Current State|Secrets & Knowledge|Open Threads|Continuity Locks)\]/gu, '[历史记录 · $1]'));
         const block = { id: `checkpoint:${cp.id}`, type: 'checkpoint', startFloor: cp.startFloor, endFloor: cp.endFloor,
-            text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${cp.startFloor}–${cp.endFloor}层]\n${story || stripStructuredSections(readSection(cp.content, 'Story So Far') ? reconcileTrackedCheckpoint(cp.content, store, throughFloor, cp.startFloor) : cp.content, [...hiddenSections, ...(cp !== latestCP ? ['Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks'] : [])])}` };
-        // Older world-state CPs are cumulative. Keep their latest complete
-        // context once. Plain legacy CPs are per-range and keep their coverage.
-        if (!story && (cp.memoryKind === 'state' || meaningful(readSection(cp.content, 'Story So Far')))) cumulative = block;
-        else if (meaningful(story || cp.content)) result.push(block);
+            text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${cp.startFloor}–${cp.endFloor}层 · 历史剧情]\n${narrative}` };
+        if (meaningful(narrative.replace(/^\s*\[CHECKPOINT\]\s*/iu, ''))) result.push(block);
     }
-    if (cumulative) result.push(cumulative);
     return result.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
 }
 
@@ -123,18 +125,22 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
     const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor), 0);
     // One CP5/Long50 story per uncovered range; never all per-floor Summary.
     const blocks = historicalStoryBlocks(store, through, useCP);
-    // Mixed v1.24.21–23 CPs already contain extra current context. Keep only
-    // the latest such context for compatibility, without adding it to new CPs.
-    if (latest && readSection(latest.content, 'Stage Story')) {
-        const names = ['Story So Far', 'Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks']
+    // Old CPs contain repeated role sheets in addition to plot. Keep their
+    // latest current context once, alongside ALL uncovered stage stories.
+    if (latest) {
+        const names = [...(readSection(latest.content, 'Stage Story') ? ['Story So Far'] : []),
+            'Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks']
             .filter(name => { const text = readSection(latest.content, name); return text && !/^(?:无|none)[。.]?$/iu.test(text.trim()); });
         const projected = names.length ? reconcileTrackedCheckpoint(latest.content, store, through, latest.startFloor) : '';
-        const context = names.flatMap(name => {
+        const latestStory = canonical(blocks.find(block => block.id === `checkpoint:${latest.id}`)?.text ?? '');
+        const contextNames = names.length ? [...new Set([...names,
+            'Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks'])] : [];
+        const context = contextNames.flatMap(name => {
             // Keep the original historical causes, but reconcile current fields
             // against explicit results. Do not append a new role sheet to a
             // story-only CP or add repeated historical task rows here.
             const text = readSection(name === 'Story So Far' ? latest.content : projected, name);
-            return text && !/^(?:无|none)[。.]?$/iu.test(text.trim()) ? [`[${name}]\n${text}`] : [];
+            return text && !/^(?:无|none)[。.]?$/iu.test(text.trim()) && !latestStory.includes(canonical(text)) ? [`[${name}]\n${text}`] : [];
         });
         if (context.length) blocks.push({ id: 'legacy:latest-context', type: 'legacy-context', startFloor: latest.startFloor,
             endFloor: latest.endFloor, text: '[LEGACY_CONTEXT]\n' + context.join('\n') });
@@ -164,6 +170,12 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         .filter(row => uncovered(row.text)).map(row => '- ' + row.id + ' | ' + row.text);
     if (latest && !readSection(latest.content, 'Stage Story')) {
         for (const text of checkpointHistoricalFacts(store, through, printed)) if (uncovered(text)) facts.push('- ' + text);
+        // Preserve lasting settlement results once when separating legacy CP
+        // history from its current fields; ordinary finished actions stay out.
+        for (const row of projectActiveState(store, through).filter(row => !row.needsReview && !isTrackedActive(row) && hasLastingResult(row))) {
+            const text = `${row.entity} · ${row.key}：${row.value}`;
+            if (uncovered(text)) facts.push(`- ${text}（已结束，长期结果）`);
+        }
     }
     // Legacy Long formats may contain important durable history.
     for (const memory of projection.legacy) {

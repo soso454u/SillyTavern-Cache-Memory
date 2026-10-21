@@ -270,7 +270,7 @@ test('fact replacements require exact new-summary evidence and retain the old fa
     assert.deepEqual(store, snapshot);
 });
 
-test('non-strict incremental injection combines active facts, KEEP, latest state and every subsequent summary deterministically', () => {
+test('non-strict injection keeps uncovered stage history when a facts-only Long has no covering story', () => {
     const { store } = fixture();
     addSummary(store, 1, '旧事件');
     const keeps = collectKeepItems(store.current());
@@ -288,7 +288,7 @@ test('non-strict incremental injection combines active facts, KEEP, latest state
     assert.match(output, /latest state/);
     assert.doesNotMatch(output, /最近第一件事/);
     assert.doesNotMatch(output, /最近第二件事/);
-    assert.doesNotMatch(output, /older state|旧事件/);
+    assert.match(output, /older state/); assert.doesNotMatch(output, /旧事件/);
     assert.equal(buildInjection(store.current(), { ...settings, injectionMode: INJECTION_MODES.NONE }), '');
 });
 
