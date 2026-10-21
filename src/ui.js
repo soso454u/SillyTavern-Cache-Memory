@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.25.1';
-import { applyUITheme } from './ui-theme.js?v=1.25.1';
-import { generationPrompt } from './generation-prompts.js?v=1.25.1';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.25.1';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.25.1';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.25.1';
-import { HistoryBackfill } from './history-backfill.js?v=1.25.1';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.25.1';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.1';
-import { buildStructuredSummary } from './summary-format.js?v=1.25.1';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.1';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.25.1';
-import { parseFloorSummary } from './summarizer.js?v=1.25.1';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.25.1';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.25.2';
+import { applyUITheme } from './ui-theme.js?v=1.25.2';
+import { generationPrompt } from './generation-prompts.js?v=1.25.2';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.25.2';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.25.2';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.25.2';
+import { HistoryBackfill } from './history-backfill.js?v=1.25.2';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.25.2';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.25.2';
+import { buildStructuredSummary } from './summary-format.js?v=1.25.2';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.25.2';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.25.2';
+import { parseFloorSummary } from './summarizer.js?v=1.25.2';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.25.2';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.25.1';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.25.1';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.25.2';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.25.2';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -127,9 +127,9 @@ export function memoryOverviewStats(store, assistants, settings) {
     const entries = Array.isArray(assistants) ? assistants : [];
     const checkpointInterval = Math.max(1, Number(settings?.checkpointInterval) || 5);
     const longMemoryInterval = Math.ceil(Math.max(checkpointInterval, Number(settings?.longMemoryInterval) || 50) / checkpointInterval) * checkpointInterval;
-    const latestFloor = entries.at(-1)?.floor ?? 0;
     const checkpoints = safeStore.checkpoints.filter(isUsableMemory);
     const longMemories = safeStore.longMemories.filter(isUsableMemory);
+    const latestFloor = Math.max(entries.at(-1)?.floor ?? 0, ...checkpoints.map(row => row.endFloor), ...longMemories.map(row => row.endFloor), 0);
     const checkpointRanges = completedRanges(latestFloor, checkpointInterval);
     const longRanges = completedRanges(latestFloor, longMemoryInterval);
     const summaryDetails = summaryHealthDetails(safeStore, entries);
@@ -162,6 +162,11 @@ export function memoryOverviewStats(store, assistants, settings) {
         || block.type === 'story' && /^(?:story:cp:|story:legacy:)/u.test(block.id ?? '')).length;
     // Count outer injection blocks, not their inner [CHECKPOINT] format header.
     const textCount = injectionValue.match(/^\[(?:LATEST_CHECKPOINT|CHECKPOINT_[^\]\n]+|CHECKPOINT\s*\|[^\]\n]+)\]/gm)?.length ?? 0;
+    const longBlockCount = (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'long-story'
+        || block.type === 'story' && String(block.id ?? '').startsWith('story:long:')).length;
+    const longTextCount = injectionValue.match(/^\[LONG_STORY_[^\]\n]+\]/gm)?.length ?? 0;
+    const missingLongExplanation = checkpoints.length && missingLongRanges.length
+        ? `尚缺大总结：${compactRanges(missingLongRanges)}。目前保留相应小总结；可到“长期总结”页生成，需调用模型。` : '';
     return {
         summaries: { actual: usableSummaries.length, generated: generatedSummaries.length, expected: entries.length },
         checkpoints: { actual: checkpoints.length, expected: checkpointRanges.length },
@@ -169,11 +174,12 @@ export function memoryOverviewStats(store, assistants, settings) {
         activeLongFacts: projectLongFacts(safeStore).facts.filter(item => isTrackedActive(item)).length,
         activeKeeps: collectKeepItems(safeStore).filter(item => isTrackedActive(item)).length,
         injectedCheckpoints: safeStore.injectionSnapshot?.blocks?.length ? blockCount : textCount,
+        injectedLongMemories: safeStore.injectionSnapshot?.blocks?.length ? longBlockCount : longTextCount,
         injectedTables: (safeStore.injectionSnapshot?.blocks ?? []).filter(block => ['table', 'snapshot'].includes(block.type)).length,
-        injectionExplanation: !checkpoints.length ? (usableSummaries.length < checkpointInterval
+        injectionExplanation: [!checkpoints.length ? (usableSummaries.length < checkpointInterval
             ? `当前仅有 ${usableSummaries.length} 条可用摘要，尚未凑齐 ${checkpointInterval} 层阶段总结；重新注入不会自动生成。`
             : '已有摘要但阶段总结尚未生成，请在概览检查聚合进度。')
-            : !blockCount && !textCount ? '已有阶段总结尚未进入冻结快照；可手动重新注入，或等待原有发布边界。' : '',
+            : !blockCount && !textCount ? '已有阶段总结尚未进入冻结快照；可手动重新注入，或等待原有发布边界。' : '', missingLongExplanation].filter(Boolean).join(' '),
         estimatedTokens: estimateTokenCount(injectionValue),
         recentBodyWindow: '由 SillyTavern 上下文设置控制',
         storedSummaryRecords: Object.keys(safeStore.summaries).length,
@@ -1911,7 +1917,7 @@ export class CacheMemoryUI {
             health.append(this.element('p', '', '当前应有的 Summary、Checkpoint 与 Long Memory 均已生成。'));
         }
         const diagnostics = this.manager.querySelector('[data-memory-diagnostics]');
-        if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 阶段总结已存 ${overview.checkpoints.actual}/${overview.checkpoints.expected} · 已注入阶段总结 ${overview.injectedCheckpoints} 条 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
+        if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 小总结已存 ${overview.checkpoints.actual}/${overview.checkpoints.expected} · 大总结已存 ${overview.longMemories.actual}/${overview.longMemories.expected} · 已注入 ${overview.injectedLongMemories} 份大总结＋${overview.injectedCheckpoints} 份小总结 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
         if (overview.injectionExplanation) health.append(this.element('p', '', overview.injectionExplanation));
         if (this.showSummaryHealthDetails) {
             const detailSection = this.element('div', 'cache-memory-summary-health-details');
@@ -1941,40 +1947,60 @@ export class CacheMemoryUI {
             const range = state.currentRange;
             quick.append(this.element('p', '', `${labels[state.status] ?? state.status} · ${state.phase ?? ''}${range ? ` 第 ${range.startFloor}–${range.endFloor} 层` : ''} · ${state.processed}/${state.total} · 已生成 ${state.created}${state.errors?.length ? `\n${state.errors.at(-1)}` : ''}`));
         }
-        const longPlan = this.summarizer.getMissingMemoryPlan?.({ onlyLong: true });
-        const longGenerate = this.element('button', 'menu_button', '生成缺失的 Long Memory');
-        longGenerate.dataset.fillLongMemories = '';
-        longGenerate.disabled = !longPlan?.longMemories.length || filling || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
-        quick.append(longGenerate);
-        if (longPlan?.longMemories.length) quick.append(this.element('p', '', `尚未生成长期记忆：${compactRanges(longPlan.longMemories.map(range => [range.startFloor, range.endFloor]))}`));
-        root.append(quick, this.backfillPanel(), this.aggregationPanel());
+        root.append(quick, this.longMemoryControls(), this.backfillPanel(), this.aggregationPanel());
         return root;
+    }
+
+    longMemoryControls() {
+        const section = this.element('section', 'cache-memory-long-controls');
+        const plan = this.summarizer.getMissingMemoryPlan?.({ onlyLong: true });
+        const ready = plan?.longMemories ?? [], blocked = plan?.blockedLongMemories ?? [];
+        section.append(this.element('h4', '', '大总结合成'), this.element('p', '', '每50层合成一份大总结，替代已覆盖的小总结：1–50、51–100，再接101–105等阶段。自定义间隔按设置执行。'));
+        if (ready.length) section.append(this.element('p', '', `可生成：${compactRanges(ready.map(row => [row.startFloor, row.endFloor]))}。每段调用一次摘要模型。`));
+        else section.append(this.element('p', '', blocked.length ? '当前没有来源完整的待生成大总结。' : '当前没有待生成的大总结。'));
+        if (blocked.length) section.append(this.element('p', '', `来源小总结缺口：${blocked.map(row => `${row.startFloor}–${row.endFloor}层（从第${row.missingFrom}层缺起）`).join('；')}。可先到阶段总结页检查。`));
+        const actions = this.element('div', 'cache-memory-actions');
+        const generate = this.element('button', 'menu_button', `生成缺失大总结（${ready.length}段）`);
+        generate.dataset.fillLongMemories = ''; generate.type = 'button';
+        generate.disabled = !ready.length || this.isMissingCheckpointBackfillActive() || this.backfill?.active || this.importingMemory || this.restoringServerMemory;
+        generate.title = '调用摘要模型，仅使用已有小总结；不生成或重写楼层摘要、阶段总结。';
+        const stop = this.element('button', 'menu_button', '安全停止'); stop.type = 'button'; stop.dataset.cancelMissingCheckpoints = ''; stop.disabled = !this.isMissingCheckpointBackfillActive();
+        actions.append(generate, stop); section.append(actions, this.element('small', 'cache-memory-help', '只使用已有小总结，不自动重做历史。重新注入只更新发送内容，不会生成大总结。'));
+        const state = this.missingCheckpointState;
+        if (state?.kind === 'all' && state.phase === 'Long Memory') section.append(this.element('p', '', `${state.status === 'running' ? '正在合成' : state.status === 'completed' ? '合成完成' : state.status === 'cancelled' ? '已停止' : '合成状态'}：${state.processed}/${state.total} · 已生成${state.created}${state.errors?.length ? ` · ${state.errors.at(-1)}` : ''}`));
+        return section;
     }
 
     renderCharacterTablesPage() {
         const root = this.element('div', 'cache-memory-manager-page cache-memory-character-tables');
         const enabled = characterTablesEnabled(this.store.current(), this.getSettings());
-        root.append(this.element('h4', '', '角色表格'), this.element('p', '', '只维护你勾选的表。基础摘要仍保持简短，关键动作和台词留在事件里。'));
+        root.append(this.element('h4', '', '角色表格'), this.element('p', '', '点“查看”浏览已有资料；勾选只控制后续维护与注入。查看不需要开启，也不会调用模型。'));
         const choices = this.element('div', 'cache-memory-table-choices');
         const selected = normalizeCharacterTables(this.getSettings().characterTables);
+        const rows = projectActiveState(this.store.effectiveStore(this.getChat()));
+        const viewing = CHARACTER_TABLES.find(table => table.key === this.characterTableView) ?? CHARACTER_TABLES[0];
         for (const table of CHARACTER_TABLES) {
+            const card = this.element('div', `cache-memory-table-choice${table.key === viewing.key ? ' is-viewing' : ''}`);
             const label = this.element('label', 'cache-memory-toggle');
             const input = this.element('input'); input.type = 'checkbox'; input.checked = selected[table.key]; input.dataset.characterTable = table.key;
+            input.setAttribute('aria-label', `启用${table.label}`);
             const text = this.element('span'); text.append(this.element('strong', '', table.label), this.element('small', '', table.description));
-            label.append(input, text); choices.append(label);
+            label.append(input, text);
+            const count = rows.filter(row => tableForRecord(row) === table.key).length;
+            const view = this.element('button', 'menu_button', `查看 · ${count} 项`);
+            view.type = 'button'; view.dataset.viewCharacterTable = table.key; view.setAttribute('aria-pressed', String(table.key === viewing.key));
+            card.append(label, view); choices.append(card);
         }
         root.append(choices);
         if (!enabled) {
-            root.append(this.element('p', '', '角色表格当前关闭。可先选择需要的表，再开启；旧记录仍保存在高级资料中。'));
+            root.append(this.element('p', '', '角色表格当前关闭，仍可查看和手动编辑已有资料。开启后，才随新剧情维护勾选的表。'));
             const button = this.element('button', 'menu_button', '开启角色表格'); button.dataset.enableCharacterTables = 'true'; root.append(button);
-            return root;
         }
-        root.append(this.element('p', '', '表格随新剧情更新，不增加单独请求。点击字段可编辑，已结束事项收在历史中。'));
-        if (!Object.values(selected).some(Boolean)) root.append(this.element('p', '', '目前未选择任何表，不会提取或注入表格内容。'));
-        for (const table of CHARACTER_TABLES.filter(table => selected[table.key])) {
-            const section = this.element('section', 'cache-memory-character-table-section');
-            section.append(this.element('h4', '', table.label), this.renderTrackedPage('all', table.key)); root.append(section);
-        }
+        if (enabled && !Object.values(selected).some(Boolean)) root.append(this.element('p', '', '目前未启用任何表，不会提取或注入表格内容；已有资料照常可看。'));
+        const section = this.element('section', 'cache-memory-character-table-section');
+        section.append(this.element('h4', '', viewing.label), this.element('p', '', enabled && selected[viewing.key]
+            ? '已启用：随新剧情维护。点击字段可编辑，已结束事项收在历史中。' : '当前未启用，仅查看已有资料；不会因此开启提取或注入。'),
+        this.renderTrackedPage('all', viewing.key)); root.append(section);
         return root;
     }
 
@@ -1982,6 +2008,7 @@ export class CacheMemoryUI {
         const root = this.element('div', 'cache-memory-manager-page');
         root.append(this.element('p', '', tableSection ? '旧资料可继承；只有明确变更或结束才更新，暂时未提及不会清空。' : '来源变更的记录标为待核对，不参与当前状态整理。结束事项保留历史；长时间未提及不会自动结束。手动操作不调用模型，原冻结快照在下个既有边界更新。'));
         const rows = projectActiveState(this.store.effectiveStore(this.getChat())).filter(item => (kind === 'all' || item.kind === kind) && (!tableSection || tableForRecord(item) === tableSection));
+        if (tableSection && !rows.length) root.append(this.element('p', 'cache-memory-empty', '这张表暂无已存资料。可以手动添加；启用后从新剧情记录，不会自动重做历史。'));
         const active = rows.filter(item => !item.needsReview && isTrackedActive(item));
         const archived = rows.filter(item => !item.needsReview && !isTrackedActive(item));
         const review = rows.filter(item => item.needsReview);
@@ -2171,11 +2198,13 @@ export class CacheMemoryUI {
                 this.missingCheckpointState = { ...result, kind: 'all', status: result.failed ? 'failed' : 'completed' };
                 const remaining = this.summarizer.getMissingMemoryPlan({ onlyLong });
                 const incomplete = remaining.summaries.length + remaining.checkpoints.length + remaining.longMemories.length;
+                const blocked = remaining.blockedLongMemories?.length ?? 0;
                 if (!result.failed && incomplete) {
                     this.missingCheckpointState.status = 'failed';
                     this.missingCheckpointState.errors = [`仍有 ${incomplete} 条记忆未补齐，请查看对应分类`];
                 }
-                notify(result.failed || incomplete ? 'error' : 'success', result.failed ? result.errors.at(-1) : incomplete ? this.missingCheckpointState.errors[0] : `${onlyLong ? '长期记忆补全' : '补全'}完成：新增 ${result.created} 条记忆，并已从服务器读回确认`);
+                notify(result.failed || incomplete ? 'error' : blocked ? 'warning' : 'success', result.failed ? result.errors.at(-1) : incomplete ? this.missingCheckpointState.errors[0]
+                    : `${onlyLong ? '大总结合成' : '补全'}完成：新增 ${result.created} 条记忆，并已从服务器读回确认${blocked ? `；另有 ${blocked} 段缺少来源小总结，未请求模型` : ''}`);
             }
         } catch (error) {
             if (runId === this.missingCheckpointRunId) this.missingCheckpointState = { ...this.missingCheckpointState,
@@ -2289,7 +2318,8 @@ export class CacheMemoryUI {
 
     renderLongMemoryPage() {
         const root = this.element('div', 'cache-memory-manager-page');
-        if (!this.store.current().longMemories.length) root.append(this.element('p', 'cache-memory-empty', '暂无长期记忆，可在概览补全。'));
+        root.append(this.longMemoryControls());
+        if (!this.store.current().longMemories.length) root.append(this.element('p', 'cache-memory-empty', '暂无已存大总结。'));
         root.append(this.element('h4', '', '已保存的 Long Memory（点击展开查看全文）'));
         for (const memory of [...this.store.current().longMemories].sort((a, b) => b.startFloor - a.startFloor)) {
             root.append(this.foldCard({ key: `long:${memory.id}`, group: 'facts', type: 'long', id: memory.id,
@@ -3006,6 +3036,12 @@ export class CacheMemoryUI {
             this.beginInlineEdit('keep', keepRow.dataset.memoryId, { presetStatus: keepStatus.dataset.keepSingleStatus });
             this.renderManager();
             return;
+        }
+        const tableView = event.target.closest('[data-view-character-table]');
+        if (tableView) {
+            if (!CHARACTER_TABLES.some(table => table.key === tableView.dataset.viewCharacterTable)) return;
+            this.characterTableView = tableView.dataset.viewCharacterTable;
+            this.renderManager(); return;
         }
         const view = event.target.closest('[data-manager-view]');
         if (view) {

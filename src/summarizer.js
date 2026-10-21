@@ -1,16 +1,16 @@
-import { selectedTableRecords } from './character-tables.js?v=1.25.1';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.25.1';
-import { memoryGenerationSettings } from './defaults.js?v=1.25.1';
-import { generationPrompt } from './generation-prompts.js?v=1.25.1';
-import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.25.1';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.25.1';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.25.1';
-import { extractSummarySource } from './summary-source.js?v=1.25.1';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.25.1';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.25.1';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.25.1';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.25.1';
-import { retryOperation, waitForRetry } from './retry.js?v=1.25.1';
+import { selectedTableRecords } from './character-tables.js?v=1.25.2';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.25.2';
+import { memoryGenerationSettings } from './defaults.js?v=1.25.2';
+import { generationPrompt } from './generation-prompts.js?v=1.25.2';
+import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.25.2';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.25.2';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.25.2';
+import { extractSummarySource } from './summary-source.js?v=1.25.2';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.25.2';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.25.2';
+import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.25.2';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.25.2';
+import { retryOperation, waitForRetry } from './retry.js?v=1.25.2';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -361,7 +361,8 @@ export class MemorySummarizer {
     getMissingMemoryPlan({ onlyLong = false } = {}) {
         const settings = this.getSettings(), store = this.store.current();
         const assistants = getAssistantMessages(this.getChat());
-        const latestFloor = assistants.at(-1)?.floor ?? 0;
+        const latestFloor = onlyLong ? Math.max(assistants.at(-1)?.floor ?? 0,
+            ...store.checkpoints.filter(isUsableMemory).map(row => row.endFloor), 0) : assistants.at(-1)?.floor ?? 0;
         const checkpointInterval = Math.max(1, Number(settings.checkpointInterval) || 5);
         const longSpan = Math.ceil(Math.max(checkpointInterval, Number(settings.longMemoryInterval) || 50) / checkpointInterval) * checkpointInterval;
         const missingRanges = (items, interval) => {
@@ -376,9 +377,22 @@ export class MemorySummarizer {
             return ranges;
         };
         const longMemories = missingRanges(store.longMemories, longSpan);
-        const needed = floor => !onlyLong || longMemories.some(range => floor >= range.startFloor && floor <= range.endFloor);
-        return { latestFloor, summaries: assistants.filter(entry => needed(entry.floor) && (!isUsableMemory(this.store.getSummaryForEntry(entry)))),
-            checkpoints: missingRanges(store.checkpoints, checkpointInterval).filter(range => needed(range.startFloor)), longMemories };
+        if (onlyLong) {
+            // Long-only means exactly that: existing CPs are sufficient even
+            // when old floor Summaries are not loaded. Never backfill them here.
+            const blockedLongMemories = [], ready = [];
+            for (const range of longMemories) {
+                const sources = store.checkpoints.filter(item => isUsableMemory(item)
+                    && item.startFloor >= range.startFloor && item.endFloor <= range.endFloor).sort((a, b) => a.startFloor - b.startFloor);
+                let next = range.startFloor;
+                for (const source of sources) { if (source.startFloor !== next) break; next = source.endFloor + 1; }
+                if (next !== range.endFloor + 1) blockedLongMemories.push({ ...range, missingFrom: next });
+                else ready.push(range);
+            }
+            return { latestFloor, summaries: [], checkpoints: [], longMemories: ready, blockedLongMemories };
+        }
+        return { latestFloor, summaries: assistants.filter(entry => !isUsableMemory(this.store.getSummaryForEntry(entry))),
+            checkpoints: missingRanges(store.checkpoints, checkpointInterval), longMemories };
     }
 
     async fillMissingMemories({ signal, onProgress = () => {}, onlyLong = false } = {}) {
@@ -621,8 +635,8 @@ export class MemorySummarizer {
         const id = checkpoints.find(item => item.startFloor === startFloor && item.endFloor === endFloor)?.id
             ?? nextSequenceId('checkpoint', checkpoints);
         const newSummaries = summaries.map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
-        // Latest-only injection requires every newly generated CP to carry its predecessor,
-        // including chats whose retained records use the legacy aggregate format.
+        // Previous context helps interpret this five-floor stage; it is background,
+        // not an instruction to repeat the entire earlier story in the new CP.
         const incremental = true;
         const state = previousState(this.generationStore(), startFloor);
         const checkpointVersions = state.id ? { [state.id]: aggregateVersion([...checkpoints, ...this.store.current().longMemories].find(cp => cp.id === state.id)) } : {};
