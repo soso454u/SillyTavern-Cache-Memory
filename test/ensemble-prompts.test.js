@@ -5,7 +5,7 @@ import { generationPrompt, NORMAL_STATE_EXTRACTION_RULES } from '../src/generati
 import { bindDialogViewport } from '../src/ui-context.js';
 import { CacheMemoryUI, configTemplate } from '../src/ui.js';
 import { MemorySummarizer } from '../src/summarizer.js';
-import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from '../src/active-state.js';
+import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from '../src/active-state.js';
 
 test('new installs and upgrades initialize independent defaults without losing ordinary custom settings', () => {
     for (const saved of [undefined, {}, { prompts: { summary: 'custom Summary', checkpoint: 'custom CP', longMemory: 'custom Long' }, summaryMaxLength: 777, checkpointMaxLength: 1777, longMemoryMaxLength: 3777, summaryMaxTokens: 555 }]) {
@@ -43,9 +43,9 @@ test('complete ensemble templates avoid old appended rules and retain the Change
     const normal = normalizeSettings({ globalPromptMode: 'blank' });
     const group = memoryGenerationSettings(normal, 'advanced');
     assert.equal(generationPrompt(normal, 'summary'), normal.prompts.summary + NORMAL_STATE_EXTRACTION_RULES);
-    assert.equal(generationPrompt(normal, 'checkpoint'), normal.prompts.checkpoint + STATE_AGGREGATION_RULES);
+    assert.equal(generationPrompt(normal, 'checkpoint'), normal.prompts.checkpoint + STATE_AGGREGATION_RULES + CHECKPOINT_LIFECYCLE_RULES);
     for (const stage of ['summary', 'checkpoint', 'longMemory']) {
-        assert.equal(generationPrompt(group, stage), ENSEMBLE_PROMPTS[stage]);
+        assert.equal(generationPrompt(group, stage), ENSEMBLE_PROMPTS[stage] + (stage === 'checkpoint' ? CHECKPOINT_LIFECYCLE_RULES : ''));
         assert.doesNotMatch(generationPrompt(group, stage), /【复杂进阶总结|【持续状态增量】/);
     }
     assert.match(generationPrompt(group, 'summary'), /\[Changes\][\s\S]*confirmed: true/);
@@ -76,6 +76,9 @@ function viewportFixture() {
 test('dialogs intersect plugin bounds with offset visualViewport and clean up listeners on cancellation', () => {
     const f = viewportFixture(), controller = new AbortController();
     const anchor = { getBoundingClientRect: () => ({ left: 10, top: 20, right: 380, bottom: 800 }) };
+    f.overlay.contains = () => false; f.overlay.dataset = {};
+    f.overlay.addEventListener = () => {}; f.overlay.removeEventListener = () => {};
+    f.root.innerWidth = 1200; f.root.visualViewport.width = 1200;
     bindDialogViewport(f.overlay, f.root, controller.signal, anchor);
     assert.equal(f.overlay.style.left, '10px');
     assert.equal(f.overlay.style.top, '40px');
@@ -108,7 +111,7 @@ test('background manager notifications are coalesced into one frame and closed w
 test('message busy checks can reuse the render snapshot chat ID without normalizing the store per message', () => {
     let reads = 0;
     const summarizer = new MemorySummarizer({ store: { current: () => { reads++; return { chatId: 'a' }; } } });
-    summarizer.inFlight.add('a:m');
+    summarizer.inFlight.add('a:m:source');
     for (let i = 0; i < 200; i++) assert.equal(summarizer.isSummarizing('m', 'a'), true);
     assert.equal(reads, 0);
     assert.equal(summarizer.isSummarizing('m'), true);

@@ -1,3 +1,4 @@
+import { hasLastingResult } from './active-state.js?v=1.24.19';
 // Normal-mode generation only. Never replay these selectors over saved memory
 // or use them in injection: omitted deltas remain in the new Summary narrative.
 const clean = value => String(value ?? '').trim();
@@ -43,7 +44,7 @@ export function normalCheckpointHistory(content, tracked, startFloor) {
         if (heading) section = heading;
         return !currentSections.has(section) || !markers.has(line.trim());
     }).join('\n');
-    const history = ended.filter(item => item.sourceFloor >= startFloor)
+    const history = ended.filter(item => item.sourceFloor >= startFloor && hasLastingResult(item))
         .map(render).filter(line => !result.split('\n').some(existing => existing.trim() === line));
     if (!history.length) return result;
     const sectionPattern = /(\[Story So Far\]\n)([\s\S]*?)(?=\n\[[^\]\n]+\]|$)/u;

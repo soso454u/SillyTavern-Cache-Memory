@@ -38,7 +38,7 @@ export function buildStructuredSummary(fields = {}) {
 export function stripStructuredSections(value, names) {
     const blocked = new Set(names.map(name => String(name).toLowerCase()));
     const text = String(value ?? '');
-    const marker = /^\s*\[([^\]\n]+)\]\s*$/gim;
+    const marker = /^\s*\[([^\]\n[{}"]+)\]\s*$/gim;
     const matches = [...text.matchAll(marker)];
     if (!matches.length) return text.trim();
     const chunks = [];

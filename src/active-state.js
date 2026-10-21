@@ -1,4 +1,5 @@
-import { fnv1a } from './utils.js?v=1.24.14';
+import { parseStructuredSummary } from './summary-format.js?v=1.24.19';
+import { fnv1a } from './utils.js?v=1.24.19';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
@@ -56,10 +57,75 @@ export function parseStateChanges(text, source, known = [], { advanced = false }
     });
 }
 
+// Only explicit results are replayed. No expiry by age, elapsed deadline or omission.
+const escapePattern = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const unresolved = /(?:尚未|未能|没有|还没|待确认|待结算|是否|如果|假如|计划|预计|将|准备|打算|可能|才能|即可|完成条件|完成度|完成与否)/u;
+export const hasLastingResult = item => item.kind === 'state' && item.lifetime === 'permanent'
+    || /(?:永久|不可逆|终身|身份|股权|股份|通行权|解锁|技能|能力|控制度|韧性|偏执值|执念值|承诺|权限|关系|伤残|债务)/u.test(item.value);
+
+function summaryResultText(summary) {
+    const parsed = parseStructuredSummary(summary.raw);
+    return [summary.event || parsed?.event, summary.state || parsed?.state].filter(Boolean).join('\n');
+}
+
+function explicitSummaryResult(item, summary, peers, resultText) {
+    if (!isTrackedActive(item) || item.kind === 'state' && item.lifetime !== 'temporary' || item.manual || !validSummary(summary) || summary.floor < item.sourceFloor) return null;
+    const text = resultText ?? summaryResultText(summary);
+    const clauses = text.split(/(?<=[。；;\n])/u);
+    const key = item.kind === 'thread' ? threadKey(item.key) : item.key.replace(/^(?:明早|明日|今日|今晚|当前)/u, '').replace(/计划$/u, '');
+    if (!key || key.length < 2) return null;
+    const named = escapePattern(key);
+    for (const clause of clauses) {
+        // An unnamed result is unsafe when two people track the same task.
+        const holders = peers.filter(peer => peer.kind === item.kind && subjectKey(peer) === subjectKey(item));
+        if (!clause.includes(item.entity) && (holders.some(peer => peer.entity !== item.entity)
+            || ![text, summary.characters || ''].some(value => value.includes(item.entity)))) continue;
+        const title = `(?:【|「|“|"|‘)?${named}(?:】|」|”|"|’)?`;
+        if (holders.some(peer => peer.entity !== item.entity)
+            && !new RegExp(`${escapePattern(item.entity)}(?:的)?(?:已|已经)?(?:完成|结算)?(?:任务)?${title}`, 'u').test(clause)) continue;
+        const planComplete = item.kind === 'state' && item.category === 'plan'
+            && new RegExp(`${escapePattern(item.entity)}[^。；;\\n]*已完成[^。；;\\n]*${named}`, 'u').test(clause);
+        const completed = new RegExp(`(?:${title}(?:任务)?(?:已|已经)?(?:完成|结算|兑现|执行完毕)|(?:结算|完成)(?:了)?(?:任务)?${title})`, 'u');
+        if (!(planComplete || completed.test(clause)) || unresolved.test(clause)) continue;
+        return { ...item, status: item.kind === 'thread' ? 'completed' : 'expired', value: clause.trim(), evidence: clause.trim(), derived: true };
+    }
+    return null;
+}
+
+export function stateSummaryResults(store, throughFloor) {
+    const known = projectActiveState(store, throughFloor);
+    const keys = known.map(item => item.kind === 'thread' ? threadKey(item.key)
+        : item.key.replace(/^(?:明早|明日|今日|今晚|当前)/u, '').replace(/计划$/u, ''));
+    return Object.values(store.summaries ?? {}).filter(summary => validSummary(summary) && summary.floor <= throughFloor
+        && keys.some(key => key && summaryResultText(summary).includes(key)))
+        .sort((a, b) => a.floor - b.floor).map(summary => `[第${summary.floor}层]\n${summaryResultText(summary)}`).join('\n\n') || '无';
+}
+
+// Existing CP generation can reconcile semantic changes in its SAME request.
+// Persist the evidence rows inside the new CP content; validate on every replay.
+// No mutation of Summary, no stateOverrides write and no new model request.
+function checkpointResolutions(checkpoint, summaries, known) {
+    const text = String(checkpoint.content ?? '').match(/(?:^|\n)\[STATE_RESOLUTIONS\]\s*\n([\s\S]*?)(?=\n\[[^\]\n]+\]|$)/u)?.[1];
+    if (!text) return [];
+    const source = summaries.filter(row => validSummary(row) && row.floor <= checkpoint.endFloor).map(summaryResultText).join('\n');
+    return parseStateChanges(text, source, known, { advanced: true }).filter(row => {
+        const old = known.find(item => item.id === row.id);
+        return old && !old.manual && summaries.some(summary => validSummary(summary) && summary.floor >= old.sourceFloor
+            && summary.floor <= checkpoint.endFloor && summaryResultText(summary).includes(row.evidence)) && (row.status === 'expired' || row.kind === 'thread' && !isTrackedActive(row)
+            || row.status === 'active');
+    });
+}
+
 export function projectActiveState(store, throughFloor = Infinity) {
     const records = new Map();
     const replay = (change, source) => {
         if (!change?.id || !['thread', 'state'].includes(change.kind)) return;
+        if (change.kind === 'state' && !change.manual && change.status === 'active' && change.lifetime === 'temporary'
+            && change.category === 'history' && /^(?:已成功开箱|已实际抵达|已抵达|已完成|已兑现|已执行完毕)/u.test(change.value)
+            && !unresolved.test(change.value)) change = { ...change, status: 'expired', derived: true };
+        if (change.kind === 'thread' && change.status === 'completed' && change.acquisition === 'pending'
+            && /(?:已完成并领取|已领取奖励|奖励[^。；;]*(?:已发放|已到账)|(?:积分|命运点)[^。；;]*到账)/u.test(change.value)
+            && !/(?:奖励[^。；;]*(?:未领取|尚未|待领取))/u.test(change.value)) change = { ...change, acquisition: 'obtained' };
         const recordKey = stateId(change);
         const old = records.get(recordKey);
         // A frozen Long may retain an explicit settlement absent from the
@@ -71,12 +137,13 @@ export function projectActiveState(store, throughFloor = Infinity) {
             if (old.kind === 'thread' && (old.status === 'completed' && change.status !== 'completed'
                 || !isTrackedActive(old) && isTrackedActive(change))) return;
         }
-        const history = old ? [...old.history, { key: old.key, value: old.value, status: old.status, sourceId: old.sourceId, sourceFloor: old.sourceFloor }] : [];
+        const history = old ? [...old.history, { key: old.key, value: old.value, status: old.status, condition: old.condition, acquisition: old.acquisition, sourceId: old.sourceId, sourceFloor: old.sourceFloor }] : [];
         records.set(recordKey, { ...old, ...change, manual: Boolean(change.manual), id: old?.id ?? change.id, ...source, history, originSourceId: change.manual ? change.sourceId : source.aggregate ? source.sourceId : old?.originSourceId ?? source.sourceId,
             condition: change.condition || old?.condition || '', actors: change.actors?.length ? change.actors : old?.actors ?? [] });
     };
     const events = [];
-    for (const summary of Object.values(store.summaries ?? {}).filter(item => item.floor <= throughFloor)) {
+    const summaries = Object.values(store.summaries ?? {}).filter(item => item.floor <= throughFloor);
+    for (const summary of summaries) {
         for (const change of summary.stateChanges ?? []) events.push({ change, floor: summary.floor, sequence: 0, source: {
             sourceId: summary.messageId, sourceFloor: summary.floor, sourceFingerprint: summary.sourceFingerprint,
             needsReview: !validSummary(summary),
@@ -99,8 +166,25 @@ export function projectActiveState(store, throughFloor = Infinity) {
             events.push({ change, floor: memory.endFloor, sequence: 0, source: { sourceId: memory.id, sourceFloor: memory.endFloor, needsReview: false, aggregate: true } });
         }
     }
+    for (const summary of summaries.filter(validSummary)) events.push({ summary, floor: summary.floor, sequence: 0.5 });
+    for (const checkpoint of store.checkpoints ?? []) {
+        if (!validSummary(checkpoint) || checkpoint.endFloor > throughFloor) continue;
+        events.push({ checkpoint, floor: checkpoint.endFloor, sequence: 0.75 });
+    }
     events.sort((a, b) => a.floor - b.floor || a.sequence - b.sequence);
-    for (const event of events) replay(event.change, event.source);
+    for (const event of events) {
+        if (event.summary) {
+            const known = [...records.values()];
+            const resultText = summaryResultText(event.summary);
+            for (const item of known) {
+                const change = explicitSummaryResult(item, event.summary, known, resultText);
+                if (change) replay(change, { sourceId: event.summary.messageId, sourceFloor: event.floor, needsReview: false });
+            }
+        } else if (event.checkpoint) {
+            for (const change of checkpointResolutions(event.checkpoint, summaries, [...records.values()]))
+                replay(change, { sourceId: event.checkpoint.id, sourceFloor: event.floor, needsReview: false });
+        } else replay(event.change, event.source);
+    }
     return [...records.values()];
 }
 
@@ -138,9 +222,10 @@ export function matchesTrackedValue(text, item, value, key = item.key) {
     if (!value) return false;
     const body = String(text ?? '').replace(/^\s*[-*•]\s*/, '').trim();
     const keys = [...new Set([key || item.key, subjectKey({ ...item, key: key || item.key })])];
-    const suffix = `${item.acquisition === 'pending' ? '（尚未领取）' : ''}${item.condition ? `；条件：${item.condition}` : ''}`;
+    const conditions = [...new Set(['', item.condition, ...(item.history ?? []).map(row => row.condition)].filter(value => value !== undefined))];
+    const suffixes = conditions.flatMap(condition => ['', '（尚未领取）'].map(pending => `${pending}${condition ? `；条件：${condition}` : ''}`));
     return keys.some(name => [`${item.entity} · ${name}：${value}`, `【${item.entity}｜${name}】${value}`,
-        `${item.entity}：${name}：${value}`].some(rendered => body === rendered || body === rendered + suffix));
+        `${item.entity}：${name}：${value}`].some(rendered => suffixes.some(suffix => body === rendered + suffix)));
 }
 
 export function isAtomicTrackedEntry(text, item) {
@@ -159,7 +244,7 @@ export function reconcileTrackedCheckpoint(content, store, throughFloor, startFl
     let result = String(content);
     const rows = projectActiveState(store, throughFloor).filter(item => !item.needsReview);
     const sectionFor = item => item.kind === 'thread' ? 'Open Threads' : item.category === 'knowledge' ? 'Secrets & Knowledge'
-        : item.category === 'identity' ? 'Characters' : 'Current State';
+        : item.category === 'identity' ? 'Characters' : item.category === 'history' ? 'Story So Far' : 'Current State';
     // Reconcile only current-state sections. Historical causes and relationship
     // events in Story So Far must survive a later change of value.
     for (const section of ['Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks']) {
@@ -167,17 +252,29 @@ export function reconcileTrackedCheckpoint(content, store, throughFloor, startFl
         const marker = new RegExp(`(^|\\n)\\[${section}\\]\\s*\\n([\\s\\S]*?)(?=\\n\\[[^\\]\\n]+\\]|$)`);
         const existing = result.match(marker);
         const retained = (existing?.[2] ?? '').split('\n').filter(line => !rows.some(item =>
-            isAtomicTrackedEntry(line, item) && (item.sourceFloor >= throughFloor || item.kind === 'thread' && !isTrackedActive(item))
+            /^\s*-?\s*已结束\s/u.test(line) && matchesTrackedFact({ text: line }, item)
+            || isAtomicTrackedEntry(line, item) && (item.sourceFloor >= throughFloor || !isTrackedActive(item))
             || [...item.history, item].some(old => matchesTrackedValue(line, item, old.value, old.key))));
+        // Model prose may carry newer Summary evidence; don't overwrite it with
+        // an older tracked value. Exact flat fields are replaced once, observers stay separate.
         const lines = rows.filter(item => sectionFor(item) === section && isTrackedActive(item)
-            && !(item.kind === 'state' && item.sourceFloor < throughFloor && retained.some(line => matchesTrackedFact({ text: line }, item) && !/[，,；;。]/u.test(line)))
-            && !(item.category === 'knowledge' && item.sourceFloor < startFloor && retained.some(line => line.trim() && !/^无[。.]?$/.test(line.trim()))))
+            && !(item.sourceFloor < startFloor && retained.some(line => matchesTrackedFact({ text: line }, item))))
             .map(item => `- ${item.entity} · ${item.key}：${item.value}${item.acquisition === 'pending' ? '（尚未领取）' : ''}${item.condition ? `；条件：${item.condition}` : ''}`);
-        lines.push(...rows.filter(item => sectionFor(item) === section && !isTrackedActive(item))
-            .map(item => `- 已结束 ${item.entity} · ${item.key}：${item.value} (${item.status}，仅作历史结果)`));
+        if (section === 'Current State') lines.push(...rows.filter(item => item.kind === 'thread' && !isTrackedActive(item) && item.acquisition === 'pending')
+            .map(item => `- ${item.entity} · ${item.key}奖励：${item.value}（任务已结束，奖励尚未领取）`));
         if (!existing && !lines.length) continue;
         const replacement = `[${section}]\n${[...retained.filter(line => line.trim() && !/^无[。.]?$/.test(line.trim())), ...lines].join('\n') || '无'}`;
         result = existing ? result.replace(marker, `${existing[1]}${replacement}`) : `${result}\n${replacement}`;
+    }
+    // Keep settlement tombstones in the projection, but never in Open Threads.
+    // Ordinary completed actions remain available in their original Summary.
+    const historical = rows.filter(item => (item.kind === 'state' && item.category === 'history' && isTrackedActive(item) || !isTrackedActive(item))
+        && hasLastingResult(item)).map(item => `- ${item.entity} · ${item.key}：${item.value}${!isTrackedActive(item) ? ` (${item.status}，历史结果)` : ''}`);
+    if (historical.length) {
+        const marker = /(^|\n)\[Story So Far\]\s*\n([\s\S]*?)(?=\n\[[^\]\n]+\]|$)/u;
+        const old = result.match(marker);
+        result = old ? result.replace(marker, (_, prefix, body) => `${prefix}[Story So Far]\n${body.trim()}\n${historical.join('\n')}`)
+            : `${result}\n[Story So Far]\n${historical.join('\n')}`;
     }
     return deduplicateCheckpoint(result);
 }
@@ -220,7 +317,8 @@ export function omitRepeatedStateLines(content, previous, { omit = true } = {}) 
 }
 
 export function trackedFactUpdates(updates, store, throughFloor, existingFacts = []) {
-    const states = projectActiveState(store, throughFloor).filter(item => item.kind === 'state' && !item.needsReview && item.lifetime !== 'temporary' && item.acquisition !== 'pending'
+    const states = projectActiveState(store, throughFloor).filter(item => item.kind === 'state' && !item.needsReview && item.acquisition !== 'pending'
+        && (item.lifetime !== 'temporary' || !isTrackedActive(item) && existingFacts.some(fact => fact.status === 'active' && matchesTrackedFact(fact, item)))
         && !existingFacts.some(fact => fact.status === 'active' && fact.floor > item.sourceFloor && matchesTrackedFact(fact, item)));
     return [...updates.filter(update => !states.some(item => matchesTrackedFact(update, item))),
         ...states.flatMap(item => {
@@ -253,3 +351,9 @@ export const ADVANCED_AGGREGATION_RULES = `
 【复杂进阶总结（可选）】
 沿用原 Checkpoint / Long Memory 栏目和输出预算，分别保留重要人物的身份、关系、稳定性格、明确喜好与穿搭偏好、秘密与认知差、重要经历、技能和当前状态，不将多个重要 NPC 长期合成一句话。
 只整理已有证据，禁止从单次行为推测稳定性格或喜好。人物久未登场不等于失效，继承仍长期有效的既有事实；新证据明确变化才更新同人物同字段当前版本，必要经历放在历史叙述，避免新旧矛盾并列。复用 Characters / Current State / Secrets & Knowledge 及已有 Long Facts，不增加资料表或额外注入栏目。`;
+
+export const CHECKPOINT_LIFECYCLE_RULES = `
+【累积世界状态与退出】
+每份 Checkpoint 是可独立理解剧情的完整当前状态，注入将只使用最新一份，不会叠加几十份旧 CP。继承仍有效的重要前因、NPC 身份关系、重大经历、承诺、秘密及逐人认知差；人物不按 user/char 排序。HISTORICAL_FACTS 为历史补全候选，结合明确时间与新证据合并，不把历史写成当前。
+CURRENT_TRACKED_STATE 是来源记录投影，不高于 Summary 的明确结果。逐项核对 SUMMARY_RESULTS 与 NEW_SUMMARIES：同人物同事项仅留最新有效值；旧地点、旧情绪、已执行计划、开箱成功等结束动作退出当前栏目；未解决事项、长期身份技能关系秘密不能仅因未提及而退出。Current State、Story So Far、Open Threads 分开，已结算任务不进入 Open Threads；永久奖励与结果简记一次，不反复抄任务流程。奖励未领不等于任务未完成。不可按字数硬截断。
+在本次 CP 输出最后附 [STATE_RESOLUTIONS]，值为 JSON 数组，无需整理则 []。仅对 CURRENT_TRACKED_STATE 中有明确证据的变更输出，字段沿用 Changes（必须复用 id、kind、entity、key，含 value、status、category、lifetime、actors、evidence、confirmed:true）。临时 state 已完成/失效用 expired，被新状态替代可用 active 并写最新值；thread 完成/失败/取消用 completed/failed/cancelled。evidence 必须逐字复制 SUMMARY_RESULTS 或 NEW_SUMMARIES 的明确结果连续至少4字，不能以时间流逝、未出现或猜测为证据。普通已结束动作不写进 Long 或每份 CP；只有具有长期影响的结果写入历史。`;

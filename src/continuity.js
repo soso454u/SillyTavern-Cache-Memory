@@ -1,7 +1,7 @@
-import { fnv1a } from './utils.js?v=1.24.14';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.14';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.24.14';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.24.14';
+import { fnv1a } from './utils.js?v=1.24.19';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.19';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.24.19';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.24.19';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
@@ -10,7 +10,7 @@ export const isUsableMemory = item => item && item.frozen !== false && ['frozen'
         ? hasAggregateContent(item) : ['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(item[key] ?? '').trim()));
 
 export function readSection(text, name) {
-    const sections = String(text ?? '').split(/^\s*\[([^\]\n]+)\]\s*$/m);
+    const sections = String(text ?? '').split(/^\s*\[([^\]\n[{}"]+)\]\s*$/m);
     for (let index = 1; index < sections.length; index += 2) {
         if (sections[index].toLowerCase() === name.toLowerCase()) return sections[index + 1].trim();
     }
@@ -38,7 +38,7 @@ export function normalizeKeepText(value) {
 
 export function extractSummaryKeepEntries(item) {
     const parsed = item.format === 'structured' ? parseStructuredSummary(item.raw) : null;
-    const entries = lines(item.keep ?? parsed?.keep ?? readSection(summaryText(item), 'KEEP')).map(normalizeKeepText).filter(Boolean);
+    const entries = lines(item.keep ?? parsed?.keep ?? readSection(summaryText(item), 'KEEP')).map(normalizeKeepText).filter(text => text && !isEmptyKeepText(text));
     return [...new Set(entries)];
 }
 
@@ -86,17 +86,63 @@ export function resolveKeepItems(items, output, newSummaries, summaries = []) {
     });
 }
 
+export const isEmptyKeepText = value => /^(?:无|暂无|none)(?:[（(][\s\S]*[）)])?[。.]?$/iu.test(normalizeKeepText(value));
+
 export function formatKeepItems(items) {
     const seen = new Set();
-    return items.filter(item => item.status === 'active' && normalizeKeepText(item.text) && !seen.has(normalizeKeepText(item.text)) && seen.add(normalizeKeepText(item.text)))
+    return items.filter(item => item.status === 'active' && !isEmptyKeepText(item.text) && normalizeKeepText(item.text) && !seen.has(normalizeKeepText(item.text)) && seen.add(normalizeKeepText(item.text)))
         .map(item => `- ${item.id} | ${item.text}`).join('\n') || '无';
+}
+
+// Recover only durable, attributable facts from retained data. This is a
+// read-only supplement, never whole old CP blocks or a byte/character budget.
+export function checkpointHistoricalFacts(store, throughFloor, content = '') {
+    const facts = [];
+    const seen = new Set();
+    const normalized = value => String(value).replace(/^\s*[-*•]\s*/u, '').replace(/\s+/gu, ' ').trim();
+    const covered = normalized(content);
+    const add = text => {
+        const key = normalized(text);
+        if (!key || seen.has(key) || covered.includes(key) || covered.includes(key.replace(/^历史前因：/u, ''))) return;
+        seen.add(key); facts.push(key);
+    };
+    for (const row of projectActiveState(store, throughFloor)) {
+        if (row.needsReview || row.kind !== 'state' || !isTrackedActive(row) || row.lifetime === 'temporary'
+            || row.acquisition === 'pending') continue;
+        if (![row, ...row.history].some(old => matchesTrackedValue(content, row, old.value, old.key)))
+            add(`${row.entity} · ${row.key}：${row.value}`);
+    }
+    const durable = /(?:身份|之妻|丈夫|之子|之女|助理|导演|嘉宾|律师|医生|秘书|发小|外交官|造型师|男模|帮佣|宠物|父亲|二婶|组织|阵营|绑定|秘密|不知情|不知道|误信|隐瞒|认知差|永久|不可逆|终身|股权|股份|残疾|债务|承诺|誓言)/u;
+    const transient = /(?:当前|此刻|位于|正在|情绪|姿势|今晚|明早|明日|计划|待|未拆|未回复|体温|点数|余额)/u;
+    const recoveredCharacters = new Set();
+    for (const cp of store.checkpoints.filter(item => isUsableMemory(item) && item.endFloor <= throughFloor).sort((a, b) => b.endFloor - a.endFloor)) {
+        // Name + stable identity clause; no wholesale old character paragraphs.
+        for (const line of readSection(cp.content, 'Characters').split('\n')) {
+            const match = line.replace(/^\s*[-*•]\s*/u, '').match(/^([^：:·\n]+)[：:]([^\n]+)/u);
+            if (!match) continue;
+            const name = match[1].trim();
+            if (recoveredCharacters.has(name)) continue;
+            // A newer complete character entry owns its identity and relations.
+            if (new RegExp(`(?:^|\\n)\\s*(?:-\\s*)?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[：:]`, 'u').test(content)) continue;
+            const clauses = match[2].split(/[。；;]/u).map(text => text.trim()).filter(clause => durable.test(clause) && !transient.test(clause));
+            if (clauses.length) { recoveredCharacters.add(name); add(`${name}：${clauses.join('；')}`); }
+        }
+        // Explicit irreversible causes survive even in legacy records without Changes.
+        for (const line of readSection(cp.content, 'Story So Far').split('\n')) {
+            for (const clause of line.split(/(?<=[。])/u)) {
+                if (/(?:永久|不可逆|终身|灭亡|垮台|失去.{0,8}(?:右臂|左臂|双腿|视力)|重大债务)/u.test(clause)
+                    && !/(?:原剧情|预演|将会|未来|梦境|假如|计划)/u.test(clause)) add(`历史前因：${clause.trim()}`);
+            }
+        }
+    }
+    return facts;
 }
 
 export function previousState(store, startFloor) {
     const checkpoints = store.checkpoints.filter(item => isUsableMemory(item) && item.endFloor < startFloor)
         .sort((a, b) => a.endFloor - b.endFloor);
     const latest = checkpoints.at(-1);
-    if (latest?.memoryKind === 'state') return { id: latest.id, content: stripStructuredSections(latest.content, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']) };
+    if (latest?.memoryKind === 'state') return { id: latest.id, content: stripStructuredSections(latest.content, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STATE_RESOLUTIONS']) };
     // First incremental checkpoint seeds from all retained legacy aggregate ranges.
     const longs = store.longMemories.filter(item => isUsableMemory(item) && item.endFloor < startFloor && item.memoryKind !== 'facts');
     return {
@@ -126,6 +172,16 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
                 sourceId: memory.id, startFloor: memory.startFloor, endFloor: memory.endFloor,
                 storyStartTime: memory.storyStartTime ?? '', storyEndTime: memory.storyEndTime ?? '', createdAt: memory.createdAt ?? '',
             });
+        }
+    }
+    // A terminal transient must also retire an old typed Long entry in the
+    // projection, even though temporary states never create new Long facts.
+    for (const item of projectActiveState(store, throughFloor).filter(row => !row.needsReview && !isTrackedActive(row))) {
+        for (const fact of facts.values()) {
+            if (fact.status !== 'active' || fact.floor > item.sourceFloor) continue;
+            if (fact.stateId === item.id || isAtomicTrackedEntry(fact.text, item)
+                || [...item.history, item].some(old => matchesTrackedValue(fact.text, item, old.value, old.key)))
+                facts.set(fact.id, { ...fact, status: 'retired', reason: item.value, evidence: item.evidence });
         }
     }
     if (includeTracked) {

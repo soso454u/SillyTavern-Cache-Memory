@@ -213,8 +213,9 @@ test('injection is deterministic, ordered and excludes checkpoints covered by lo
     const first = buildInjection(store, settings);
     const second = buildInjection(store, settings);
     assert.equal(first, second);
-    assert.ok(first.indexOf('LONG_001') < first.indexOf('LONG_002'));
-    assert.ok(first.indexOf('CHECKPOINT_011') < first.indexOf('CHECKPOINT_012'));
+    assert.ok(first.indexOf('L1') < first.indexOf('L2'));
+    assert.doesNotMatch(first, /CHECKPOINT_011/);
+    assert.match(first, /CHECKPOINT_012/);
     assert.ok(first.indexOf('RECENT_SUMMARY_241') < first.indexOf('RECENT_SUMMARY_242'));
     assert.doesNotMatch(first, /covered/);
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_PROMPTS, V1210_DEFAULT_PROMPTS, V12415_DEFAULT_PROMPTS, V12416_DEFAULT_PROMPTS, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES, ENSEMBLE_PROMPTS, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
 import { generationPrompt, NORMAL_STATE_EXTRACTION_RULES } from '../src/generation-prompts.js';
-import { parseStateChanges, projectActiveState, stateId, reconcileTrackedCheckpoint } from '../src/active-state.js';
+import { parseStateChanges, projectActiveState, stateId, reconcileTrackedCheckpoint, CHECKPOINT_LIFECYCLE_RULES } from '../src/active-state.js';
 import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from '../src/normal-memory.js';
 import { createEmptyStore, MemoryStore } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
@@ -37,7 +37,7 @@ test('previous official prompts upgrade exactly while customized prompts and ens
     const settings = normalizeSettings({ globalPromptMode: 'blank' });
     assert.equal(generationPrompt(settings, 'summary'), DEFAULT_PROMPTS.summary + NORMAL_STATE_EXTRACTION_RULES);
     const group = memoryGenerationSettings(settings, 'ensemble');
-    for (const stage of ['summary', 'checkpoint', 'longMemory']) assert.equal(generationPrompt(group, stage), ENSEMBLE_PROMPTS[stage]);
+    for (const stage of ['summary', 'checkpoint', 'longMemory']) assert.equal(generationPrompt(group, stage), ENSEMBLE_PROMPTS[stage] + (stage === 'checkpoint' ? CHECKPOINT_LIFECYCLE_RULES : ''));
     assert.deepEqual(memoryGenerationSettings(settings, 'normal').prompts, DEFAULT_PROMPTS);
 });
 
@@ -130,8 +130,8 @@ test('new normal CP separates active work from current settlements and keeps his
     const result = normalCheckpointHistory(reconcileTrackedCheckpoint(content, store, 10, 6), tracked, 6);
     assert.doesNotMatch(readSection(result, 'Open Threads'), /已结束|报酬已领取|信已送达/);
     assert.match(readSection(result, 'Open Threads'), /守桥约定/);
-    assert.match(readSection(result, 'Story So Far'), /桥已修复，报酬已领取/);
-    assert.match(readSection(result, 'Story So Far'), /骨折已痊愈，恢复行走/);
+    assert.doesNotMatch(result, /桥已修复，报酬已领取/); // Ordinary settlement remains in its original Summary.
+    assert.doesNotMatch(result, /骨折已痊愈，恢复行走/);
     assert.doesNotMatch(result, /信已送达/);
     assert.match(result, /失去同伴|渡口负责人|医生丙不知道桥下有暗门/);
     assert.deepEqual(store, before);
@@ -211,7 +211,7 @@ test('real new CP generation removes repeated ended tasks without rewriting prio
     f.store.current().keepRegistry['KEEP-0001'] = { text: '医生丙不知道桥下暗门', status: 'active', sourceFloor: 1 };
     const before = structuredClone(f.store.current());
     const cp = await f.summarizer.generateCheckpoint(6, 10);
-    assert.equal(f.requests.length, 1); assert.match(readSection(cp.content, 'Story So Far'), /报酬已领取/);
+    assert.equal(f.requests.length, 1); assert.doesNotMatch(readSection(cp.content, 'Open Threads'), /报酬已领取/);
     assert.doesNotMatch(readSection(cp.content, 'Open Threads'), /已结束|已领取/);
     assert.match(f.requests[0].userContent, /渡口负责人/);
     assert.deepEqual(f.store.current().summaries, before.summaries);
@@ -238,10 +238,11 @@ test('new Long reuses known NPC facts after fifty quiet floors, drops exact dupl
     assert.equal(f.requests.length, 1); assert.match(f.requests[0].userContent, /fact-old-npc/);
     assert.equal(result.factUpdates.some(update => update.previousId === 'fact-old-npc'), false);
     assert.doesNotMatch(readSection(result.continuityState, 'Open Threads'), /暴雨守桥|结算完成/);
-    assert.match(readSection(result.continuityState, 'Story So Far'), /暴雨守桥|结算完成/);
+    assert.doesNotMatch(result.continuityState, /暴雨守桥|结算完成/); // No ordinary ended task is appended to new Longs.
     const withoutSummary = structuredClone(f.store.current());
     delete withoutSummary.summaries[entries[74].messageId].stateChanges;
-    assert.equal(projectActiveState(withoutSummary).find(item => item.id === completed.id)?.status, 'completed');
+    assert.equal(projectActiveState(f.store.current()).find(item => item.id === completed.id)?.status, 'completed');
+    assert.equal(projectActiveState(withoutSummary).some(item => item.id === completed.id), false); // Original Summary retains the tombstone.
     assert.equal(result.factUpdates.filter(update => update.action === 'add').length, 1);
     assert.match(result.factUpdates[0].text, /医生丙/);
     assert.deepEqual(f.store.current().longMemories[0], before.longMemories[0]);

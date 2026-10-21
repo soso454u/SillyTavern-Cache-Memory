@@ -1,5 +1,5 @@
-import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.17';
-import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES } from './active-state.js?v=1.24.14';
+import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.19';
+import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from './active-state.js?v=1.24.19';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
     .replace('category(skill/attribute/reward/item/identity/knowledge/effect)',
@@ -22,5 +22,6 @@ export function generationPrompt(settings, stage) {
         ? `\n${NORMAL_SUMMARY_LENGTH_RULES}` : '';
     const continuity = settings.summaryMode !== 'ensemble' && !prompt.includes(NORMAL_CONTINUITY_RULES)
         ? `\n${NORMAL_CONTINUITY_RULES}` : '';
-    return withGlobalPrompt(settings, prompt + continuity + budget + rules);
+    const lifecycle = stage === 'checkpoint' ? CHECKPOINT_LIFECYCLE_RULES : '';
+    return withGlobalPrompt(settings, prompt + continuity + budget + rules + lifecycle);
 }

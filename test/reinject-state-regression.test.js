@@ -1,3 +1,4 @@
+import { readSection } from '../src/continuity.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEmptyStore, MemoryStore } from '../src/memory-store.js';
@@ -28,7 +29,7 @@ test('beginner task wrappers share one identity and ended results match plain or
     assert.equal(parseStateChanges(JSON.stringify([change]), task.evidence, rows)[0].id, rows[0].id);
     const result = reconcileTrackedCheckpoint('[Story So Far]\n过去归还书本引发误会\n[Open Threads]\n- 角色甲 · 归还书本：尚未领取\n- 角色甲 · 任务：【归还书本】：尚未领取\n- 角色丙 · 归还书本：尚未领取\n- 角色甲 · 归还书本（第二次）：新任务', store, 205, 201);
     assert.doesNotMatch(result, /角色甲 · (?:归还书本：|任务：【归还书本】)：?尚未领取/);
-    assert.match(result, /已完成并领取奖励/);
+    assert.doesNotMatch(result, /已完成并领取奖励/); // Ordinary result stays in its Summary, not each new CP.
     assert.match(result, /过去归还书本引发误会/); assert.match(result, /角色丙 · 归还书本/); assert.match(result, /第二次/);
 });
 
@@ -97,7 +98,7 @@ test('manual reinjection uses saved Summary deltas regardless of source fingerpr
     const sourceView = { ...data, summaries: Object.fromEntries(store.currentSummaries(chat).map(row => [row.messageId, row])) };
     const before = JSON.stringify({ summaries: data.summaries, longMemories: data.longMemories, checkpoints: data.checkpoints });
     const output = refreshSnapshot(data, settings, 'manual reinject', sourceView).value;
-    assert.doesNotMatch(output, /尚未领取|警戒值：46/); assert.match(output, /历史警戒值46造成误会/); assert.match(output, /警戒值：999/);
+    assert.doesNotMatch(readSection(output, 'Open Threads'), /尚未领取/); assert.doesNotMatch(output, /警戒值：46/); assert.match(output, /历史警戒值46造成误会/); assert.match(output, /警戒值：999/);
     assert.equal(JSON.stringify({ summaries: data.summaries, longMemories: data.longMemories, checkpoints: data.checkpoints }), before);
 });
 

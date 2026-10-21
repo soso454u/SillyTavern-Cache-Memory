@@ -49,13 +49,15 @@ test('reading-rule upgrade waits for an existing publish boundary and preserves 
     store.checkpoints.push(cp(2, '[Story So Far]\n- 新的明确结果'));
     refreshSnapshot(store, settings, 'new checkpoint');
     assert.match(store.injectionSnapshot.value, /记忆读取规则/);
-    assert.deepEqual(store.injectionSnapshot.blocks[0], old.blocks[0]);
+    assert.notDeepEqual(store.injectionSnapshot.blocks[0], old.blocks[0]);
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
     const prefix = store.injectionSnapshot.value.split('\n\n')[0];
     const published = structuredClone(store.injectionSnapshot.blocks);
     store.checkpoints.push(cp(3, '[Story So Far]\n- 后续进展'));
     refreshSnapshot(store, settings, 'new checkpoint');
     assert.equal(store.injectionSnapshot.value.split('\n\n')[0], prefix);
-    assert.deepEqual(store.injectionSnapshot.blocks.slice(0, published.length), published);
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.notDeepEqual(store.injectionSnapshot.blocks, published);
 });
 
 test('Long boundary compacts only proven old states and exact facts, retaining major history and independent knowledge', () => {
@@ -75,7 +77,8 @@ test('Long boundary compacts only proven old states and exact facts, retaining m
     }
     store.checkpoints.push(cp(11, `[Story So Far]\n- ${history}\n[Open Threads]\n- 主角 · 送信：去旧城送信\n[Secrets & Knowledge]\n- ${independent}`));
     refreshSnapshot(store, settings, 'new checkpoint');
-    assert.equal(store.injectionSnapshot.blocks.find(block => block.id === 'long:long-1').text, first.split('\n\n')[1]);
+    assert.match(store.injectionSnapshot.value, /Lv\.3/);
+    assert.equal(store.longMemories[0].factUpdates[0].text, '主角 · 洞察：Lv.2');
     store.longMemories.push(long(2, [{ action: 'replace', id: stateId(skill), previousId: stateId(skill), stateId: stateId(skill), text: '主角 · 洞察：Lv.3' },
         { action: 'add', id: 'major-repeat', text: history }, { action: 'add', id: 'other-observer', text: independent }], '[Open Threads]\n- 已结束 主角 · 送信：已送达，永久获封旧城救援者 (completed，历史结果)'));
     store.keepRegistry['KEEP-0001'] = { text: knowledge, status: 'active', sourceFloor: 1 };
@@ -120,7 +123,7 @@ test('identical Long/CP blocks and short exact facts are sent once while all ori
     const before = structuredClone(store);
     const output = refreshSnapshot(store, normalizeSettings(), 'manual reinject').value;
     assert.equal(output.split(fact).length - 1, 1);
-    assert.equal(store.injectionSnapshot.blocks.filter(b => b.type === 'long').length, 1);
+    assert.equal(store.injectionSnapshot.blocks.filter(b => b.type === 'long').length, 0); // The latest CP already covers this fact.
     assert.equal(store.injectionSnapshot.blocks.filter(b => b.type === 'checkpoint').length, 1);
     assert.match(output, /城门已永久毁坏/);
     for (const key of ['longMemories', 'checkpoints', 'keepRegistry']) assert.deepEqual(store[key], before[key]);

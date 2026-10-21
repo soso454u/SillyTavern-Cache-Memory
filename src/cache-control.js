@@ -1,9 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.14';
-import { buildInjection, compactInjectionBlocks, memoryReadingRules } from './injection.js?v=1.24.17';
-import { collectKeepItems, formatKeepItems, isUsableMemory } from './continuity.js?v=1.24.14';
-import { fnv1a } from './utils.js?v=1.24.14';
-import { stripStructuredSections } from './summary-format.js?v=1.24.14';
-import { omitRepeatedStateLines, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.14';
+import { INJECTION_MODES } from './defaults.js?v=1.24.19';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.24.19';
+import { fnv1a } from './utils.js?v=1.24.19';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -21,67 +18,24 @@ export function shouldRefreshInjection(settings, reason) {
         || (reason === 'new long memory' && [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_BOUNDARY].includes(mode));
 }
 
-function frozenBlocks(store, mode, settings) {
-    const blocks = [];
-    const add = (record, type) => {
-        const delta = (record.factUpdates ?? []).map(update => update.action === 'retire'
-            ? `- RETIRE ${update.previousId}: ${update.reason || update.evidence || '明确失效'}`
-            : `- ${update.action.toUpperCase()} ${update.id}${update.previousId ? ` (supersedes ${update.previousId})` : ''}: ${update.text}`).join('\n');
-        let content = record.memoryKind === 'facts' && Array.isArray(record.factUpdates)
-            ? `[FACT_DELTA]\n${delta || '本阶段无新增或有证据的长期事实变更。'}${record.continuityState ? `\n${record.continuityState}` : ''}`
-            : stripStructuredSections(record.content ?? '', ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']);
-        if (type === 'checkpoint' && record.memoryKind === 'state' && settings.activeStateEnabled) content = reconcileTrackedCheckpoint(content, store, record.endFloor, record.startFloor);
-        blocks.push({ id: `${type}:${record.id}`, type, startFloor: record.startFloor, endFloor: record.endFloor,
-            text: `[${type === 'long' ? 'LONG_MEMORY' : 'CHECKPOINT'}_${String(record.id).split('-').at(-1)} | 第${record.startFloor}-${record.endFloor}层]\n${content}` });
-    };
-    for (const record of [...store.longMemories].filter(item => isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'long');
-    if (mode === INJECTION_MODES.CHECKPOINT_BOUNDARY) {
-        for (const record of [...store.checkpoints].filter(item => isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor)) add(record, 'checkpoint');
-    }
-    const keepItems = collectKeepItems(store), keeps = formatKeepItems(keepItems);
-    if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: 0,
-        keepIds: keepItems.filter(item => item.status === 'active').map(item => item.id), text: `[KEEP]\n${keeps}` });
-    return blocks;
-}
-
-// Snapshot bytes belong to a chat and survive reload. Background tasks can add blocks,
-// but never rewrite published text. Only a Long boundary may remove fully covered CP injection.
+// Frozen bytes survive reload, upgrades and ordinary Summary/state changes.
+// Publish the complete current projection only at the existing CP/Long boundary
+// or an explicit manual action; storage records are never compacted or rewritten.
 export function refreshSnapshot(store, settings, reason = 'manual edit', sourceStore = store) {
     if (!shouldRefreshInjection(settings, reason)) return { value: store.injectionSnapshot?.value ?? '', changed: false, skipped: true };
-    const mode = effectiveInjectionMode(settings);
-    // One-time migration discards snapshots inflated by the old cascade path.
-    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 3]);
     const previous = store.injectionSnapshot;
-    if (reason === 'chat changed' && previous?.signature === signature) return { value: previous.value, changed: false };
-    let blocks = [];
-    let value = '';
-    if (settings.enabled && mode !== INJECTION_MODES.NONE) {
-        if (!settings.strictCacheMode) value = buildInjection(sourceStore, settings);
-        else {
-            const fresh = frozenBlocks(sourceStore, mode, settings);
-            const rebuild = !previous || previous.signature !== signature || (previous.needsRebuild || previous.budget?.clipped || previous.budget?.omitted) && ['new checkpoint', 'new long memory'].includes(reason) || ['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason);
-            blocks = rebuild ? fresh : [...(previous.blocks ?? [])];
-            if (!rebuild) {
-                const ids = new Set(blocks.map(block => block.id));
-                const freshKeep = fresh.find(block => block.id === 'keep:active');
-                blocks = blocks.filter(block => block.id !== 'keep:active');
-                for (const block of fresh) if (block.id !== 'keep:active' && !ids.has(block.id)) { blocks.push(block); ids.add(block.id); }
-                if (freshKeep) blocks.push(freshKeep);
-            }
-            // Explicitly permitted compaction at a Long boundary; never delete Checkpoint data.
-            const longs = blocks.filter(block => block.type === 'long');
-            blocks = blocks.filter(block => !['checkpoint', 'summary'].includes(block.type) || !longs.some(long => long.startFloor <= block.startFloor && long.endFloor >= block.endFloor));
-            const published = new Set(rebuild ? [] : (previous.blocks ?? []).map(block => block.id));
-            const currentLines = new Map();
-            blocks = blocks.map(block => {
-                const text = omitRepeatedStateLines(block.text, currentLines, { omit: !published.has(block.id) });
-                return text === block.text ? block : { ...block, text };
-            });
-            blocks = compactInjectionBlocks(blocks, sourceStore, { published, compactPublished: rebuild || reason === 'new long memory' });
-            const rules = memoryReadingRules(sourceStore);
-            value = blocks.length ? `<CACHE_MEMORY>\n冻结块按提交顺序排列。后续有证据的事实更新优先；旧记录保留历史意义，已解决事项不要恢复为未解决。${rules ? `\n${rules}` : ''}\n\n${blocks.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
-        }
-    }
+    const mode = effectiveInjectionMode(settings);
+    const signature = JSON.stringify([settings.enabled, Boolean(settings.strictCacheMode), mode, 4]);
+    // A plugin upgrade is not a publication boundary. Preserve even old-format
+    // snapshots until the next CP/Long commit or explicit rebuild.
+    let previousMode = previous?.mode;
+    try { previousMode ??= JSON.parse(previous?.signature ?? 'null')?.[2]; } catch { /* Older snapshots may lack a signature. */ }
+    if (reason === 'chat changed' && previous && settings.strictCacheMode && settings.enabled && mode !== INJECTION_MODES.NONE
+        && (!previousMode || previousMode === mode)) return { value: previous.value, changed: false };
+    const blocks = settings.enabled && mode !== INJECTION_MODES.NONE && settings.strictCacheMode
+        ? currentInjectionBlocks(sourceStore, settings, mode) : [];
+    const value = !settings.enabled || mode === INJECTION_MODES.NONE ? '' : settings.strictCacheMode
+        ? renderInjectionBlocks(blocks, sourceStore) : buildInjection(sourceStore, settings);
     const changed = value !== (previous?.value ?? '');
     store.injectionSnapshot = { signature, mode, blocks, value, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
     return { value, changed, migrated: Boolean(previous && previous.signature !== signature) };

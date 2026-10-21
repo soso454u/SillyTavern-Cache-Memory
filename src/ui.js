@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.14';
-import { generationPrompt } from './generation-prompts.js?v=1.24.17';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.14';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.17';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.18';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.18';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.14';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.14';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.14';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.14';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.14';
-import { parseFloorSummary } from './summarizer.js?v=1.24.18';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.14';
+import { applyUITheme } from './ui-theme.js?v=1.24.19';
+import { generationPrompt } from './generation-prompts.js?v=1.24.19';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.19';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.19';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.19';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.19';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.19';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.19';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.19';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.19';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.19';
+import { parseFloorSummary } from './summarizer.js?v=1.24.19';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.19';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.14';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.14';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.19';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.19';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -1937,8 +1937,9 @@ export class CacheMemoryUI {
         const root = this.element('div', 'cache-memory-manager-page');
         root.append(this.element('p', '', '来源变更的记录标为待核对，不参与当前状态整理。结束事项保留历史；长时间未提及不会自动结束。手动操作不调用模型，原冻结快照在下个既有边界更新。'));
         const rows = projectActiveState(this.store.effectiveStore(this.getChat())).filter(item => item.kind === kind);
-        const active = rows.filter(item => isTrackedActive(item));
-        const archived = rows.filter(item => !isTrackedActive(item));
+        const active = rows.filter(item => !item.needsReview && isTrackedActive(item));
+        const archived = rows.filter(item => !item.needsReview && !isTrackedActive(item));
+        const review = rows.filter(item => item.needsReview);
         const formFor = (item = {}) => {
             const form = this.element('form', 'cache-memory-tracked-form');
             const fields = [
@@ -1971,19 +1972,20 @@ export class CacheMemoryUI {
         const add = this.element('details', 'cache-memory-card'); add.append(this.element('summary', '', '手动添加 / 从旧 Open 字段登记'), formFor()); root.append(add);
         const advanced = kind === 'state' && this.store.current().summaryMode === 'advanced';
         const people = new Map();
-        const personBody = name => {
-            if (!people.has(name)) {
+        const personBody = (name, section = '当前记录') => {
+            const groupKey = `${section}:${name}`;
+            if (!people.has(groupKey)) {
                 const group = this.element('details', 'cache-memory-card cache-memory-person');
-                group.append(this.element('summary', '', name));
+                group.append(this.element('summary', '', `${name} · ${section}`));
                 const table = this.element('table', 'cache-memory-person-table');
                 const head = this.element('thead'); head.innerHTML = '<tr><th>资料</th><th>当前值 / 历史结果</th><th>来源</th></tr>';
                 const body = this.element('tbody'); table.append(head, body); group.append(table); root.append(group);
-                people.set(name, body);
+                people.set(groupKey, body);
             }
-            return people.get(name);
+            return people.get(groupKey);
         };
-        for (const [title, items] of [['当前记录', active], ['已结束 / 历史结果', archived]]) {
-            if (!advanced) root.append(this.element('h4', '', `${title} · ${items.length}`));
+        for (const [sectionTitle, items] of [['当前记录', active], ['已结束 / 历史结果', archived], ['待核对', review]]) {
+            if (!advanced) root.append(this.element('h4', '', `${sectionTitle} · ${items.length}`));
             for (const item of items) {
                 const card = this.element('details', 'cache-memory-card');
                 card.append(this.element('summary', '', `${item.needsReview ? '⚠ 待核对 · ' : ''}${item.entity} · ${item.key} · ${item.value}`));
@@ -2004,7 +2006,7 @@ export class CacheMemoryUI {
                     const editorCell = this.element('td'); editorCell.colSpan = 3; editorCell.append(card); editorRow.append(editorCell);
                     button.addEventListener('click', () => { editorRow.hidden = false; card.open = !card.open; this.resizeTextareas(card); }, { signal: this.controller.signal });
                     card.addEventListener('toggle', () => { editorRow.hidden = !card.open; button.setAttribute('aria-expanded', String(card.open)); }, { signal: this.controller.signal });
-                    personBody(item.entity).append(row, editorRow);
+                    personBody(item.entity, sectionTitle).append(row, editorRow);
                 } else root.append(card);
             }
         }

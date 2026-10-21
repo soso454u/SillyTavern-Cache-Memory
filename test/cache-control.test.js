@@ -44,7 +44,7 @@ test('fresh defaults use strict checkpoint-boundary injection while saved choice
     assert.equal(normalizeSettings({ checkpointInterval: 10, longMemoryInterval: 100 }).longMemoryInterval, 100);
 });
 
-test('floor summaries never refresh strict injection; 1-4/6-9 have byte-identical snapshots, 5/10 append once', () => {
+test('floor summaries never refresh strict injection; 1-4/6-9 have byte-identical snapshots, 5/10 publish the latest CP once', () => {
     const { store, refreshes } = fixture();
     const hashes = [];
     for (let floor = 1; floor <= 10; floor++) {
@@ -57,7 +57,8 @@ test('floor summaries never refresh strict injection; 1-4/6-9 have byte-identica
     assert.equal(new Set(hashes.slice(4, 9)).size, 1);
     assert.notEqual(hashes[8], hashes[9]);
     assert.deepEqual(refreshes.map(item => item.reason), ['new checkpoint', 'new checkpoint']);
-    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_001[\s\S]*CHECKPOINT_002/);
+    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_002/);
+    assert.doesNotMatch(store.current().injectionSnapshot.value, /CHECKPOINT_001/);
     assert.doesNotMatch(store.current().injectionSnapshot.value, /RECENT_SUMMARY|S10/);
 });
 
@@ -82,19 +83,20 @@ test('old recent mode is demoted; long-only boundary ignores every checkpoint an
     assert.equal(refreshes.length, 0);
     store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 50, content: 'L1', status: 'frozen', frozen: true });
     assert.equal(refreshes.length, 1);
-    assert.match(store.current().injectionSnapshot.value, /LONG_MEMORY_001/);
+    assert.match(store.current().injectionSnapshot.value, /LONG_MEMORY/);
     assert.doesNotMatch(store.current().injectionSnapshot.value, /CHECKPOINT|should not appear/);
 });
 
-test('background appends preserve published bytes even if underlying record changes; manual edits rebuild explicitly', () => {
+test('a CP boundary replaces the old CP; manual edits rebuild the current projection', () => {
     const { store, settings } = fixture();
     store.addCheckpoint(checkpoint(5, 'AAA'));
     store.current().checkpoints[0].content = 'AAA2';
     store.addCheckpoint(checkpoint(10, 'BBB'));
-    assert.match(store.current().injectionSnapshot.value, /AAA\n\n\[CHECKPOINT_002/);
+    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_002[\s\S]*BBB/);
     assert.doesNotMatch(store.current().injectionSnapshot.value, /AAA2/);
     refreshSnapshot(store.current(), settings, 'manual edit');
-    assert.match(store.current().injectionSnapshot.value, /AAA2/);
+    assert.match(store.current().injectionSnapshot.value, /BBB/);
+    assert.equal(store.current().checkpoints[0].content, 'AAA2');
 });
 
 test('manual reinject rebuilds and stamps the snapshot even when its bytes are unchanged', () => {
@@ -107,20 +109,20 @@ test('manual reinject rebuilds and stamps the snapshot even when its bytes are u
     assert.equal(shouldRefreshInjection(settings, 'manual reinject'), true);
 });
 
-test('Long boundary removes only fully covered CP injection, never CP data or prior Long contents', () => {
+test('Long boundaries project facts and the latest CP without deleting any saved CP', () => {
     const { store } = fixture();
     for (let floor = 5; floor <= 55; floor += 5) store.addCheckpoint(checkpoint(floor));
     const archived = structuredClone(store.current().checkpoints);
     store.addLongMemory({ id: 'long-001', startFloor: 1, endFloor: 50, content: 'frozen L1', status: 'frozen', frozen: true });
     const value = store.current().injectionSnapshot.value;
-    assert.match(value, /LONG_MEMORY_001/);
+    assert.match(value, /LONG_MEMORY/);
     assert.doesNotMatch(value, /CHECKPOINT_001|CHECKPOINT_010/);
     assert.match(value, /CHECKPOINT_011/);
     assert.deepEqual(store.current().checkpoints, archived);
     store.current().longMemories[0].content = 'background altered L1';
     store.addLongMemory({ id: 'long-002', startFloor: 51, endFloor: 100, content: 'L2', status: 'frozen', frozen: true });
-    assert.match(store.current().injectionSnapshot.value, /frozen L1/);
-    assert.doesNotMatch(store.current().injectionSnapshot.value, /background altered|CHECKPOINT_011/);
+    assert.match(store.current().injectionSnapshot.value, /background altered L1/);
+    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_011/);
 });
 
 test('chat reload restores the published snapshot; switches and settings changes are explicit refresh reasons', () => {
@@ -160,7 +162,9 @@ test('automatic 105 floors create 21 frozen CP and segmented Long1-50/51-100, pr
     const longSnapshot = structuredClone(current.longMemories);
     await summarizer.generateDueAggregates();
     assert.deepEqual(store.current().longMemories, longSnapshot);
-    assert.match(current.injectionSnapshot.value, /LONG_MEMORY_001[\s\S]*LONG_MEMORY_002[\s\S]*CHECKPOINT_021/);
+    assert.match(current.injectionSnapshot.value, /CHECKPOINT_021/);
+    assert.equal(current.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.equal(current.longMemories.length, 2);
     assert.doesNotMatch(current.injectionSnapshot.value, /CHECKPOINT_001|RECENT_SUMMARY/);
     assert.equal(requests.length, 105 + 21 + 2);
     assert.equal(refreshes.length, 21);
@@ -198,8 +202,8 @@ test('strict frozen Long renders validated fact deltas, not rejected raw retirem
     store.addLongMemory({ id: 'long-002', startFloor: 51, endFloor: 100, memoryKind: 'facts',
         content: '[RETIRED_FACTS]\nunsupported deletion', factUpdates: [{ action: 'replace', id: 'fact-b', previousId: 'fact-a', text: 'confirmed update' }], frozen: true, status: 'frozen' });
     const value = store.current().injectionSnapshot.value;
-    assert.match(value, /ADD fact-a: original fact/);
-    assert.match(value, /REPLACE fact-b \(supersedes fact-a\): confirmed update/);
+    assert.doesNotMatch(value, /original fact/);
+    assert.match(value, /fact-b \| confirmed update/);
     assert.doesNotMatch(value, /unsupported deletion/);
 });
 
@@ -224,5 +228,5 @@ test('Long generation failure publishes the completed CP once; retry commits Lon
     assert.equal(store.current().longMemories.length, 1);
     assert.equal(store.current().longMemories[0].status, 'frozen');
     assert.equal(refreshes.at(-1).reason, 'new long memory');
-    assert.doesNotMatch(store.current().injectionSnapshot.value, /CHECKPOINT_010/);
+    assert.match(store.current().injectionSnapshot.value, /CHECKPOINT_010/);
 });

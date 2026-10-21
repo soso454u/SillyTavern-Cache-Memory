@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.14';
-import { collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, summaryText } from './continuity.js?v=1.24.14';
-import { stripStructuredSections } from './summary-format.js?v=1.24.14';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.14';
+import { INJECTION_MODES } from './defaults.js?v=1.24.19';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, summaryText } from './continuity.js?v=1.24.19';
+import { stripStructuredSections } from './summary-format.js?v=1.24.19';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.19';
 
 // Interpret retained facts; never infer corrections or remove historical data.
 // This fixed header changes only when the existing snapshot lifecycle publishes.
@@ -70,80 +70,67 @@ export function compactInjectionBlocks(blocks, store, { published = new Set(), c
         return text === block.text ? block : { ...block, text };
     });
 }
-function fullInjection(blocks, store) {
-    if (store) {
-        const through = Math.max(0, ...Object.values(store.summaries).map(item => item.floor),
-            ...store.checkpoints.map(item => item.endFloor), ...store.longMemories.map(item => item.endFloor));
-        blocks = compactInjectionBlocks(blocks.map((text, id) => {
-            const record = [...store.longMemories, ...store.checkpoints].find(item => text.startsWith(`[${String(item.id).toUpperCase().replaceAll('-', '_')}]`)
-                || text.startsWith(`[LATEST_CHECKPOINT | 截至第${item.endFloor}层]`));
-            return { id, text, startFloor: record?.startFloor, endFloor: record?.endFloor ?? through,
-                type: record ? store.longMemories.includes(record) ? 'long' : 'checkpoint' : undefined };
-        }), store, { compactPublished: true }).map(block => block.text);
+const checkpointModes = [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT];
+const hiddenSections = ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STATE_RESOLUTIONS'];
+const canonical = text => String(text).replace(/^\s*[-*•]\s*/u, '')
+    .replace(/^(?:KEEP-\d+\s*\|\s*)+/iu, '')
+    .replace(/^【([^｜】]+)｜([^】]+)】/u, '$1 · $2：').replace(/\s+/gu, ' ').trim();
+
+// One read-only projection for strict boundary publication and non-strict mode.
+// Old CPs and Longs stay in the store; only uncovered durable facts are sent.
+export function currentInjectionBlocks(store, settings, mode = settings.injectionMode) {
+    const latest = checkpointModes.includes(mode) ? store.checkpoints.filter(isUsableMemory)
+        .sort((a, b) => a.endFloor - b.endFloor || a.startFloor - b.startFloor).at(-1) : null;
+    const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor), 0);
+    let content = latest ? latest.content : '';
+    if (latest && settings.activeStateEnabled) content = reconcileTrackedCheckpoint(content, store, through, latest.startFloor);
+    content = stripStructuredSections(content, hiddenSections);
+    const blocks = [];
+    if (latest) blocks.push({ id: `checkpoint:${latest.id}`, type: 'checkpoint', startFloor: latest.startFloor, endFloor: latest.endFloor,
+        text: `[CHECKPOINT_${String(latest.id).split('-').at(-1)} | LATEST_CHECKPOINT | 截至第${latest.endFloor}层]\n${content}` });
+    // Equality only. Different observers and compound facts cannot be coalesced.
+    const seen = new Set(content.split('\n').map(canonical));
+    const uncovered = text => {
+        const key = canonical(text);
+        if (!key || seen.has(key) || canonical(content).includes(key)) return false;
+        seen.add(key); return true;
+    };
+    const projection = projectLongFacts(store, through, { includeTracked: settings.activeStateEnabled });
+    const supplements = latest ? checkpointHistoricalFacts(store, through, content) : [];
+    const factLines = projection.facts.filter(row => row.status === 'active'
+        || row.status === 'superseded' && /(?:永久|不可逆|终身|失去.{0,8}(?:右臂|左臂|双腿|视力)|摧毁|重大债务)/u.test(row.text)).filter(row => uncovered(row.text)).map(row => `- ${row.id} | ${row.text}`);
+    for (const text of supplements) if (uncovered(text)) factLines.push(`- ${text}`);
+    // Legacy Longs lack typed facts: retain complete factual entries, dedupe only
+    // exact text. Never fall back to injecting all old Checkpoints without Longs.
+    for (const memory of projection.legacy) {
+        const lines = stripStructuredSections(memory.content, hiddenSections).split('\n');
+        const kept = lines.filter(line => /^\s*\[[^\]\n]+\]\s*$/u.test(line) || !line.trim() || uncovered(line));
+        if (kept.some(line => line.trim() && !/^\s*\[/.test(line))) factLines.push(...kept);
     }
-    const rules = memoryReadingRules(store);
-    return blocks.length ? `<CACHE_MEMORY>${rules ? `\n${rules}` : ''}\n\n${blocks.join('\n\n')}\n\n</CACHE_MEMORY>` : '';
+    if (factLines.length) blocks.push({ id: 'long:current-facts', type: 'long', startFloor: 1, endFloor: through,
+        text: `[LONG_MEMORY]\n${factLines.join('\n')}` });
+    const keepThrough = Math.max(through, ...Object.values(store.summaries ?? {}).filter(isUsableMemory).map(row => row.floor), 0);
+    const items = collectKeepItems(store, keepThrough).filter(row => row.status === 'active' && uncovered(row.text));
+    const keeps = formatKeepItems(items);
+    if (keeps !== '无') blocks.push({ id: 'keep:active', type: 'keep', startFloor: 0, endFloor: through,
+        keepIds: items.map(row => row.id), text: `[KEEP]\n${keeps}` });
+    return blocks;
 }
 
-function byRange(a, b) {
-    return Number(a.startFloor ?? a.floor) - Number(b.startFloor ?? b.floor);
+export function renderInjectionBlocks(blocks, store) {
+    const rules = memoryReadingRules(store);
+    return blocks.length ? `<CACHE_MEMORY>${rules ? `\n${rules}` : ''}\n\n${blocks.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
 }
 
 export function buildInjection(store, settings) {
     if (!settings.enabled || settings.injectionMode === INJECTION_MODES.NONE) return '';
     if (settings.strictCacheMode) return store.injectionSnapshot?.value ?? '';
-    const states = store.checkpoints.filter(item => isUsableMemory(item) && item.memoryKind === 'state').sort(byRange);
-    const latest = states.at(-1);
-    if (settings.memoryStrategy !== 'legacy' && (store.version >= 2 || latest || store.longMemories.some(item => item.memoryKind === 'facts'))) {
-        const blocks = [];
-        const legacyLatest = store.checkpoints.filter(isUsableMemory).sort(byRange).at(-1);
-        const stateEnd = Math.max(0, latest?.endFloor ?? legacyLatest?.endFloor ?? 0, ...store.longMemories.filter(isUsableMemory).map(item => item.endFloor));
-        const facts = formatLongFacts(projectLongFacts(store, Infinity, { includeTracked: settings.activeStateEnabled }));
-        if (facts !== '无') blocks.push(`[LONG_MEMORY]\n${facts}`);
-        const keeps = formatKeepItems(collectKeepItems(store));
-        if (keeps !== '无') blocks.push(`[KEEP]\n${keeps}`);
-        if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode)) {
-            const longs = store.longMemories.filter(isUsableMemory);
-            const checkpoints = store.checkpoints.filter(item => isUsableMemory(item)
-                && !longs.some(long => long.startFloor <= item.startFloor && long.endFloor >= item.endFloor)).sort(byRange);
-            for (const item of checkpoints) {
-                let state = item.content;
-                if (settings.activeStateEnabled && item.memoryKind === 'state') state = reconcileTrackedCheckpoint(state, store, item.endFloor, item.startFloor);
-                const label = item === checkpoints.at(-1) ? `LATEST_CHECKPOINT | 截至第${item.endFloor}层` : String(item.id).toUpperCase().replaceAll('-', '_');
-                blocks.push(`[${label}]\n${stripStructuredSections(state, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP'])}`);
-            }
-        }
-        if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {
-            // Include every summary after the latest checkpoint; count limits must not create a gap.
-            const summaries = Object.values(store.summaries).filter(item => isUsableMemory(item) && item.floor > stateEnd)
-                .sort((a, b) => a.floor - b.floor);
-            for (const item of summaries) blocks.push(`[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}`);
-        }
-        return fullInjection(blocks, store);
-    }
-    const blocks = [];
-    const longs = [...store.longMemories]
-        .filter(isUsableMemory)
-        .sort(byRange);
-    for (const item of longs) blocks.push(`[${String(item.id).toUpperCase().replaceAll('-', '_')}]\n${item.content}`);
-
-    if ([INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT].includes(settings.injectionMode)) {
-        const checkpoints = [...store.checkpoints]
-            .filter(item => isUsableMemory(item) && !longs.some(long => long.startFloor <= item.startFloor && long.endFloor >= item.endFloor))
-            .sort(byRange);
-        for (const item of checkpoints) blocks.push(`[${String(item.id).toUpperCase().replaceAll('-', '_')}]\n${item.content}`);
-    }
-
+    const blocks = currentInjectionBlocks(store, settings);
     if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {
-        const coveredThrough = Math.max(0, ...store.checkpoints.filter(item => isUsableMemory(item)).map(item => item.endFloor), ...longs.map(item => item.endFloor));
-        const summaries = Object.values(store.summaries)
-            .filter(item => item.floor > coveredThrough && isUsableMemory(item))
-            .sort((a, b) => a.floor - b.floor)
-            .slice(-settings.recentSummaryCount);
-        for (const item of summaries) {
-            blocks.push(`[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${item.title}\n人物：${item.characters}\n事件：${item.event}`);
-        }
+        const through = Math.max(0, ...blocks.map(block => block.endFloor || 0));
+        for (const item of Object.values(store.summaries).filter(row => isUsableMemory(row) && row.floor > through).sort((a, b) => a.floor - b.floor))
+            blocks.push({ id: `summary:${item.messageId}`, type: 'summary', endFloor: item.floor,
+                text: `[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}` });
     }
-
-    return fullInjection(blocks, store);
+    return renderInjectionBlocks(blocks, store);
 }

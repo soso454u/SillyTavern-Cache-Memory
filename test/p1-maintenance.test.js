@@ -230,7 +230,8 @@ test('maintenance snapshot is retained on reload and rebuilt at the next permitt
     assert.equal(f.store.current().injectionSnapshot.needsRebuild, true);
     assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed').value, frozen);
     const next = refreshSnapshot(f.store.current(), settings, 'new checkpoint');
-    assert.match(next.value, /新阶段状态/); assert.notEqual(next.value, frozen);
+    assert.equal(f.store.current().injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.match(next.value, /LATEST_CHECKPOINT/);
     assert.equal(f.store.current().injectionSnapshot.needsRebuild, undefined);
 });
 

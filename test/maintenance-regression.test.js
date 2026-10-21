@@ -31,12 +31,14 @@ test('legacy clipped snapshots survive reload, then regain every retained block 
     const store = createEmptyStore('a'), settings = normalizeSettings();
     store.checkpoints = [cp('checkpoint-001', 1, 5, '完整早期事实'.repeat(1000)), cp('checkpoint-002', 6, 10, '完整近期事实'.repeat(1000))];
     refreshSnapshot(store, settings, 'new checkpoint');
-    store.injectionSnapshot.blocks = [{ ...store.injectionSnapshot.blocks[1], text: '截断…' }];
+    store.injectionSnapshot.blocks = [{ ...store.injectionSnapshot.blocks[0], text: '截断…' }];
     store.injectionSnapshot.value = '旧冻结字节'; store.injectionSnapshot.budget = { clipped: 1, omitted: 1 };
     assert.equal(refreshSnapshot(store, settings, 'chat changed').value, '旧冻结字节');
     assert.equal(refreshSnapshot(store, settings, 'new summary').value, '旧冻结字节');
     const result = refreshSnapshot(store, settings, 'new checkpoint');
-    for (const record of store.checkpoints) assert.ok(result.value.includes(record.content));
+    assert.ok(result.value.includes(store.checkpoints.at(-1).content));
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
+    assert.equal(store.checkpoints.length, 2);
     assert.equal(store.injectionSnapshot.budget, undefined);
 });
 
@@ -176,7 +178,8 @@ test('legacy validation flags do not remove generated blocks at the next publish
     store.checkpoints[0].status = 'stale'; store.checkpoints[0].sourceValidity = 'changed';
     assert.equal(refreshSnapshot(store, settings, 'new summary').value, frozen);
     const value = refreshSnapshot(store, settings, 'new checkpoint').value;
-    assert.match(value, /已被改写的旧事实/); assert.match(value, /仍有效的历史/);
+    assert.doesNotMatch(value, /已被改写的旧事实/); assert.match(value, /仍有效的历史/);
+    assert.equal(store.checkpoints[0].content, '已被改写的旧事实');
 });
 
 test('an authoritative CAS revision race automatically retries only non-conflicting records', async () => {

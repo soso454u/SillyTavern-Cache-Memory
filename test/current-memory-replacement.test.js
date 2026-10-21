@@ -339,7 +339,7 @@ test('only the explicitly replaced floor has its duplicates removed after readba
     assert.equal(Object.values(f.remote.summaries).filter(row => row.floor === 1).length, 1);
 });
 
-test('238 floors restore simple 4 Long / 7 CP / 0 Summary injection and migrate a 207-Summary snapshot once', async () => {
+test('238 floors retain all records and replace the inflated snapshot with facts plus one CP at the next boundary', async () => {
     const { refreshSnapshot } = await import('../src/cache-control.js');
     const { buildInjection } = await import('../src/injection.js');
     const { aggregateVersion } = await import('../src/memory-store.js');
@@ -371,7 +371,8 @@ test('238 floors restore simple 4 Long / 7 CP / 0 Summary injection and migrate 
     assert.equal(effective.checkpoints.length, 47); assert.equal(effective.longMemories.length, 4);
     assert.equal(effective.summaryRepairRanges, undefined);
     assert.deepEqual(f.store.current(), raw);
-    const value = refreshSnapshot(f.store.current(), settings, 'chat changed', effective).value;
+    if (f.store.current().injectionSnapshot) assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', effective).value, raw.injectionSnapshot.value);
+    const value = refreshSnapshot(f.store.current(), settings, 'new checkpoint', effective).value;
     assert.equal(f.store.current().injectionSnapshot.value, value);
     assert.equal((value.match(/RECENT_SUMMARY_/g) ?? []).length, 0);
     assert.doesNotMatch(value, /历史膨胀内容/); assert.match(value, /旧 Swipe 的长期事实/);
@@ -394,8 +395,8 @@ test('238 floors restore simple 4 Long / 7 CP / 0 Summary injection and migrate 
     const legacy = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
     const noFallback = refreshSnapshot(legacy.current(), settings, 'manual reinject', legacy.effectiveStore(f.chat)).value;
     assert.doesNotMatch(noFallback, /RECENT_SUMMARY_/);
-    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'long').length, 4);
-    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'checkpoint').length, 7);
+    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'long').length, 1);
+    assert.equal(legacy.current().injectionSnapshot.blocks.filter(b => b.type === 'checkpoint').length, 1);
 });
 
 test('confirmed matching alternate becomes the sole current Summary; unrelated partial-load records remain untouched', async () => {
@@ -467,7 +468,7 @@ test('same-body regeneration, metadata rebinding and reparsing cannot retire fro
     assert.equal(f.requests.length, 0);
 });
 
-test('real-shaped flags, hash drift and two old Swipe references retain all 4 Longs and 7 uncovered CPs', async () => {
+test('real-shaped flags and old Swipe references retain all raw aggregates while projecting one current CP', async () => {
     const { aggregateVersion } = await import('../src/memory-store.js');
     const { refreshSnapshot } = await import('../src/cache-control.js');
     const { memoryOverviewStats } = await import('../src/ui.js');
@@ -502,12 +503,13 @@ test('real-shaped flags, hash drift and two old Swipe references retain all 4 Lo
     assert.equal(effective.longMemories.length, 4);
     assert.equal(effective.checkpoints.length, 47);
     assert.equal(effective.summaryRepairRanges, undefined);
-    const value = refreshSnapshot(f.store.current(), settings, 'chat changed', effective).value;
+
+    const value = refreshSnapshot(f.store.current(), settings, 'new checkpoint', effective).value;
     const blocks = f.store.current().injectionSnapshot.blocks;
-    assert.equal(blocks.filter(b => b.type === 'long').length, 4);
-    assert.equal(blocks.filter(b => b.type === 'checkpoint').length, 7);
+    assert.equal(blocks.filter(b => b.type === 'long').length, 1);
+    assert.equal(blocks.filter(b => b.type === 'checkpoint').length, 1);
     assert.equal(blocks.filter(b => b.type === 'summary').length, 0);
-    assert.equal(memoryOverviewStats(f.store.current(), entries, settings).injectedCheckpoints, 7);
+    assert.equal(memoryOverviewStats(f.store.current(), entries, settings).injectedCheckpoints, 1);
     assert.doesNotMatch(value, /废弃 Swipe/);
     assert.match(value, /不可逆重大历史0/); assert.match(value, /重大历史47/);
     assert.match(value, /甲知道秘密，乙不知道/);
@@ -570,7 +572,8 @@ test('upgrade rebuilds the old snapshot once without needing chat bodies', async
         blocks: [], value: '<CACHE_MEMORY>已冻结内容</CACHE_MEMORY>' };
     f.seed(); let writes = 0; f.duringWrite = () => { writes++; };
     const previous = structuredClone(f.store.current());
-    const partial = refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore([]));
+    assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore([])).value, previous.injectionSnapshot.value);
+    const partial = refreshSnapshot(f.store.current(), settings, 'new checkpoint', f.store.effectiveStore([]));
     assert.equal(partial.changed, true); assert.equal(partial.migrated, true); assert.match(partial.value, /有效历史/);
     f.store.persist('injection snapshot');
     assert.equal((await f.persistence.flush()).state, 'confirmed');

@@ -107,13 +107,14 @@ test('source edits preserve frozen Summary/CP/Long; explicit deletion retains or
     chat.pop(); store.reconcileDeletion(chat); assert.equal(Object.keys(store.current().summaries).length, 2);
 });
 
-test('oversized frozen injection remains complete and only changes at publish boundaries', () => {
+test('large retained history publishes only the latest complete CP and changes only at boundaries', () => {
     const settings = normalizeSettings(), store = createEmptyStore('a');
     store.checkpoints = Array.from({ length: 30 }, (_, i) => ({ id: `checkpoint-${i}`, startFloor: i * 5 + 1, endFloor: i * 5 + 5, content: `剧情${i}\n${'汉'.repeat(2000)}`, status: 'frozen' }));
     refreshSnapshot(store, settings, 'new checkpoint');
     const frozen = store.injectionSnapshot.value;
-    assert.ok(frozen.length > 60000); assert.equal(store.injectionSnapshot.budget, undefined);
-    for (let i = 0; i < 30; i++) assert.ok(frozen.includes(`剧情${i}\n${'汉'.repeat(2000)}`));
+    assert.ok(frozen.length < 6000); assert.equal(store.injectionSnapshot.budget, undefined);
+    assert.ok(frozen.includes(`剧情29\n${'汉'.repeat(2000)}`));
+    assert.equal(store.injectionSnapshot.blocks.filter(row => row.type === 'checkpoint').length, 1);
     assert.equal(store.checkpoints.length, 30); assert.match(frozen, /剧情29/);
     put(store, 151, [task]); assert.equal(refreshSnapshot(store, settings, 'new summary').value, frozen);
 });
