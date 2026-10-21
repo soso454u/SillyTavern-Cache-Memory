@@ -1,19 +1,19 @@
-import { applyUITheme } from './ui-theme.js?v=1.24.20';
-import { generationPrompt } from './generation-prompts.js?v=1.24.20';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.20';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.20';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.20';
-import { HistoryBackfill } from './history-backfill.js?v=1.24.20';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.20';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.20';
-import { buildStructuredSummary } from './summary-format.js?v=1.24.20';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.20';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.20';
-import { parseFloorSummary } from './summarizer.js?v=1.24.20';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.20';
+import { applyUITheme } from './ui-theme.js?v=1.24.21';
+import { generationPrompt } from './generation-prompts.js?v=1.24.21';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.24.21';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.24.21';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.24.21';
+import { HistoryBackfill } from './history-backfill.js?v=1.24.21';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.24.21';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.21';
+import { buildStructuredSummary } from './summary-format.js?v=1.24.21';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.21';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.24.21';
+import { parseFloorSummary } from './summarizer.js?v=1.24.21';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.24.21';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.20';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.20';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.24.21';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.24.21';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';

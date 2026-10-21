@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.20';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.20';
-import { stripStructuredSections } from './summary-format.js?v=1.24.20';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.20';
+import { INJECTION_MODES } from './defaults.js?v=1.24.21';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.21';
+import { stripStructuredSections } from './summary-format.js?v=1.24.21';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.21';
 
 // Narrative history is not a replay of each old CP's current state.
 function stageStory(cp, store) {
@@ -120,7 +120,9 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
     let content = latest ? latest.content : '';
     if (latest && settings.activeStateEnabled) content = reconcileTrackedCheckpoint(content, store, through, latest.startFloor);
     // Only the latest CP supplies live states, tasks and knowledge tables.
-    content = stripStructuredSections(content, [...hiddenSections, 'Stage Story', 'Story So Far', 'Events']);
+    // Keep its Story So Far: it may contain verified consequences absent from
+    // older floor Summaries, including completed-task rewards and past causes.
+    content = stripStructuredSections(content, [...hiddenSections, 'Stage Story', 'Events']);
     const blocks = historicalStoryBlocks(store, through, checkpointModes.includes(mode));
     if (latest) blocks.push({ id: `checkpoint:${latest.id}`, type: 'checkpoint', startFloor: latest.startFloor, endFloor: latest.endFloor,
         text: `[CHECKPOINT_${String(latest.id).split('-').at(-1)} | LATEST_CHECKPOINT | 截至第${latest.endFloor}层]\n${content}` });
