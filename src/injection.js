@@ -1,53 +1,46 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.21';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.21';
-import { stripStructuredSections } from './summary-format.js?v=1.24.21';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.21';
+import { INJECTION_MODES } from './defaults.js?v=1.24.22';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.24.22';
+import { stripStructuredSections } from './summary-format.js?v=1.24.22';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.22';
 
-// Narrative history is not a replay of each old CP's current state.
-function stageStory(cp, store) {
-    const stated = readSection(cp.content, 'Stage Story') || readSection(cp.content, 'Events');
-    if (stated && !/^(?:无|none)[。.!]?$/iu.test(stated.trim())) return stated.trim();
-    const sourceIds = new Set(cp.summaryIds ?? Object.keys(cp.sourceVersions ?? {}));
-    const entries = Object.values(store.summaries ?? {}).filter(s => isUsableMemory(s)
-        && s.floor >= cp.startFloor && s.floor <= cp.endFloor);
-    const floors = new Map();
-    for (const row of entries) {
-        const old = floors.get(row.floor);
-        if (!old || sourceIds.has(row.messageId) && !sourceIds.has(old.messageId)
-            || sourceIds.has(row.messageId) === sourceIds.has(old.messageId)
-                && String(row.createdAt ?? '') > String(old.createdAt ?? '')) floors.set(row.floor, row);
-    }
-    const events = [...floors.values()].sort((a, b) => a.floor - b.floor).map(row => {
-        const text = String(row.event ?? readSection(summaryText(row), 'Event')).trim();
-        return text && !/^(?:无|none)[。.!]?$/iu.test(text) ? `第${row.floor}层：${text}` : '';
-    }).filter(Boolean);
-    // Legacy fallback is sourced from existing prose, never invented.
-    return events.join('\n') || readSection(cp.content, 'Story So Far');
-}
-
+// Original CP5 / Long50 coverage. Never inject all per-floor Summary Events.
 export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
-    const arcs = store.longMemories.filter(m => isUsableMemory(m) && m.endFloor <= throughFloor)
-        .map(m => ({ m, prose: readSection(m.content, 'STORY_ARC') }))
-        .filter(({ prose }) => prose && !/^(?:无|none)[。.!]?$/iu.test(prose.trim()));
-    const blocks = arcs.map(({ m, prose }) => ({
-        id: `story:long:${m.id}`, type: 'story', startFloor: m.startFloor, endFloor: m.endFloor,
-        text: `[HISTORICAL_STORY_${m.startFloor}_${m.endFloor}]\n${prose.trim()}`
+    const valid = item => isUsableMemory(item) && item.endFloor <= throughFloor;
+    const meaningful = text => Boolean(text?.trim()) && !/^(?:无|无新增|none)[。.!]?$/iu.test(text.trim());
+    const arcs = store.longMemories.filter(valid).map(memory => ({
+        memory, story: readSection(memory.content, 'STORY_ARC')
+    })).filter(row => meaningful(row.story));
+    const result = arcs.map(row => ({
+        id: 'story:long:' + row.memory.id, type: 'story',
+        startFloor: row.memory.startFloor, endFloor: row.memory.endFloor,
+        text: '[LONG_STORY_' + row.memory.startFloor + '_' + row.memory.endFloor + ']\n' + row.story.trim()
     }));
-    if (includeCP) {
-        const seen = new Set();
-        for (const cp of store.checkpoints.filter(m => isUsableMemory(m) && m.endFloor <= throughFloor)
-            .sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor)) {
-            const range = `${cp.startFloor}-${cp.endFloor}`;
-            if (seen.has(range)) continue;
-            seen.add(range);
-            if (arcs.some(({ m }) => m.startFloor <= cp.startFloor && m.endFloor >= cp.endFloor)) continue;
-            const prose = stageStory(cp, store);
-            if (prose && !/^(?:无|none)[。.!]?$/iu.test(prose.trim()))
-                blocks.push({ id: `story:cp:${cp.id}`, type: 'story', startFloor: cp.startFloor, endFloor: cp.endFloor,
-                    text: `[HISTORICAL_STORY_${cp.startFloor}_${cp.endFloor}]\n${prose.trim()}` });
+    if (!includeCP) return result.sort((a, b) => a.startFloor - b.startFloor);
+    const seen = new Set();
+    let legacy = null;
+    const cps = store.checkpoints.filter(valid).sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
+    for (const cp of cps) {
+        const id = cp.startFloor + ':' + cp.endFloor;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        if (arcs.some(row => row.memory.startFloor <= cp.startFloor && row.memory.endFloor >= cp.endFloor)) continue;
+        const stage = readSection(cp.content, 'Stage Story') || readSection(cp.content, 'Events');
+        if (meaningful(stage)) result.push({
+            id: 'story:cp:' + cp.id, type: 'story', startFloor: cp.startFloor, endFloor: cp.endFloor,
+            text: '[CHECKPOINT_STORY_' + cp.startFloor + '_' + cp.endFloor + ']\n' + stage.trim()
+        });
+        else {
+            // Older checkpoints have cumulative history, not separate stage plots.
+            // Retain only the most recent copy; do NOT expand floor Summaries.
+            const previous = readSection(cp.content, 'Story So Far');
+            if (meaningful(previous)) legacy = {
+                id: 'story:legacy:' + cp.id, type: 'story', startFloor: cp.startFloor, endFloor: cp.endFloor,
+                text: '[HISTORICAL_CONTEXT | 截至第' + cp.endFloor + '层]\n' + previous.trim()
+            };
         }
     }
-    return blocks.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
+    if (legacy) result.push(legacy);
+    return result.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
 }
 
 export function compactInjectionBlocks(blocks, store, { published = new Set(), compactPublished = false } = {}) {
@@ -119,10 +112,9 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
     const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor), 0);
     let content = latest ? latest.content : '';
     if (latest && settings.activeStateEnabled) content = reconcileTrackedCheckpoint(content, store, through, latest.startFloor);
-    // Only the latest CP supplies live states, tasks and knowledge tables.
-    // Keep its Story So Far: it may contain verified consequences absent from
-    // older floor Summaries, including completed-task rewards and past causes.
-    content = stripStructuredSections(content, [...hiddenSections, 'Stage Story', 'Events']);
+    // Only the latest checkpoint supplies current statuses and open tasks.
+    // Its story is projected separately from CP5 / Long50 narratives.
+    content = stripStructuredSections(content, [...hiddenSections, 'Stage Story', 'Events', 'Story So Far']);
     const blocks = historicalStoryBlocks(store, through, checkpointModes.includes(mode));
     if (latest) blocks.push({ id: `checkpoint:${latest.id}`, type: 'checkpoint', startFloor: latest.startFloor, endFloor: latest.endFloor,
         text: `[CHECKPOINT_${String(latest.id).split('-').at(-1)} | LATEST_CHECKPOINT | 截至第${latest.endFloor}层]\n${content}` });
@@ -163,11 +155,5 @@ export function buildInjection(store, settings) {
     if (!settings.enabled || settings.injectionMode === INJECTION_MODES.NONE) return '';
     if (settings.strictCacheMode) return store.injectionSnapshot?.value ?? '';
     const blocks = currentInjectionBlocks(store, settings);
-    if (settings.injectionMode === INJECTION_MODES.LONG_CHECKPOINT_RECENT) {
-        const through = Math.max(0, ...blocks.map(block => block.endFloor || 0));
-        for (const item of Object.values(store.summaries).filter(row => isUsableMemory(row) && row.floor > through).sort((a, b) => a.floor - b.floor))
-            blocks.push({ id: `summary:${item.messageId}`, type: 'summary', endFloor: item.floor,
-                text: `[RECENT_SUMMARY_${String(item.floor).padStart(3, '0')}]\n${stripStructuredSections(summaryText(item), ['KEEP'])}` });
-    }
     return renderInjectionBlocks(blocks, store);
 }

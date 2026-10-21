@@ -1,5 +1,5 @@
-import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.21';
-import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from './active-state.js?v=1.24.21';
+import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.22';
+import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from './active-state.js?v=1.24.22';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
     .replace('category(skill/attribute/reward/item/identity/knowledge/effect)',

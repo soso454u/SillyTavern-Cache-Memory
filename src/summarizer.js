@@ -1,15 +1,15 @@
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.21';
-import { memoryGenerationSettings } from './defaults.js?v=1.24.21';
-import { generationPrompt } from './generation-prompts.js?v=1.24.21';
-import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.21';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.21';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.21';
-import { extractSummarySource } from './summary-source.js?v=1.24.21';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.21';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.21';
-import { stateSummaryResults, parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, hasLastingResult, activeStateVersion } from './active-state.js?v=1.24.21';
-import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from './normal-memory.js?v=1.24.21';
-import { retryOperation, waitForRetry } from './retry.js?v=1.24.21';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.24.22';
+import { memoryGenerationSettings } from './defaults.js?v=1.24.22';
+import { generationPrompt } from './generation-prompts.js?v=1.24.22';
+import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.24.22';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.24.22';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.24.22';
+import { extractSummarySource } from './summary-source.js?v=1.24.22';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.24.22';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.24.22';
+import { stateSummaryResults, parseStateChanges, projectActiveState, stateContext, deduplicateCheckpoint, reconcileTrackedCheckpoint, trackedFactUpdates, trackedLines, isTrackedActive, hasLastingResult, activeStateVersion } from './active-state.js?v=1.24.22';
+import { selectNormalChanges, normalCheckpointHistory, selectNormalFactUpdates } from './normal-memory.js?v=1.24.22';
+import { retryOperation, waitForRetry } from './retry.js?v=1.24.22';
 
 function pad(value) {
     return String(value).padStart(3, '0');

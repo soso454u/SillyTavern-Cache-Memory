@@ -181,28 +181,38 @@ test('legacy-format chats also generate a cumulative next CP without rewriting t
     assert.deepEqual(store.current().checkpoints[0], previous);
 });
 
-test('historical story uses every CP interval but live state only from final CP', () => {
+test('no per-floor Summary replay and current state comes from latest CP', () => {
     const store = createEmptyStore('a');
-    for (let n = 1; n <= 10; n++) put(store, n, [], n < 6 ? '使者向城主呈交旧城密信' : '守卫公开证词，城主撤销逮捕令');
-    store.checkpoints.push(cp(1, '[CHECKPOINT]\n[Story So Far]\n过去收到密信\n[Current State]\n客栈旧地点\n[Open Threads]\n旧任务待办'));
-    store.checkpoints.push(cp(2, '[CHECKPOINT]\n[Stage Story]\n守卫出面证明城主判断错误，逮捕令被撤销。\n[Current State]\n王宫最新地点\n[Open Threads]\n追查信件来源'));
-    const earlier = structuredClone(store);
+    for (let n = 1; n <= 10; n++) put(store, n, [], '很长的楼层剧情'.repeat(100));
+    store.checkpoints.push(cp(1, '[Story So Far]\n最初有人带来密信\n[Current State]\n旧地点\n[Open Threads]\n旧任务'));
+    store.checkpoints.push(cp(2, '[Stage Story]\n守卫公开作证。\n[Current State]\n新地点\n[Open Threads]\n新任务'));
+    const before = structuredClone(store);
     const text = buildInjection(store, { ...settings, strictCacheMode: false });
-    assert.match(text, /HISTORICAL_STORY_1_5[\s\S]*使者向城主呈交旧城密信/);
-    assert.match(text, /HISTORICAL_STORY_6_10[\s\S]*守卫出面证明/);
-    assert.match(text, /王宫最新地点|追查信件来源/);
-    assert.doesNotMatch(text, /客栈旧地点|旧任务待办|记忆读取规则/);
-    assert.deepEqual(store, earlier);
+    assert.match(text, /HISTORICAL_CONTEXT[\s\S]*密信/);
+    assert.match(text, /CHECKPOINT_STORY_6_10[\s\S]*守卫公开作证/);
+    assert.match(text, /新地点|新任务/);
+    assert.doesNotMatch(text, /旧地点|旧任务|很长的楼层剧情|记忆读取规则/);
+    assert.deepEqual(store, before);
 });
-test('Long50 story arc replaces only its covered staged narrative', () => {
+
+test('Long50 covers its CP5 stories, not the next uncovered CP', () => {
     const store = createEmptyStore('a');
-    for (let n = 1; n <= 11; n++) store.checkpoints.push(cp(n, `[Stage Story]\n第${n}阶段重要事件\n[Current State]\n旧地点${n}`));
-    store.longMemories.push({ id: 'long-1', startFloor: 1, endFloor: 50,
-        content: '[STORY_ARC]\n第一至五十层间，密信引发调查、公开审问，守卫最终推翻指控。\n[LONG_MEMORY]\n- 医师保管密信',
-        memoryKind: 'facts', factUpdates: [{ action:'add',id:'fact-a',text:'医师保管密信' }], status:'frozen', frozen:true });
+    for (let n = 1; n <= 11; n++) store.checkpoints.push(cp(n, '[Stage Story]\n阶段剧情' + n + '\n[Current State]\n旧状态' + n));
+    store.longMemories.push({ id: 'long-1', startFloor: 1, endFloor: 50, content: '[STORY_ARC]\n长篇剧情整合\n[LONG_MEMORY]\n- 证据仍在',
+        memoryKind: 'facts', factUpdates: [{ action: 'add', id: 'fact-a', text: '证据仍在' }], status: 'frozen', frozen: true });
     const text = buildInjection(store, { ...settings, strictCacheMode: false });
-    assert.match(text, /HISTORICAL_STORY_1_50[\s\S]*密信引发调查/);
-    assert.match(text, /HISTORICAL_STORY_51_55[\s\S]*第11阶段重要事件/);
-    assert.doesNotMatch(text, /HISTORICAL_STORY_1_5|旧地点1|旧地点10|记忆读取规则/);
-    assert.match(text, /旧地点11|医师保管密信/);
+    assert.match(text, /LONG_STORY_1_50[\s\S]*长篇剧情整合/);
+    assert.match(text, /CHECKPOINT_STORY_51_55[\s\S]*阶段剧情11/);
+    assert.doesNotMatch(text, /CHECKPOINT_STORY_1_5|旧状态1|旧状态10/);
+    assert.match(text, /旧状态11|证据仍在/);
+});
+
+test('145 saved summaries are not expanded into a huge prompt', () => {
+    const store = createEmptyStore('a');
+    for (let n = 1; n <= 145; n++) put(store, n, [], '楼层剧情正文'.repeat(100));
+    for (let n = 1; n <= 29; n++) store.checkpoints.push(cp(n, '[Story So Far]\n累计剧情' + n + '\n[Current State]\n旧状态' + n));
+    const text = buildInjection(store, { ...settings, strictCacheMode: false });
+    assert.match(text, /累计剧情29/);
+    assert.doesNotMatch(text, /楼层剧情正文|旧状态28|HISTORICAL_STORY_/);
+    assert.ok(text.length < 4500, String(text.length));
 });
