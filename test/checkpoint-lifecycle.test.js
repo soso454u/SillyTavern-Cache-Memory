@@ -190,7 +190,8 @@ test('no per-floor Summary replay and current state comes from latest CP', () =>
     const text = buildInjection(store, { ...settings, strictCacheMode: false });
     assert.match(text, /HISTORICAL_CONTEXT[\s\S]*密信/);
     assert.match(text, /CHECKPOINT_STORY_6_10[\s\S]*守卫公开作证/);
-    assert.match(text, /新地点|新任务/);
+    // New Stage Story never replays its old Current State/Open Threads.
+    assert.doesNotMatch(text, /新地点|新任务/);
     assert.doesNotMatch(text, /旧地点|旧任务|很长的楼层剧情|记忆读取规则/);
     assert.deepEqual(store, before);
 });
@@ -204,7 +205,8 @@ test('Long50 covers its CP5 stories, not the next uncovered CP', () => {
     assert.match(text, /LONG_STORY_1_50[\s\S]*长篇剧情整合/);
     assert.match(text, /CHECKPOINT_STORY_51_55[\s\S]*阶段剧情11/);
     assert.doesNotMatch(text, /CHECKPOINT_STORY_1_5|旧状态1|旧状态10/);
-    assert.match(text, /旧状态11|证据仍在/);
+    assert.doesNotMatch(text, /旧状态11/);
+    assert.match(text, /证据仍在/);
 });
 
 test('145 saved summaries are not expanded into a huge prompt', () => {
