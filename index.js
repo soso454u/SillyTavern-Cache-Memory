@@ -12,19 +12,19 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.26.0';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.26.0';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.26.0';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.26.0';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.26.0';
-import { getAssistantMessages } from './src/utils.js?v=1.26.0';
-import { isUsableMemory } from './src/continuity.js?v=1.26.0';
-import { MemoryStore } from './src/memory-store.js?v=1.26.0';
-import { MemorySummarizer } from './src/summarizer.js?v=1.26.0';
-import { CacheMemoryUI } from './src/ui.js?v=1.26.0';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.26.0';
-import { MemoryServerClient } from './src/memory-server.js?v=1.26.0';
-import { filterCoveredHistory } from './src/history-handoff.js?v=1.26.0';
+import { SummaryApiClient } from './src/api-client.js?v=1.26.1';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.26.1';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.26.1';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.26.1';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.26.1';
+import { getAssistantMessages } from './src/utils.js?v=1.26.1';
+import { isUsableMemory } from './src/continuity.js?v=1.26.1';
+import { MemoryStore } from './src/memory-store.js?v=1.26.1';
+import { MemorySummarizer } from './src/summarizer.js?v=1.26.1';
+import { CacheMemoryUI } from './src/ui.js?v=1.26.1';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.26.1';
+import { MemoryServerClient } from './src/memory-server.js?v=1.26.1';
+import { filterCoveredHistory } from './src/history-handoff.js?v=1.26.1';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -261,10 +261,12 @@ function cacheDebugSnapshot(messages) {
 // ST supplies a regex-processed temporary coreChat via generate_interceptor.
 // Register only while active; never change the stored chat or regex settings.
 function historyInterceptor(coreChat, _contextSize, _abort, type) {
-    if (!settings?.enabled || !settings.historyHandoff || memoryChatId() !== activeChatId) return;
+    if (!settings?.enabled || (!settings.historyHandoff && !settings.lastUserOnly) || memoryChatId() !== activeChatId) return;
     const current = store.current();
     if (current.chatId !== activeChatId) return;
-    const result = filterCoveredHistory(coreChat, chat, current.injectionSnapshot, publishedMemoryValue, { type, summaries: current.summaries });
+    const result = filterCoveredHistory(coreChat, chat, current.injectionSnapshot, publishedMemoryValue, {
+        type, summaries: current.summaries, historyHandoff: settings.historyHandoff, lastUserOnly: settings.lastUserOnly,
+    });
     if (result.removed) coreChat.splice(0, coreChat.length, ...result.messages);
     if (settings.cacheDebug) console.info(LOG_PREFIX, 'HISTORY HANDOFF', { removedMessages: result.removed, reason: result.reason });
 }

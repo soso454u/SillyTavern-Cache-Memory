@@ -7,19 +7,23 @@ import { MemoryStore, createEmptyStore } from '../src/memory-store.js';
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from '../src/persistence.js';
 import { getAssistantMessages } from '../src/utils.js';
 import { filterCoveredHistory } from '../src/history-handoff.js';
+import { getOpeningSource } from '../src/opening-source.js';
 
 const clone = value => structuredClone(value);
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const storage = () => { const data = new Map(); return {getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value), removeItem: key => data.delete(key), key: i => [...data.keys()][i], get length() {return data.size;}}; };
 const source = (await readFile(new URL('../index.js', import.meta.url), 'utf8')).replace(/^import[\s\S]*?from ['"][^'"]+['"];\n/gm, '').replaceAll('export function ', 'function ');
 
-for (const strictCacheMode of [false, true]) for (const historyHandoff of [false, true]) test(`runtime loading, source rebinding and focus stay read-only; actual editing saves (strict=${strictCacheMode}, handoff=${historyHandoff})`, async () => {
+for (const strictCacheMode of [false, true]) for (const historyHandoff of [false, true]) for (const lastUserOnly of [false, true]) test(`runtime loading, source rebinding and focus stay read-only; actual editing saves (strict=${strictCacheMode}, handoff=${historyHandoff}, lastUser=${lastUserOnly})`, async () => {
     const chatId = JSON.stringify(['character', 'synthetic.png', 'synthetic']);
-    const chat = Array.from({length: 10}, (_, i) => ({name:'A', mes:`合成正文${i}`, gen_started:`g${i}`}));
-    const settings = defaults.normalizeSettings({strictCacheMode, historyHandoff});
+    const chat = [{name:'A',mes:'开场白'}, ...Array.from({length: 10}, (_, i) => [
+        {name:'U',is_user:true,mes:`输入${i}`,send_date:`u${i}`},
+        {name:'A',mes:`合成正文${i}`,gen_started:`g${i}`},
+    ]).flat(), {name:'U',is_user:true,mes:'最后输入',send_date:'pending'}];
+    const settings = defaults.normalizeSettings({strictCacheMode, historyHandoff, lastUserOnly});
     let remote = createEmptyStore(chatId), writes = 0;
     for (const entry of getAssistantMessages(chat)) remote.summaries[entry.messageId] = {messageId:entry.messageId, floor:entry.floor, event:`合成事件${entry.floor}`, status:'frozen', frozen:true, sourceFingerprint:entry.fingerprint, sourceContentFingerprint:entry.contentFingerprint};
-    remote.checkpoints.push({id:'checkpoint-1', startFloor:1, endFloor:5, content:'已保存历史', status:'frozen'});
+    remote.checkpoints.push({id:'checkpoint-1', startFloor:1, endFloor:5, content:'已保存历史', status:'frozen', openingContentFingerprint:getOpeningSource(chat).contentFingerprint});
     cache.refreshSnapshot(remote, settings, 'manual reinject');
     const metadata = {cache_memory: clone(remote)};
     metadata.cache_memory.summaries[getAssistantMessages(chat)[0].messageId].event = '旧窗口缓存';
@@ -39,15 +43,23 @@ for (const strictCacheMode of [false, true]) for (const historyHandoff of [false
         requestAnimationFrame:fn=>setTimeout(fn,0), cancelAnimationFrame:clearTimeout,
         API_KEY_STORAGE_KEY:defaults.API_KEY_STORAGE_KEY, INJECTION_KEY:defaults.INJECTION_KEY, MODULE_ID:defaults.MODULE_ID, normalizeLoadedSettings:defaults.normalizeLoadedSettings, normalizeSettings:defaults.normalizeSettings,
         CacheDiagnostics:cache.CacheDiagnostics, refreshSnapshot:cache.refreshSnapshot, shouldRefreshInjection:cache.shouldRefreshInjection, filterCoveredHistory};
-    const runtime = new Function(...Object.keys(bindings), `${source}\nreturn {store, persistence, refreshChatState, onHotUnload};`)(...Object.values(bindings));
+    const runtime = new Function(...Object.keys(bindings), `${source}\nreturn {store, persistence, refreshChatState, onHotUnload, updateSettings};`)(...Object.values(bindings));
     try {
         await runtime.refreshChatState({serverLoaded:true}); await settle();
         assert.equal(writes,0); assert.equal(runtime.persistence.conflicts.size,0);
         assert.equal(metadata.cache_memory.summaries[getAssistantMessages(chat)[0].messageId].event,'合成事件1');
         const originalChat = clone(chat), prompt = clone(chat);
         globalThis.cacheMemoryHistoryInterceptor(prompt, 10000, () => {}, 'normal');
-        assert.equal(prompt.length, historyHandoff ? 5 : 10);
+        assert.equal(prompt.filter(row=>!row.is_user).length, historyHandoff ? 5 : lastUserOnly ? 10 : 11);
+        assert.equal(prompt.filter(row=>row.is_user).length, lastUserOnly ? 1 : historyHandoff ? 6 : 11);
         assert.deepEqual(chat, originalChat);
+        const snapshotBefore = clone(runtime.store.current().injectionSnapshot);
+        runtime.updateSettings({lastUserOnly:!lastUserOnly});
+        const toggled = clone(chat);
+        globalThis.cacheMemoryHistoryInterceptor(toggled,10000,()=>{},'normal');
+        assert.equal(toggled.filter(row=>row.is_user).length,!lastUserOnly ? 1 : historyHandoff ? 6 : 11);
+        assert.deepEqual(runtime.store.current().injectionSnapshot,snapshotBefore);
+        runtime.updateSettings({lastUserOnly});
         remote.checkpoints[0].content='服务器最新重大历史';cache.refreshSnapshot(remote, settings,'manual reinject');
         window.dispatchEvent(new Event('focus'));await settle();
         assert.equal(writes,0);assert.equal(published.at(-1),remote.injectionSnapshot.value);

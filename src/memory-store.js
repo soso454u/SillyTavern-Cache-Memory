@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.26.0';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.26.0';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.26.0';
+import { fnv1a, getAssistantMessages } from './utils.js?v=1.26.1';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.26.1';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.26.1';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -734,7 +734,8 @@ export const summaryIsCurrent = item => item && item.frozen !== false && item.st
 const summaryFields = item => [item?.sourceFingerprint, item?.raw, item?.event, item?.state, item?.open, item?.stateChanges, item?.keep];
 export const summaryVersion = item => `s2:${fnv1a(JSON.stringify(stableClone([...summaryFields(item), item?.floor, item?.title, item?.characters, item?.storyTime, item?.location])))}`;
 export const summaryVersionMatches = (item, version) => summaryVersion(item) === version || (!String(version).startsWith('s2:') && fnv1a(JSON.stringify(summaryFields(item))) === version);
-export const aggregateVersion = item => item ? fnv1a(JSON.stringify(stableClone([item.id, item.startFloor, item.endFloor, item.content, item.factUpdates, item.continuityState]))) : '';
+export const aggregateVersion = item => item ? fnv1a(JSON.stringify(stableClone([item.id, item.startFloor, item.endFloor, item.content, item.factUpdates, item.continuityState,
+    ...(item.openingContentFingerprint ? [item.openingContentFingerprint] : [])]))) : '';
 export function memoryHealth(item) {
     if (!item) return { code: 'missing', label: '尚未生成 / 记录不存在' };
     if (item.status === 'failed') return { code: 'failed', label: `生成失败：${item.error || '未提供错误'}` };

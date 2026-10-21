@@ -1,9 +1,10 @@
-import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.26.0';
-import { INJECTION_MODES } from './defaults.js?v=1.26.0';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.26.0';
-import { stripStructuredSections } from './summary-format.js?v=1.26.0';
-import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.26.0';
-import { historyPublicationLimit } from './history-handoff.js?v=1.26.0';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.26.1';
+import { INJECTION_MODES } from './defaults.js?v=1.26.1';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.26.1';
+import { stripStructuredSections } from './summary-format.js?v=1.26.1';
+import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.26.1';
+import { historyPublicationLimit } from './history-handoff.js?v=1.26.1';
+import { stageStartLabel } from './opening-source.js?v=1.26.1';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
@@ -18,8 +19,9 @@ export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
             if (!meaningful(row.story) || arcKeys.has(key)) return false; arcKeys.add(key); return true;
         });
     const result = arcs.map(({ memory, story }) => ({ id: `story:long:${memory.id}`, type: 'long-story', coversHistory: true,
+        ...(memory.openingContentFingerprint ? { openingContentFingerprint: memory.openingContentFingerprint } : {}),
         startFloor: memory.startFloor, endFloor: memory.endFloor,
-        text: `[LONG_STORY_${memory.startFloor}_${memory.endFloor}]\n${story.trim()}` }));
+        text: `[LONG_STORY_${stageStartLabel(memory)}_${memory.endFloor}]\n${story.trim()}` }));
     if (!includeCP) return result.sort((a, b) => a.startFloor - b.startFloor);
     const seen = new Set();
     for (const cp of store.checkpoints.filter(valid).sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor)) {
@@ -37,7 +39,8 @@ export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
             : stripStructuredSections(cp.content, hiddenSections).replace(/\[(Characters|Current State|Secrets & Knowledge|Open Threads|Continuity Locks)\]/gu, '[历史记录 · $1]'));
         const block = { id: `checkpoint:${cp.id}`, type: 'checkpoint', startFloor: cp.startFloor, endFloor: cp.endFloor,
             coversHistory: Boolean(story || meaningful(prose.replace(/^\s*\[CHECKPOINT\]\s*/iu, ''))),
-            text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${cp.startFloor}–${cp.endFloor}层 · 历史剧情]\n${narrative}` };
+            ...(cp.openingContentFingerprint ? { openingContentFingerprint: cp.openingContentFingerprint } : {}),
+            text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${stageStartLabel(cp)}–${cp.endFloor}层 · 历史剧情]\n${narrative}` };
         if (meaningful(narrative.replace(/^\s*\[CHECKPOINT\]\s*/iu, ''))) result.push(block);
     }
     return result.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);

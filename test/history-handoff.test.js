@@ -5,6 +5,7 @@ import { normalizeSettings } from '../src/defaults.js';
 import { refreshSnapshot, shouldRefreshInjection } from '../src/cache-control.js';
 import { filterCoveredHistory } from '../src/history-handoff.js';
 import { getAssistantMessages, messageIdentity, messageContentFingerprint } from '../src/utils.js';
+import { getOpeningSource } from '../src/opening-source.js';
 
 const cp = (startFloor, endFloor) => ({ id: `checkpoint-${endFloor}`, startFloor, endFloor,
     status: 'frozen', content: `[CHECKPOINT]\n[Stage Story]\n合成历史${startFloor}至${endFloor}：旅人交出钥匙，守卫答应天亮前归还。` });
@@ -20,7 +21,7 @@ function setup(floors = 10) {
         addTurn(chat, floor);
         const id = messageIdentity(chat.at(-1));
         store.summaries[id] = { messageId: id, floor, event: `事件${floor}`, status: 'frozen' };
-        if (floor % 5 === 0) store.checkpoints.push(cp(floor - 4, floor));
+        if (floor % 5 === 0) store.checkpoints.push({ ...cp(floor - 4, floor), ...(floor === 5 ? { openingContentFingerprint: getOpeningSource(chat).contentFingerprint } : {}) });
     }
     chat.push(structuredClone(pendingUser));
     refreshSnapshot(store, settings, 'settings changed');
@@ -37,9 +38,9 @@ test('normal conversations have exactly one story source per floor from 1 throug
         addTurn(chat, floor);
         const id = messageIdentity(chat.at(-1));
         store.summaries[id] = { messageId: id, floor, event: `事件${floor}`, status: 'frozen' };
-        if (floor % 5 === 0) store.checkpoints.push(cp(floor - 4, floor));
+        if (floor % 5 === 0) store.checkpoints.push({ ...cp(floor - 4, floor), ...(floor === 5 ? { openingContentFingerprint: getOpeningSource(chat).contentFingerprint } : {}) });
         if (floor === 50) store.longMemories.push(longAt50 = { id: 'long-50', startFloor: 1, endFloor: 50,
-            status: 'frozen', content: '[STORY_ARC]\n旅人与守卫履行承诺并归还钥匙。' });
+            status: 'frozen', openingContentFingerprint: getOpeningSource(chat).contentFingerprint, content: '[STORY_ARC]\n旅人与守卫履行承诺并归还钥匙。' });
         const reason = floor % 5 === 0 ? 'new checkpoint' : 'new summary';
         if (shouldRefreshInjection(settings, reason)) refreshSnapshot(store, settings, reason);
         if (floor % 5 !== 0) assert.equal(store.injectionSnapshot.value, prior);
@@ -56,7 +57,7 @@ test('normal conversations have exactly one story source per floor from 1 throug
         assert.ok(raw.length >= Math.min(floor, 5));
         assert.ok(raw.length <= 9);
         assert.equal(result.messages.at(-1).mes, pendingUser.mes);
-        assert.equal(result.messages[0].mes, '角色卡开场白');
+        assert.equal(result.messages.some(row => row.mes === '角色卡开场白'), floor < 10);
         assert.deepEqual(chat, original);
         if (floor === 50) assert.equal(blocks.some(block => block.type === 'long-story'), false);
     }
@@ -86,7 +87,7 @@ test('unpublished, mismatched and legacy snapshots never remove history; recent 
     assert.equal(filterCoveredHistory(structuredClone(chat), chat, { ...snapshot, historyHandoff: false }, snapshot.value).removed, 0);
     const unprinted = { ...snapshot, blocks: [...snapshot.blocks, { type: 'checkpoint', startFloor: 6, endFloor: 10, text: '未发布' }] };
     const result = filterCoveredHistory(structuredClone(chat), chat, unprinted, snapshot.value, { summaries: store.summaries });
-    assert.equal(result.removed, 10);
+    assert.equal(result.removed, 11);
     assert.ok(result.messages.some(row => row.mes === '答复10'));
     assert.equal(filterCoveredHistory(chat, chat, snapshot, snapshot.value).removed, 0);
 });
@@ -97,7 +98,7 @@ test('swipe, continue, system/tool entries, ambiguous identities and regex-proce
     chat.splice(5, 0, { name: '守卫', send_date: 'tool', extra: { tool_invocations: [] }, mes: '工具调用' });
     const core = structuredClone(chat).map((row, index) => ({ ...row, mes: row.is_user ? '' : `正则处理：${row.mes}`, index }));
     const result = filter(chat, store, { type: 'normal' }, core);
-    assert.equal(result.removed, 10);
+    assert.equal(result.removed, 11);
     assert.ok(result.messages.some(row => row.is_system));
     assert.ok(result.messages.some(row => row.extra?.tool_invocations));
     assert.equal(result.messages.at(-1).send_date, 'new');
@@ -130,7 +131,7 @@ test('feature is opt-in; enabling rebuilds only injection and disabling preserve
 test('partially loaded, reordered or unidentified floors and state-only legacy CPs keep their raw history', () => {
     const { chat, store, settings } = setup(20);
     const partial = chat.filter(row => !/^[ua][1-9]$/.test(row.send_date ?? ''));
-    assert.equal(filter(partial, store).removed, 0);
+    assert.equal(filter(partial, store).removed, 1);
     const unknown = structuredClone(chat).map(row => ({ ...row, send_date: `unknown-${row.send_date}`, mes: `未知正文${row.mes}` }));
     assert.equal(filter(unknown, store).removed, 0);
     store.checkpoints = [cp(1, 5)];
@@ -146,9 +147,58 @@ test('imported message IDs may differ when a unique exact body fingerprint confi
         record.sourceContentFingerprint = messageContentFingerprint(entry.message);
         record.messageId = `imported-${entry.messageId}`;
     }
-    assert.equal(filter(chat, store).removed, 10);
+    assert.equal(filter(chat, store).removed, 11);
     // An identical text attributed to two different floors cannot anchor one.
     const entry = getAssistantMessages(chat)[0];
     store.summaries.ambiguous = { messageId: 'ambiguous', floor: 2, sourceContentFingerprint: entry.contentFingerprint };
     assert.ok(filter(chat, store).messages.some(row => row.mes === '答复1'));
+});
+
+test('latest-user-only is off by default and independently filters old user turns without memory publication', () => {
+    const { chat } = setup();
+    assert.equal(normalizeSettings().lastUserOnly, false);
+    const original = structuredClone(chat);
+    const options = { historyHandoff: false, lastUserOnly: true };
+    const result = filterCoveredHistory(structuredClone(chat), chat, null, '', options);
+    assert.deepEqual(result.messages.filter(row => row.is_user).map(row => row.mes), [pendingUser.mes]);
+    assert.equal(result.messages.filter(row => !row.is_user).length, 11);
+    assert.equal(result.messages.some(row => row.mes === '角色卡开场白'), true);
+    const disabled = filterCoveredHistory(structuredClone(chat), chat, null, '', { ...options, lastUserOnly: false });
+    assert.deepEqual(disabled.messages, chat);
+    assert.deepEqual(chat, original);
+});
+
+test('opening index zero is excluded for either role, even when undated or generated; depth zero is preserved', () => {
+    for (const is_user of [true, false]) for (const generated of [true, false]) {
+        const { chat } = setup();
+        chat[0] = { name: '开场', is_user, mes: '开场白', ...(generated ? { gen_started: 'opening-generated' } : {}) };
+        const core = structuredClone(chat).map((row, index) => ({ ...row, index, mes: index === 0 ? '正则处理的开场白' : row.mes }));
+        const block = { type: 'checkpoint', coversHistory: true, openingContentFingerprint: getOpeningSource(chat).contentFingerprint, text: '已合并的开场记忆' };
+        const result = filterCoveredHistory(core, chat, { blocks: [block], value: block.text }, block.text, { historyHandoff: true });
+        assert.equal(result.messages.some(row => row.index === 0), false);
+        assert.equal(result.messages.at(-1).mes, pendingUser.mes);
+        assert.ok(result.messages.some(row => row.mes === '答复1'));
+        assert.ok(result.messages.some(row => row.mes === '请求1'));
+    }
+    const opening = [{ name: '开场', is_user: true, mes: '只有开场白' }];
+    assert.equal(filterCoveredHistory(structuredClone(opening), opening, null, '', { lastUserOnly: true }).messages.length, 1);
+});
+
+test('latest-user-only composes with handoff, works on continue and coexists with the old prompt-only user regex', () => {
+    const { chat, store } = setup(11);
+    const both = filter(chat, store, { lastUserOnly: true });
+    assert.equal(both.messages.filter(row => !row.is_user).length, 6);
+    assert.deepEqual(both.messages.filter(row => row.is_user).map(row => row.mes), [pendingUser.mes]);
+    const continuing = chat.slice(0, -1);
+    const result = filter(continuing, store, { lastUserOnly: true, type: 'continue' });
+    assert.deepEqual(result.messages.filter(row => row.is_user).map(row => row.mes), ['请求11']);
+    assert.equal(result.messages.at(-1).mes, '答复11');
+    const regexProcessed = structuredClone(chat).map((row, index) => ({ ...row, index,
+        mes: row.is_user && index < chat.length - 1 ? '' : row.mes }));
+    const regexResult = filter(chat, store, { lastUserOnly: true }, regexProcessed);
+    assert.deepEqual(regexResult.messages.filter(row => row.is_user).map(row => row.mes), [pendingUser.mes]);
+    assert.equal(regexResult.messages.filter(row => !row.is_user).length, 6);
+    const singleUser = chat.filter(row => !row.is_user || row.send_date === 'u1');
+    const oldInput = filter(singleUser, store, { lastUserOnly: true, type: 'continue' });
+    assert.deepEqual(oldInput.messages.filter(row => row.is_user).map(row => row.mes), ['请求1']);
 });

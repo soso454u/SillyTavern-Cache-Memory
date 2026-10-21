@@ -1,20 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.26.0';
-import { applyUITheme } from './ui-theme.js?v=1.26.0';
-import { generationPrompt } from './generation-prompts.js?v=1.26.0';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.26.0';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.26.0';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.26.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.26.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.26.0';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.26.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.26.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.26.0';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.26.0';
-import { parseFloorSummary } from './summarizer.js?v=1.26.0';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.26.0';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.26.1';
+import { applyUITheme } from './ui-theme.js?v=1.26.1';
+import { stageStartLabel } from './opening-source.js?v=1.26.1';
+import { generationPrompt } from './generation-prompts.js?v=1.26.1';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.26.1';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.26.1';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.26.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.26.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.26.1';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.26.1';
+import { buildStructuredSummary } from './summary-format.js?v=1.26.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.26.1';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.26.1';
+import { parseFloorSummary } from './summarizer.js?v=1.26.1';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.26.1';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.26.0';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.26.0';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.26.1';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.26.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -480,7 +481,9 @@ export function configTemplate() {
                         <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>严格模式不注入逐层小总结；Checkpoint / Long Memory 提交后更新一次，其余楼层逐字冻结。Long Memory 边界可替换其覆盖的阶段注入，原始记录仍保留。</span></div>
                         <p class="cache-memory-warning" data-cache-mode-warning></p>
                         <label class="cache-memory-toggle"><span><strong>正文与记忆自动衔接</strong><small>正常续聊至少保留最近5层原文，较早原文由已发送的阶段剧情接管</small></span><input type="checkbox" data-setting="historyHandoff"></label>
-                        <small class="cache-memory-help">启用后请停用原来按深度清空 user / char 的正则，保留状态栏等局部过滤规则。默认CP5时通常发送最近5–9层原文，阶段总结缺失则保留更多；不会删除聊天或更改原有正则。首次开启会重新发布记忆，此后严格模式仍在阶段／长期边界更新。</small>
+                        <small class="cache-memory-help">启用后请停用原来按深度清空 char 的正则。默认CP5时通常发送最近5–9层正常回复。第0条开场白与1–5层一并总结为首段0–5，之后仍为6–10；长期总结继续接管首段，不常驻独立开场块。只有已发送记忆接管后才移除开场原文。旧聊天请重新生成第一份阶段总结，已有首段大总结时也需重新生成该段。不会删除聊天或更改原正则。</small>
+                        <label class="cache-memory-toggle"><span><strong>只发送最后一条 user</strong><small>默认关闭；开启后过滤更早的user输入，可独立于正文衔接使用</small></span><input type="checkbox" data-setting="lastUserOnly"></label>
+                        <small class="cache-memory-help">关闭时沿用现有user历史发送方式；开启后只保留最后一条非开场白user输入。第0条在首段记忆接管前暂时保留，避免初始背景丢失。原“不发送用户”正则可以保留，开启此开关后也可停用；继续生成时旧深度正则可能清空最后一条user。开关不改写已冻结记忆。</small>
                         <small class="cache-memory-help">仅把“替换为”留空才表示删除匹配内容，“查找”不能为空。酒馆深度按消息计数：普通一问一答、末尾为新user时，char最小深度9清空通常只留4条回复，11才留5条。固定深度仍可能与CP重叠或出现缺口。</small>
                         <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>仅记录 hash、过滤来源和字符数；不记录正文</small></span><input type="checkbox" data-setting="cacheDebug"></label>
                         <pre class="cache-memory-continuity" data-cache-debug hidden></pre>
@@ -2338,7 +2341,7 @@ export class CacheMemoryUI {
         root.append(this.element('h4', '', '已保存的 Long Memory（点击展开查看全文）'));
         for (const memory of [...this.store.current().longMemories].sort((a, b) => b.startFloor - a.startFloor)) {
             root.append(this.foldCard({ key: `long:${memory.id}`, group: 'facts', type: 'long', id: memory.id,
-                title: `${memory.id}｜${memory.startFloor}–${memory.endFloor}层`, status: `${memoryHealth(memory).label}${hasLongStory(memory.content) ? ' · 剧情大总结' : isLegacyLong(memory) ? ' · 旧格式记录' : ''}`,
+                title: `${memory.id}｜${stageStartLabel(memory)}–${memory.endFloor}层`, status: `${memoryHealth(memory).label}${hasLongStory(memory.content) ? ' · 剧情大总结' : isLegacyLong(memory) ? ' · 旧格式记录' : ''}`,
                 renderBody: body => {
                     body.append(this.line('有效性', memoryHealth(memory).label),
                         this.line('剧情日期/时间范围', memory.storyStartTime && memory.storyEndTime ? `${memory.storyStartTime} → ${memory.storyEndTime}` : memory.storyStartTime || memory.storyEndTime));
@@ -2557,7 +2560,7 @@ export class CacheMemoryUI {
     checkpointCard(item) {
         const fields = parseCheckpointSections(item.content);
         return this.foldCard({ key: item.id, group: 'checkpoints', type: 'checkpoint', id: item.id,
-            title: `${String(item.id).replace(/^checkpoint-/i, 'CP-').toUpperCase()}｜${item.startFloor}–${item.endFloor}层`, status: this.statusLabel(item), renderBody: body => {
+            title: `${String(item.id).replace(/^checkpoint-/i, 'CP-').toUpperCase()}｜${stageStartLabel(item)}–${item.endFloor}层`, status: this.statusLabel(item), renderBody: body => {
                 body.append(this.line('有效性', memoryHealth(item).label));
                 body.append(this.line('剧情日期/时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime),
                     this.line('当前剧情日期/时间｜地点', `${item.currentStoryTime || '未提供'}｜${item.currentLocation || '未提供'}`));

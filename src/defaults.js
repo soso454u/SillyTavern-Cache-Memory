@@ -1,11 +1,11 @@
-import { normalizeCharacterTables } from './character-tables.js?v=1.26.0';
-import { normalizeThemeMode } from './ui-theme.js?v=1.26.0';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.26.0';
+import { normalizeCharacterTables } from './character-tables.js?v=1.26.1';
+import { normalizeThemeMode } from './ui-theme.js?v=1.26.1';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.26.1';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.26.0';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.26.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.26.1';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.26.1';
 
-export const PLUGIN_VERSION = '1.26.0';
+export const PLUGIN_VERSION = '1.26.1';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1627,6 +1627,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     recentCheckpointCount: 2,
     strictCacheMode: true,
     historyHandoff: false,
+    lastUserOnly: false,
     cacheDebug: false,
     apiCacheAdapterEnabled: false,
     apiCacheDefaultPolicy: DEFAULT_API_CACHE_POLICY,
@@ -1710,6 +1711,7 @@ export function normalizeSettings(saved = {}) {
         independentApi: source.independentApi !== false,
         strictCacheMode: source.strictCacheMode !== false,
         historyHandoff: source.historyHandoff === true,
+        lastUserOnly: source.lastUserOnly === true,
         cacheDebug: source.cacheDebug === true,
         apiCacheAdapterEnabled: source.apiCacheAdapterEnabled === true,
         apiCacheDefaultPolicy: normalizeApiCachePolicy(source.apiCacheDefaultPolicy),

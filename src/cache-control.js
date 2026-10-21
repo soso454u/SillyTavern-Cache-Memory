@@ -1,6 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.26.0';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.26.0';
-import { fnv1a } from './utils.js?v=1.26.0';
+import { INJECTION_MODES } from './defaults.js?v=1.26.1';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.26.1';
+import { fnv1a } from './utils.js?v=1.26.1';
 
 export function effectiveInjectionMode(settings) {
     if (!settings.strictCacheMode) return settings.injectionMode;
@@ -32,7 +32,7 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
     try { previousMode ??= JSON.parse(previous?.signature ?? 'null')?.[2]; } catch { /* Older snapshots may lack a signature. */ }
     if (reason === 'chat changed' && previous && settings.strictCacheMode && settings.enabled && mode !== INJECTION_MODES.NONE
         && (!previousMode || previousMode === mode)) return { value: previous.value, changed: false };
-    const blocks = settings.enabled && mode !== INJECTION_MODES.NONE && (settings.strictCacheMode || settings.historyHandoff)
+    const blocks = settings.enabled && mode !== INJECTION_MODES.NONE
         ? currentInjectionBlocks(sourceStore, settings, mode) : [];
     const value = !settings.enabled || mode === INJECTION_MODES.NONE ? '' : settings.strictCacheMode
         ? renderInjectionBlocks(blocks, sourceStore) : buildInjection(sourceStore, settings);

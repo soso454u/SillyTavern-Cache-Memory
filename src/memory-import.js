@@ -1,6 +1,6 @@
-import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.26.0';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.26.0';
-import { projectLongFacts } from './continuity.js?v=1.26.0';
+import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.26.1';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.26.1';
+import { projectLongFacts } from './continuity.js?v=1.26.1';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
@@ -36,6 +36,7 @@ export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
                 || !Number.isInteger(row.startFloor) || !Number.isInteger(row.endFloor) || row.startFloor < 1 || row.endFloor < row.startFloor) throw new Error(`${section} 存在无效或重复记录`);
             ids.add(row.id);
             if (row.previousCheckpointId != null && typeof row.previousCheckpointId !== 'string') throw new Error(`${row.id} 前序身份格式错误`);
+            if (row.openingContentFingerprint != null && typeof row.openingContentFingerprint !== 'string') throw new Error(`${row.id} 开场来源格式错误`);
             if (row.factUpdates != null && (!Array.isArray(row.factUpdates) || row.factUpdates.some(update => !object(update) || !['add', 'update', 'replace', 'retire'].includes(update.action) || typeof update.id !== 'string'))) throw new Error(`${row.id} 长期事实格式错误`);
             if (row.summaryIds != null && (!Array.isArray(row.summaryIds) || row.summaryIds.some(id => typeof id !== 'string'))) throw new Error(`${row.id} 摘要关联格式错误`);
             if (row.checkpointVersions != null && (!object(row.checkpointVersions) || Object.values(row.checkpointVersions).some(value => typeof value !== 'string'))) throw new Error(`${row.id} Checkpoint 版本格式错误`);
