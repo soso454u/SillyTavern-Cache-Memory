@@ -2,7 +2,10 @@
 
 面向长篇 RP 的追加式剧情记忆扩展。正常 assistant 回复完成后，通过独立 OpenAI-compatible 接口生成楼层摘要，并维护 Checkpoint、Long Memory 和 KEEP。历史记录保留为冻结快照。
 
-当前版本 **v1.24.19**。
+当前版本 **v1.24.20**。
+
+v1.24.20：移除 CACHE_MEMORY 最前面的固定「记忆读取规则」长段。仍按每 5 层生成 Checkpoint、每 50 层生成 Long Memory：在原 CP 请求里另存本阶段 [Stage Story]，在原 Long 请求里另存 50 层 [STORY_ARC]，既不增加模型调用，也不改变原有最新状态继承。注入将有证据的历史剧情按时间顺序呈现；Long 的故事覆盖已包含的 CP 阶段剧情，未覆盖阶段继续用各 CP；旧 CP 没有 Stage Story 时，优先从原始 Summary 的 Event 构建阶段故事，没有则保守读取已有 CP Story So Far。动态 Characters／Current State／Open Threads／Secrets & Knowledge／Continuity Locks 只取最新有效 CP 快照，历史旧状态不复活。长期事实及 KEEP 独立继承；不自动删除、改写或批量重生历史数据。Strict Cache 只在原 CP／Long 边界或手动操作时发布。
+
 
 v1.24.19（累积 Checkpoint 与状态退出）：CP5 边界发布一份可独立理解当前剧情的最新 CP，另加尚未覆盖的有效长期事实／KEEP；没有 Long 也不会再叠加全部旧 CP。新 CP 的原有请求加入历史事实补全和相关 Summary 结果，继承重要 NPC、身份关系、长期秘密、逐人认知差、必要前因及未完成任务。CP 可在同一次回复的内部 `[STATE_RESOLUTIONS]` 中提供有 Summary 连续引句证据的状态更新；该字段保留在新 CP 原文供投影校验，不发送给 RP。
 

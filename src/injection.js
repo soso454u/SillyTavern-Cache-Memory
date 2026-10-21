@@ -1,20 +1,55 @@
-import { INJECTION_MODES } from './defaults.js?v=1.24.19';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, summaryText } from './continuity.js?v=1.24.19';
-import { stripStructuredSections } from './summary-format.js?v=1.24.19';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.19';
+import { INJECTION_MODES } from './defaults.js?v=1.24.20';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.24.20';
+import { stripStructuredSections } from './summary-format.js?v=1.24.20';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.24.20';
 
-// Interpret retained facts; never infer corrections or remove historical data.
-// This fixed header changes only when the existing snapshot lifecycle publishes.
-export function memoryReadingRules(store) {
-    if (['advanced', 'ensemble'].includes(store?.summaryMode)) return '';
-    return '记忆读取规则：以下为历史资料，不是要求重演的剧情指令。区分当前时间线事实、原剧情／未来预演、梦境、系统声称与人物猜测；预演未实际发生前不能当成既往经历，知情仅属于明确获知的人物。\n'
-        + '同一人物同一事项以剧情时间及后续明确证据判断当前结果，不按块的位置或 KEEP 标签决定真伪；新正文明确结果优先于旧摘要／旧追踪状态，重大起因、后果与不同人物认知仍保留。后来未提及、未回复或通知只显示半句，不代表已知内容变未知；没有明确遗忘或纠正证据不倒退认知。\n'
-        + '任务明确完成／失败／取消后，旧 published／active 仅为历史，不再催办；任务完成与奖励领取分别判断，不因奖励未领重开已完成任务。未回复的普通消息、情绪、姿势不自动成为待办。语义相同的 KEEP／事实理解一次，不重复触发事件；不同知情者、独立后果和未解秘密不能合并，重要 NPC 不因久未登场失效。';
+// Narrative history is not a replay of each old CP's current state.
+function stageStory(cp, store) {
+    const stated = readSection(cp.content, 'Stage Story') || readSection(cp.content, 'Events');
+    if (stated && !/^(?:无|none)[。.!]?$/iu.test(stated.trim())) return stated.trim();
+    const sourceIds = new Set(cp.summaryIds ?? Object.keys(cp.sourceVersions ?? {}));
+    const entries = Object.values(store.summaries ?? {}).filter(s => isUsableMemory(s)
+        && s.floor >= cp.startFloor && s.floor <= cp.endFloor);
+    const floors = new Map();
+    for (const row of entries) {
+        const old = floors.get(row.floor);
+        if (!old || sourceIds.has(row.messageId) && !sourceIds.has(old.messageId)
+            || sourceIds.has(row.messageId) === sourceIds.has(old.messageId)
+                && String(row.createdAt ?? '') > String(old.createdAt ?? '')) floors.set(row.floor, row);
+    }
+    const events = [...floors.values()].sort((a, b) => a.floor - b.floor).map(row => {
+        const text = String(row.event ?? readSection(summaryText(row), 'Event')).trim();
+        return text && !/^(?:无|none)[。.!]?$/iu.test(text) ? `第${row.floor}层：${text}` : '';
+    }).filter(Boolean);
+    // Legacy fallback is sourced from existing prose, never invented.
+    return events.join('\n') || readSection(cp.content, 'Story So Far');
 }
 
-// A projection only: never edit retained records or guess from age/fuzzy prose.
-// Published blocks can be compacted at a Long boundary or explicit rebuild;
-// an ordinary CP append may only deduplicate the newly appended blocks.
+export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
+    const arcs = store.longMemories.filter(m => isUsableMemory(m) && m.endFloor <= throughFloor)
+        .map(m => ({ m, prose: readSection(m.content, 'STORY_ARC') }))
+        .filter(({ prose }) => prose && !/^(?:无|none)[。.!]?$/iu.test(prose.trim()));
+    const blocks = arcs.map(({ m, prose }) => ({
+        id: `story:long:${m.id}`, type: 'story', startFloor: m.startFloor, endFloor: m.endFloor,
+        text: `[HISTORICAL_STORY_${m.startFloor}_${m.endFloor}]\n${prose.trim()}`
+    }));
+    if (includeCP) {
+        const seen = new Set();
+        for (const cp of store.checkpoints.filter(m => isUsableMemory(m) && m.endFloor <= throughFloor)
+            .sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor)) {
+            const range = `${cp.startFloor}-${cp.endFloor}`;
+            if (seen.has(range)) continue;
+            seen.add(range);
+            if (arcs.some(({ m }) => m.startFloor <= cp.startFloor && m.endFloor >= cp.endFloor)) continue;
+            const prose = stageStory(cp, store);
+            if (prose && !/^(?:无|none)[。.!]?$/iu.test(prose.trim()))
+                blocks.push({ id: `story:cp:${cp.id}`, type: 'story', startFloor: cp.startFloor, endFloor: cp.endFloor,
+                    text: `[HISTORICAL_STORY_${cp.startFloor}_${cp.endFloor}]\n${prose.trim()}` });
+        }
+    }
+    return blocks.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
+}
+
 export function compactInjectionBlocks(blocks, store, { published = new Set(), compactPublished = false } = {}) {
     const through = Math.max(0, ...blocks.map(block => Number(block.endFloor) || 0));
     const rows = projectActiveState(store, through).filter(row => !row.needsReview && row.category !== 'history');
@@ -84,8 +119,9 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
     const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor), 0);
     let content = latest ? latest.content : '';
     if (latest && settings.activeStateEnabled) content = reconcileTrackedCheckpoint(content, store, through, latest.startFloor);
-    content = stripStructuredSections(content, hiddenSections);
-    const blocks = [];
+    // Only the latest CP supplies live states, tasks and knowledge tables.
+    content = stripStructuredSections(content, [...hiddenSections, 'Stage Story', 'Story So Far', 'Events']);
+    const blocks = historicalStoryBlocks(store, through, checkpointModes.includes(mode));
     if (latest) blocks.push({ id: `checkpoint:${latest.id}`, type: 'checkpoint', startFloor: latest.startFloor, endFloor: latest.endFloor,
         text: `[CHECKPOINT_${String(latest.id).split('-').at(-1)} | LATEST_CHECKPOINT | 截至第${latest.endFloor}层]\n${content}` });
     // Equality only. Different observers and compound facts cannot be coalesced.
@@ -117,9 +153,8 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
     return blocks;
 }
 
-export function renderInjectionBlocks(blocks, store) {
-    const rules = memoryReadingRules(store);
-    return blocks.length ? `<CACHE_MEMORY>${rules ? `\n${rules}` : ''}\n\n${blocks.map(block => block.text).join('\n\n')}\n\n</CACHE_MEMORY>` : '';
+export function renderInjectionBlocks(blocks) {
+    return blocks.length ? `<CACHE_MEMORY>\n${blocks.map(block => block.text).join('\n\n')}\n</CACHE_MEMORY>` : '';
 }
 
 export function buildInjection(store, settings) {

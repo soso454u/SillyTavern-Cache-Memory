@@ -1,5 +1,5 @@
-import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.19';
-import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from './active-state.js?v=1.24.19';
+import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES, NORMAL_CONTINUITY_RULES } from './defaults.js?v=1.24.20';
+import { STATE_EXTRACTION_RULES, STATE_AGGREGATION_RULES, CHECKPOINT_LIFECYCLE_RULES } from './active-state.js?v=1.24.20';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
     .replace('category(skill/attribute/reward/item/identity/knowledge/effect)',
@@ -23,5 +23,11 @@ export function generationPrompt(settings, stage) {
     const continuity = settings.summaryMode !== 'ensemble' && !prompt.includes(NORMAL_CONTINUITY_RULES)
         ? `\n${NORMAL_CONTINUITY_RULES}` : '';
     const lifecycle = stage === 'checkpoint' ? CHECKPOINT_LIFECYCLE_RULES : '';
-    return withGlobalPrompt(settings, prompt + continuity + budget + rules + lifecycle);
+    // Keep custom prompts working; ensure CP/Long output still contains plot.
+    const story = stage === 'checkpoint' && !/\[Stage Story\]/i.test(prompt)
+        ? '\n[Stage Story] 同次生成中附带本次五层新增剧情的起因、经过和结果；最新状态另行继承，不能遗漏重要 NPC、伤势、秘密、认知差及未完成事项。'
+        : stage === 'longMemory' && !/\[STORY_ARC\]/i.test(prompt)
+            ? '\n[STORY_ARC] 同次生成中附带本次五十层按时序发展的历史剧情，含重要转折与人物行动；不要只罗列长期事实。'
+            : '';
+    return withGlobalPrompt(settings, prompt + continuity + budget + rules + lifecycle + story);
 }

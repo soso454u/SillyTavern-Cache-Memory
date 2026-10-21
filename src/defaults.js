@@ -4,7 +4,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.24.19';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.24.19';
 
-export const PLUGIN_VERSION = '1.24.19';
+export const PLUGIN_VERSION = '1.24.20';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1453,11 +1453,27 @@ Open 只保留明确未完成且需要后续行动的重要事项。未回复一
 KEEP 只写首次成立、已有 KEEP 尚未涵盖的关键长期信息。同一秘密或调查的复述不新建；新进展写 Event／State，只有新增独立长期后果才新增 KEEP。关系转折保留动作的意义与明确原因，省略无后续作用的动作逐拍复述。
 整理 CP／Long 时继承上述时间线类别、知情范围和重要 NPC 信息；后来的有效事实可更新同一当前状态，不能把“未提及／未回复／没打开预览”当作遗忘、失效或未完成的新证据。过时计划和已结算任务不重复列为活跃事项，必要起因与后果留在历史。`;
 
-export const DEFAULT_PROMPTS = Object.freeze(Object.fromEntries(
+export const V12419_DEFAULT_PROMPTS = Object.freeze(Object.fromEntries(
     Object.entries(V12416_DEFAULT_PROMPTS).map(([stage, prompt]) => [stage,
         insertPromptSection(prompt, stage === 'summary' ? '【记录规则】' : stage === 'checkpoint' ? '【继承规则】' : '【长期保存范围】', NORMAL_CONTINUITY_RULES)]),
 ));
 
+// Every CP5 describes its own new plot AND carries a latest-state snapshot.
+// Every Long50 keeps the historical arc AND the existing durable fact updates.
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V12419_DEFAULT_PROMPTS,
+    checkpoint: V12419_DEFAULT_PROMPTS.checkpoint.replace('[Story So Far]', `[Stage Story]
+本次五层真实发生的剧情经过：按时间写出事件起因、各人（包括重要 NPC）的行动和关键决定、冲突发展、转折、结果及后续影响。不要写成事项清单；不要只写人物标签。仅写本阶段新剧情，旧阶段不能重新发生，不能编造。
+剧情与下文最新状态分开：历史故事可以提及已结束事件，Current State、Open Threads、Characters、秘密和认知差必须准确继承仍有效的最新结果。人物久未出现不代表遗忘；已完成任务的后果保留，但旧即时状态不重复作为现在。
+ 
+[Story So Far]`),
+    longMemory: V12419_DEFAULT_PROMPTS.longMemory.replace('严格输出：\n\n[LONG_MEMORY]', `严格输出：
+
+[STORY_ARC]
+将本次五十层实际发生的剧情按时间整合成连贯的历史故事，保留各阶段重要事件的起因、选择、行动、冲突、关键人物（含 NPC）、转折及结果；不只罗列名词或任务结算。严格依据本次 CP 和楼层摘要，不得补写未发生之事。旧状态、旧地点和临时情绪不得当成当前状态；已结束事情可以作为历史因果。剧情复杂的情节适当详细，删重复而不删重要情节，不能用 1–2 句概括全部五十层。
+
+[LONG_MEMORY]`),
+});
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
     'f4616e5c', '9154624b', 'dd33ee6c', 'f6084ad7',
     'f0e493be', '5cff9164', '92f409f1',
@@ -1546,7 +1562,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = memoryStrategy === 'legacy' ? LEGACY_PROMPTS : DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];
