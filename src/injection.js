@@ -1,10 +1,10 @@
-import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.26.1';
-import { INJECTION_MODES } from './defaults.js?v=1.26.1';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.26.1';
-import { stripStructuredSections } from './summary-format.js?v=1.26.1';
-import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.26.1';
-import { historyPublicationLimit } from './history-handoff.js?v=1.26.1';
-import { stageStartLabel } from './opening-source.js?v=1.26.1';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.0';
+import { INJECTION_MODES } from './defaults.js?v=1.27.0';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.0';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.0';
+import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.0';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.0';
+import { stageStartLabel } from './opening-source.js?v=1.27.0';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
@@ -101,7 +101,7 @@ export function compactInjectionBlocks(blocks, store, { published = new Set(), c
         return text === block.text ? block : { ...block, text };
     });
 }
-const checkpointModes = [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT];
+const checkpointModes = [INJECTION_MODES.ROLLING, INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.LONG_CHECKPOINT, INJECTION_MODES.LONG_CHECKPOINT_RECENT];
 const hiddenSections = ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STATE_RESOLUTIONS'];
 const canonical = text => String(text).replace(/^\s*[-*•]\s*/u, '')
     .replace(/^(?:KEEP-\d+\s*\|\s*)+/iu, '')
@@ -125,13 +125,35 @@ export function relevantSnapshotRows(store, throughFloor) {
 
 export function currentInjectionBlocks(store, settings, mode = settings.injectionMode) {
     const useCP = checkpointModes.includes(mode);
-    const limit = settings.historyHandoff ? historyPublicationLimit(store, isUsableMemory) : Infinity;
+    const rolling = mode === INJECTION_MODES.ROLLING;
+    const completed = settings.injectionFloor ?? Math.max(0,
+        ...Object.values(store.summaries ?? {}).filter(isUsableMemory).map(row => row.floor),
+        ...store.checkpoints.filter(isUsableMemory).map(row => row.endFloor),
+        ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor));
+    const limit = rolling ? Math.max(0, completed - settings.recentRawFloors)
+        : settings.historyHandoff ? historyPublicationLimit(store, isUsableMemory) : Infinity;
     const eligible = item => isUsableMemory(item) && item.endFloor <= limit;
     const latest = useCP ? store.checkpoints.filter(eligible)
         .sort((a, b) => a.endFloor - b.endFloor || a.startFloor - b.startFloor).at(-1) : null;
-    const through = Math.max(latest?.endFloor || 0, ...store.longMemories.filter(eligible).map(row => row.endFloor), 0);
+    const through = rolling ? limit : Math.max(latest?.endFloor || 0, ...store.longMemories.filter(eligible).map(row => row.endFloor), 0);
     // One CP5/Long50 story per uncovered range; never all per-floor Summary.
     const blocks = historicalStoryBlocks(store, through, useCP);
+    if (rolling) {
+        const covered = floor => blocks.some(block => block.coversHistory && block.startFloor <= floor && block.endFloor >= floor);
+        const seen = new Set();
+        for (const row of Object.values(store.summaries ?? {}).filter(isUsableMemory).sort((a, b) => a.floor - b.floor)) {
+            if (!Number.isInteger(row.floor) || row.floor < 1 || row.floor > limit || covered(row.floor) || seen.has(row.floor)) continue;
+            const fields = { ...(parseStructuredSummary(row.raw) ?? {}), ...row };
+            const meaningful = text => text && !/^(?:无|none)[。.]?$/iu.test(String(text).trim());
+            if (!meaningful(fields.event)) continue;
+            seen.add(row.floor);
+            const story = [['标题', fields.title], ['人物', fields.characters], ['时间', fields.storyTime], ['地点', fields.location],
+                ['事件', fields.event], ['原话', fields.quote]].filter(([, text]) => meaningful(text)).map(([label, text]) => `${label}：${text}`).join('\n');
+            blocks.push({ id: `summary:${row.messageId ?? row.floor}`, type: 'summary-story', coversHistory: true,
+                startFloor: row.floor, endFloor: row.floor, text: `[SUMMARY_STORY_${row.floor}]\n${story}` });
+        }
+        blocks.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
+    }
     // Old CPs contain repeated role sheets in addition to plot. Keep their
     // latest current context once, alongside ALL uncovered stage stories.
     if (latest) {

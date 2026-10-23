@@ -86,12 +86,12 @@ test('overview counts saved floor memory regardless of stored message ID or obso
     for (let floor = 1; floor <= 225; floor++) put(store, floor);
     for (let i = 0; i < 19; i++) store.summaries[`old${i}`] = { messageId: `old${i}`, floor: i === 18 ? 226 : 204 + i, status: 'orphaned', event: '旧版本' };
     const before = structuredClone(store);
-    const stats = memoryOverviewStats(store, entries, normalizeSettings());
+    const stats = memoryOverviewStats(store, entries, normalizeSettings({ injectionMode: 'checkpoint_boundary' }));
     assert.equal(stats.storedSummaryRecords, 244); assert.equal(stats.summaries.actual, 226); assert.equal(stats.summaries.expected, 226);
     assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => [row.floor, row.reason]), []);
     assert.equal(stats.summaryDetails.filter(row => !row.current && row.reason === 'source-unloaded').length, 18);
     assert.deepEqual(store, before);
-    put(store, 226); assert.equal(memoryOverviewStats(store, entries, normalizeSettings()).summaries.actual, 226);
+    put(store, 226); assert.equal(memoryOverviewStats(store, entries, normalizeSettings({ injectionMode: 'checkpoint_boundary' })).summaries.actual, 226);
 });
 
 test('only genuinely empty or failed summaries affect eligibility; body and source flags do not', () => {
@@ -106,7 +106,7 @@ test('only genuinely empty or failed summaries affect eligibility; body and sour
     data.summaries[entries[5].messageId].sourceValidity = 'unverified'; // Diagnostic flags alone do not invalidate matching content.
     const metadata = { cache_memory: data };
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {} });
-    const stats = memoryOverviewStats(store.current(), entries, normalizeSettings());
+    const stats = memoryOverviewStats(store.current(), entries, normalizeSettings({ injectionMode: 'checkpoint_boundary' }));
     assert.equal(stats.summaries.actual, 5); assert.equal(store.currentSummaries(chat).length, stats.summaries.actual);
     assert.deepEqual(stats.summaryDetails.filter(row => row.current).map(row => row.reason), ['empty']);
     assert.equal(summaryMatchesEntry(data.summaries[entries[2].messageId], entries[2]), false);
@@ -118,14 +118,14 @@ test('saved legacy summaries need no fingerprints to generate a user-requested C
     const entry = getAssistantMessages(chat)[0];
     store.addSummary({ messageId: entry.messageId, floor: 1, event: '旧摘要', status: 'frozen' });
     let calls = 0;
-    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings(), apiClient: { complete: async () => { calls++; return { content: '[CHECKPOINT]\n[Current State]\n完整阶段剧情' }; } } });
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings({ injectionMode: 'checkpoint_boundary' }), apiClient: { complete: async () => { calls++; return { content: '[CHECKPOINT]\n[Current State]\n完整阶段剧情' }; } } });
     await summarizer.summarizeLatest(); assert.equal(calls, 0);
     assert.equal((await summarizer.generateCheckpoint(1, 1)).status, 'frozen'); assert.equal(calls, 1);
     assert.equal(store.getSummary(entry.messageId).event, '旧摘要');
 });
 
 test('strict snapshots preserve published bytes, deduplicate only new current lines, and retain changed values', () => {
-    const store = createEmptyStore('a'), settings = normalizeSettings();
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     const cp = (id, start, text) => ({ id, startFloor: start, endFloor: start + 4, memoryKind: 'state', content: text, status: 'frozen' });
     const content = '[Characters]\n角色甲：\n- 身份：医生\n[Current State]\n- 角色甲 · 观察：Lv.1\n[Story So Far]\n因曾经的误会而作出承诺';
     store.checkpoints.push(cp('checkpoint-001', 1, content));
@@ -168,7 +168,7 @@ test('changing KEEP during a checkpoint request rejects the stale lifecycle and 
     store.addSummary({ messageId: entry.messageId, floor: 1, event: '合成摘要', status: 'frozen', sourceContentFingerprint: entry.contentFingerprint });
     store.current().keepRegistry['KEEP-0001'] = { text: '约定', status: 'active', sourceFloor: 1 };
     let resolve;
-    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings(), apiClient: { complete: () => new Promise(done => { resolve = done; }) } });
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings({ injectionMode: 'checkpoint_boundary' }), apiClient: { complete: () => new Promise(done => { resolve = done; }) } });
     const pending = summarizer.generateCheckpoint(1, 1);
     const rejected = assert.rejects(pending, error => error.code === 'SOURCE_CHANGED');
     store.current().keepRegistry['KEEP-0001'].status = 'resolved';

@@ -12,19 +12,19 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.26.1';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.26.1';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.26.1';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.26.1';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.26.1';
-import { getAssistantMessages } from './src/utils.js?v=1.26.1';
-import { isUsableMemory } from './src/continuity.js?v=1.26.1';
-import { MemoryStore } from './src/memory-store.js?v=1.26.1';
-import { MemorySummarizer } from './src/summarizer.js?v=1.26.1';
-import { CacheMemoryUI } from './src/ui.js?v=1.26.1';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.26.1';
-import { MemoryServerClient } from './src/memory-server.js?v=1.26.1';
-import { filterCoveredHistory } from './src/history-handoff.js?v=1.26.1';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.0';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.0';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.0';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.0';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.0';
+import { getAssistantMessages } from './src/utils.js?v=1.27.0';
+import { isUsableMemory } from './src/continuity.js?v=1.27.0';
+import { MemoryStore } from './src/memory-store.js?v=1.27.0';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.0';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.0';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.0';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.0';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.0';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -202,11 +202,11 @@ const summarizer = new MemorySummarizer({
     },
 });
 
-function updateInjection(reason = 'manual edit') {
+function updateInjection(reason = 'manual edit', injectionFloor = promptHistoryFloor(chat, chat, store.current().summaries)) {
     if (!settings || !shouldRefreshInjection(settings, reason)) return;
     const current = store.current();
     const sourceStore = store.effectiveStore(chat);
-    const result = refreshSnapshot(current, settings, reason, sourceStore);
+    const result = refreshSnapshot(current, { ...settings, injectionFloor }, reason, sourceStore);
     // Publish this format migration once through the existing confirmed save
     // queue; ordinary reloads still never upload an unchanged window snapshot.
     const migration = reason === 'chat changed' && result.migrated;
@@ -261,13 +261,18 @@ function cacheDebugSnapshot(messages) {
 // ST supplies a regex-processed temporary coreChat via generate_interceptor.
 // Register only while active; never change the stored chat or regex settings.
 function historyInterceptor(coreChat, _contextSize, _abort, type) {
-    if (!settings?.enabled || (!settings.historyHandoff && !settings.lastUserOnly) || memoryChatId() !== activeChatId) return;
+    if (!settings?.enabled || (settings.injectionMode !== 'rolling' && !settings.historyHandoff && !settings.lastUserOnly) || memoryChatId() !== activeChatId) return;
+    // Publish before filtering as well: the newest summary may still be pending,
+    // and a continued/edited reply may have invalidated an earlier projection.
+    if (settings.injectionMode === 'rolling' && [undefined, 'normal', 'swipe', 'regenerate', 'continue'].includes(type)) updateInjection('before generation', promptHistoryFloor(coreChat, chat, store.current().summaries));
     const current = store.current();
     if (current.chatId !== activeChatId) return;
     const result = filterCoveredHistory(coreChat, chat, current.injectionSnapshot, publishedMemoryValue, {
         type, summaries: current.summaries, historyHandoff: settings.historyHandoff, lastUserOnly: settings.lastUserOnly,
+        injectionMode: settings.injectionMode, recentRawFloors: settings.recentRawFloors,
     });
     if (result.removed) coreChat.splice(0, coreChat.length, ...result.messages);
+    if (result.retainedOlderFloors?.length) ui?.setStatus('warning', `最近${settings.recentRawFloors}层模式：第${result.retainedOlderFloors.slice(0, 12).join('、')}层等共${result.retainedOlderFloors.length}层尚无可核实的已注入剧情，暂时保留原文；可补齐缺失摘要。`);
     if (settings.cacheDebug) console.info(LOG_PREFIX, 'HISTORY HANDOFF', { removedMessages: result.removed, reason: result.reason });
 }
 

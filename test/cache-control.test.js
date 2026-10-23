@@ -21,15 +21,17 @@ function checkpoint(floor, content = `阶段${floor}`) {
     return { id: `checkpoint-${String(floor / 5).padStart(3, '0')}`, startFloor: floor - 4, endFloor: floor, content, status: 'frozen', frozen: true };
 }
 
-test('fresh defaults use strict checkpoint-boundary injection while saved choices remain unchanged', () => {
+test('fresh defaults and legacy settings migrate to rolling, then saved choices remain unchanged', () => {
     const settings = normalizeSettings();
     assert.equal(settings.strictCacheMode, true);
-    assert.equal(settings.injectionMode, INJECTION_MODES.CHECKPOINT_BOUNDARY);
-    assert.equal(normalizeLoadedSettings(undefined).injectionMode, INJECTION_MODES.CHECKPOINT_BOUNDARY);
-    assert.equal(normalizeLoadedSettings({}).injectionMode, INJECTION_MODES.CHECKPOINT_BOUNDARY);
-    assert.equal(normalizeLoadedSettings({ strictCacheMode: true }).injectionMode, INJECTION_MODES.NONE);
-    assert.equal(normalizeLoadedSettings({ injectionMode: INJECTION_MODES.NONE }).injectionMode, INJECTION_MODES.NONE);
-    assert.equal(normalizeLoadedSettings({ injectionMode: INJECTION_MODES.LONG_BOUNDARY }).injectionMode, INJECTION_MODES.LONG_BOUNDARY);
+    assert.equal(settings.injectionMode, INJECTION_MODES.ROLLING);
+    assert.equal(settings.recentRawFloors, 3);
+    for (const saved of [undefined, {}, { strictCacheMode: true }, { injectionMode: INJECTION_MODES.NONE }, { injectionMode: INJECTION_MODES.LONG_BOUNDARY }]) {
+        assert.equal(normalizeLoadedSettings(saved).injectionMode, INJECTION_MODES.ROLLING);
+    }
+    for (const injectionMode of Object.values(INJECTION_MODES)) {
+        assert.equal(normalizeLoadedSettings({ injectionPolicyVersion: 2, injectionMode }).injectionMode, injectionMode);
+    }
     assert.equal(settings.checkpointInterval, 5);
     assert.equal(settings.longMemoryInterval, 50);
     assert.equal(settings.generationTransport, 'auto');

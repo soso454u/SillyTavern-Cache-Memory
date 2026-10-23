@@ -1,4 +1,4 @@
-import { hasLastingResult } from './active-state.js?v=1.26.1';
+import { hasLastingResult } from './active-state.js?v=1.27.0';
 // Normal-mode generation only. Never replay these selectors over saved memory
 // or use them in injection: omitted deltas remain in the new Summary narrative.
 const clean = value => String(value ?? '').trim();

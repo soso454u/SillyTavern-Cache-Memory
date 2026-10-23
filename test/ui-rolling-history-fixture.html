@@ -1,0 +1,47 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>最近三层正文 · 合成验证</title>
+<style>body{margin:0;background:#25252b;color:#ddd;font:16px/1.5 sans-serif}#results{white-space:pre-wrap}</style>
+<div id="extensions_settings2"></div><div id="chat"></div><pre id="results">正在验证…</pre>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { refreshSnapshot } from '../src/cache-control.js';
+import { filterCoveredHistory } from '../src/history-handoff.js';
+import { getAssistantMessages } from '../src/utils.js';
+import { getOpeningSource } from '../src/opening-source.js';
+let settings = normalizeSettings();
+const chat = [{name:'守卫',mes:'第0条开场白'}], metadata = {}, results = window.rollingResults = [];
+for(let n=1;n<=12;n++) chat.push({name:'旅人',is_user:true,send_date:`u${n}`,mes:`请求${n}`},{name:'守卫',send_date:`a${n}`,gen_started:`g${n}`,mes:`答复${n}`});
+chat.push({name:'旅人',is_user:true,send_date:'pending',mes:'本轮请求'});
+const store = new MemoryStore({getChatId:()=> 'synthetic-rolling',getMetadata:()=>metadata,saveMetadata:()=>{}});
+for(const entry of getAssistantMessages(chat)) store.addSummary({messageId:entry.messageId,floor:entry.floor,event:`合成事件${entry.floor}`,status:'frozen'});
+for(const endFloor of [5,10]) store.addCheckpoint({id:`cp-${endFloor}`,startFloor:endFloor-4,endFloor,content:`[Stage Story]\n合成历史${endFloor}`,status:'frozen',...(endFloor===5?{openingContentFingerprint:getOpeningSource(chat).contentFingerprint}:{})});
+const updateInjection = reason => refreshSnapshot(store.current(),{...settings,injectionFloor:12},reason);
+const ui = window.rollingUI = new CacheMemoryUI({store,getSettings:()=>settings,updateSettings:patch=>settings=normalizeSettings({...settings,...patch}),
+    persistSettings:async()=>{},getChat:()=>chat,updateInjection,apiClient:{hasApiKey:()=>false,complete:()=>{throw Error('禁止调用模型');}},summarizer:{isSummarizing:()=>false}});
+ui.mountSettings();
+const check=(name,passed)=>{results.push({name,passed:Boolean(passed)});if(!passed)throw Error(name);};
+const send=()=>filterCoveredHistory(structuredClone(chat),chat,store.current().injectionSnapshot,store.current().injectionSnapshot.value,{summaries:store.current().summaries,lastUserOnly:settings.lastUserOnly});
+try {
+ document.querySelector('[data-open-settings]').click();document.querySelector('[data-settings-tab="injection"]').click();
+ const panel=document.querySelector('[data-settings-panel="injection"]'), mode=panel.querySelector('[data-setting="injectionMode"]'), count=panel.querySelector('[data-setting="recentRawFloors"]');
+ check('默认最近正文模式且层数为3',mode.value==='rolling'&&count.value==='3'&&!count.disabled);
+ check('阶段冻结开关不干扰每层更新',document.querySelector('[data-setting="strictCacheMode"]').disabled&&panel.querySelector('[data-setting="historyHandoff"]').disabled);
+ check('Legacy boundary controls are hidden in rolling mode',[...panel.querySelectorAll('[data-boundary-injection]')].every(el=>getComputedStyle(el).display==='none'));
+ const original=JSON.stringify(chat), records=JSON.stringify(store.current().summaries);updateInjection('settings changed');
+ check('12层发送1至5阶段和6至9单层摘要',store.current().injectionSnapshot.blocks.filter(b=>b.type==='checkpoint').length===1&&store.current().injectionSnapshot.blocks.filter(b=>b.type==='summary-story').length===4);
+ check('正文恰好10至12层且本轮user保留',send().messages.filter(row=>!row.is_user).map(row=>row.mes).join(',')==='答复10,答复11,答复12'&&send().messages.at(-1).mes==='本轮请求');
+ count.value='5';count.dispatchEvent(new Event('change',{bubbles:true}));
+ check('调整层数立即生效',settings.recentRawFloors===5&&send().messages.filter(row=>!row.is_user).length===5);
+ mode.value='checkpoint_boundary';mode.dispatchEvent(new Event('change',{bubbles:true}));
+ check('可切换旧阶段模式',settings.injectionMode==='checkpoint_boundary'&&count.disabled&&!panel.querySelector('[data-setting="historyHandoff"]').disabled);
+ mode.value='rolling';mode.dispatchEvent(new Event('change',{bubbles:true}));count.value='3';count.dispatchEvent(new Event('change',{bubbles:true}));
+ panel.querySelector('[data-setting="lastUserOnly"]').click();
+ check('独立user开关仍只留本轮输入',send().messages.filter(row=>row.is_user).length===1&&send().messages.filter(row=>!row.is_user).length===3);
+ check('聊天正文和记忆原始记录不变',JSON.stringify(chat)===original&&JSON.stringify(store.current().summaries)===records);
+ check('说明包含缺失保护和历史记忆策略',panel.textContent.includes('缺少可核实记忆')&&panel.textContent.includes('每层更新记忆'));
+ check('没有横向溢出',document.documentElement.scrollWidth<=innerWidth);
+ document.querySelector('#results').textContent=JSON.stringify(results,null,2);
+}catch(error){document.querySelector('#results').textContent=`失败：${error.stack}`;window.rollingFailure=error.message;}
+</script></html>

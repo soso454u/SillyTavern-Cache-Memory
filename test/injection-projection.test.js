@@ -17,21 +17,21 @@ test('normal memory reading rules distinguish timelines, knowledge and settled t
     store.checkpoints.push(cp(1, '[Story So Far]\n- 旧记录：医生在未来预演里离开，当前尚未发生\n[Secrets & Knowledge]\n- 医生已读信，守卫未读\n[Open Threads]\n- 已结束 医生 · 送信：已完成，奖励未领取 (completed，历史结果)'));
     store.keepRegistry['KEEP-0001'] = { text: '医生知道未来预演，守卫不知道', sourceFloor: 1, status: 'active' };
     const before = structuredClone(store);
-    const strict = refreshSnapshot(store, normalizeSettings(), 'manual reinject').value;
-    const loose = buildInjection(store, normalizeSettings({ strictCacheMode: false }));
+    const strict = refreshSnapshot(store, normalizeSettings({ injectionMode: 'checkpoint_boundary' }), 'manual reinject').value;
+    const loose = buildInjection(store, normalizeSettings({ injectionMode: 'checkpoint_boundary', strictCacheMode: false }));
     for (const value of [strict, loose]) {
         assert.match(value, /医生已读信，守卫未读/);
     }
     for (const key of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry']) assert.deepEqual(store[key], before[key]);
     assert.equal(buildInjection(store, normalizeSettings({ strictCacheMode: false, injectionMode: INJECTION_MODES.NONE })), '');
-    assert.equal(refreshSnapshot(createEmptyStore('empty'), normalizeSettings(), 'manual reinject').value, '');
+    assert.equal(refreshSnapshot(createEmptyStore('empty'), normalizeSettings({ injectionMode: 'checkpoint_boundary' }), 'manual reinject').value, '');
     store.summaryMode = 'advanced';
     assert.equal(typeof memoryReadingRules(store), 'string');
-    assert.doesNotMatch(refreshSnapshot(store, normalizeSettings(), 'manual reinject').value, /记忆读取规则/);
+    assert.doesNotMatch(refreshSnapshot(store, normalizeSettings({ injectionMode: 'checkpoint_boundary' }), 'manual reinject').value, /记忆读取规则/);
 });
 
 test('reading-rule upgrade waits for an existing publish boundary and preserves frozen blocks, reload and append bytes', () => {
-    const store = createEmptyStore('old-snapshot'), settings = normalizeSettings();
+    const store = createEmptyStore('old-snapshot'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     store.checkpoints.push(cp(1, '[Story So Far]\n- 旧的历史原因'));
     refreshSnapshot(store, settings, 'new checkpoint');
     // Simulate a persisted v1.24.16 snapshot with the same lifecycle signature.
@@ -56,7 +56,7 @@ test('reading-rule upgrade waits for an existing publish boundary and preserves 
 });
 
 test('Long boundary compacts only proven old states and exact facts, retaining major history and independent knowledge', () => {
-    const store = createEmptyStore('a'), settings = normalizeSettings();
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     store.summaries.m1 = summary(1, [skill, task]);
     const history = '旧城因救援失败被永久摧毁，主角失去右臂';
     const knowledge = '守卫不知道主角曾经救过叛军首领';
@@ -88,7 +88,7 @@ test('Long boundary compacts only proven old states and exact facts, retaining m
 });
 
 test('ambiguous historical facts and multiline or nested entries survive injection projection', () => {
-    const store = createEmptyStore('a'), settings = normalizeSettings();
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     store.longMemories.push(long(1, [{ action: 'add', id: 'cause', text: '主角曾以失去右臂为代价拯救旧城居民' }]));
     store.longMemories.push(long(2, [{ action: 'replace', id: 'result', previousId: 'cause', text: '主角后来获得机械义肢，但仍承担旧城救援责任' }]));
     store.checkpoints.push(cp(21, '[Characters]\n医师：\n- 身份：秘密组织的长期联络者\n守卫：\n- 身份：秘密组织的长期联络者\n[Story So Far]\n- 没有追踪状态的旧任务过程仍有独立历史因果\n  影响旧城的政治格局'));
@@ -116,7 +116,7 @@ test('identical Long/CP blocks and short exact facts are sent once while all ori
     store.checkpoints = [stage, { ...structuredClone(stage), id: 'checkpoint-copy' }];
     store.keepRegistry['KEEP-0001'] = { text: fact, status: 'active', sourceFloor: 1 };
     const before = structuredClone(store);
-    const output = refreshSnapshot(store, normalizeSettings(), 'manual reinject').value;
+    const output = refreshSnapshot(store, normalizeSettings({ injectionMode: 'checkpoint_boundary' }), 'manual reinject').value;
     assert.equal(output.split(fact).length - 1, 1);
     assert.equal(store.injectionSnapshot.blocks.filter(b => b.type === 'long').length, 0); // The latest CP already covers this fact.
     assert.equal(store.injectionSnapshot.blocks.filter(b => b.type === 'checkpoint').length, 1);
@@ -137,7 +137,7 @@ test('non-strict incremental injection also omits identical legacy Long and CP c
 });
 
 test('latest evidenced equipment, levels, points and task results replace current fields, preserving causes and compound secrets', () => {
-    const store = createEmptyStore('a'), settings = normalizeSettings();
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     const equipment = { ...skill, key: '装备', category: 'item', value: '木剑' };
     const points = { ...skill, key: '系统点数', category: 'attribute', value: '10' };
     store.summaries.m1 = summary(1, [skill, equipment, points, task]);

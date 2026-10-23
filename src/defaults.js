@@ -1,11 +1,11 @@
-import { normalizeCharacterTables } from './character-tables.js?v=1.26.1';
-import { normalizeThemeMode } from './ui-theme.js?v=1.26.1';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.26.1';
+import { normalizeCharacterTables } from './character-tables.js?v=1.27.0';
+import { normalizeThemeMode } from './ui-theme.js?v=1.27.0';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.0';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.26.1';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.26.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.0';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.0';
 
-export const PLUGIN_VERSION = '1.26.1';
+export const PLUGIN_VERSION = '1.27.0';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -64,6 +64,7 @@ export function withGlobalPrompt(settings, stagePrompt) {
 
 export const INJECTION_MODES = Object.freeze({
     NONE: 'none',
+    ROLLING: 'rolling',
     CHECKPOINT_BOUNDARY: 'checkpoint_boundary',
     LONG_BOUNDARY: 'long_boundary',
     LONG: 'long',
@@ -1628,13 +1629,15 @@ export const DEFAULT_SETTINGS = Object.freeze({
     strictCacheMode: true,
     historyHandoff: false,
     lastUserOnly: false,
+    recentRawFloors: 3,
+    injectionPolicyVersion: 2,
     cacheDebug: false,
     apiCacheAdapterEnabled: false,
     apiCacheDefaultPolicy: DEFAULT_API_CACHE_POLICY,
     apiCacheConnections: {},
     apiCacheLastConnection: '',
     apiCacheLastConnectionLabel: '',
-    injectionMode: INJECTION_MODES.CHECKPOINT_BOUNDARY,
+    injectionMode: INJECTION_MODES.ROLLING,
     provider: API_PROVIDERS.OPENAI_COMPATIBLE,
     apiBaseUrl: '',
     model: '',
@@ -1712,6 +1715,8 @@ export function normalizeSettings(saved = {}) {
         strictCacheMode: source.strictCacheMode !== false,
         historyHandoff: source.historyHandoff === true,
         lastUserOnly: source.lastUserOnly === true,
+        recentRawFloors: Math.round(number(source.recentRawFloors, 3, 1, 100)),
+        injectionPolicyVersion: 2,
         cacheDebug: source.cacheDebug === true,
         apiCacheAdapterEnabled: source.apiCacheAdapterEnabled === true,
         apiCacheDefaultPolicy: normalizeApiCachePolicy(source.apiCacheDefaultPolicy),
@@ -1752,6 +1757,11 @@ export function normalizeSettings(saved = {}) {
 
 export function normalizeLoadedSettings(saved) {
     const hasSavedConfiguration = saved && typeof saved === 'object' && Object.keys(saved).length > 0;
+    // One-time migration requested for existing installations. A subsequent
+    // explicit selection of a boundary mode (or none) remains the user's choice.
+    if (hasSavedConfiguration && saved.injectionPolicyVersion !== 2) {
+        return normalizeSettings({ ...saved, injectionMode: INJECTION_MODES.ROLLING, recentRawFloors: 3 });
+    }
     if (hasSavedConfiguration && !Object.hasOwn(saved, 'injectionMode')) {
         return normalizeSettings({ ...saved, injectionMode: INJECTION_MODES.NONE });
     }

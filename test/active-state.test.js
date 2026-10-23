@@ -109,7 +109,7 @@ test('source edits preserve frozen Summary/CP/Long; explicit deletion retains or
 });
 
 test('large retained history publishes only the latest complete CP and changes only at boundaries', () => {
-    const settings = normalizeSettings(), store = createEmptyStore('a');
+    const settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' }), store = createEmptyStore('a');
     store.checkpoints = Array.from({ length: 30 }, (_, i) => ({ id: `checkpoint-${i}`, startFloor: i * 5 + 1, endFloor: i * 5 + 5, content: `剧情${i}\n${'汉'.repeat(2000)}`, status: 'frozen' }));
     refreshSnapshot(store, settings, 'new checkpoint');
     const frozen = store.injectionSnapshot.value;

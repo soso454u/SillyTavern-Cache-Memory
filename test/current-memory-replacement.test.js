@@ -31,7 +31,7 @@ function fixture(count = 5, authority = false) {
     persistence.activate('a', store.current());
     store.saveMetadata = (value, reason) => persistence.enqueue(value, reason);
     const requests = [];
-    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings(),
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings({ injectionMode: 'checkpoint_boundary' }),
         getPersistenceState: () => persistence.getState(), flushMemory: () => persistence.flush(),
         commitMemory: (mutate, active) => persistence.commitReplacement(store, mutate, active),
         apiClient: { complete: async request => { requests.push(request); return { content: request.systemPrompt.includes('[CHECKPOINT]')
@@ -308,7 +308,7 @@ test('a full browser journal stops replacement before writing and keeps the orig
 
 test('body edits and obsolete flags do not change memory eligibility, raw records or make automatic requests', async () => {
     const { refreshSnapshot } = await import('../src/cache-control.js');
-    const f = fixture(10), entries = getAssistantMessages(f.chat), settings = normalizeSettings();
+    const f = fixture(10), entries = getAssistantMessages(f.chat), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     f.store.current().checkpoints = [{ id: 'cp', startFloor: 6, endFloor: 10, content: '重大历史：城门永久毁坏；甲知道秘密但乙未知', status: 'frozen', sourceReplaced: true }];
     f.store.current().longMemories = [{ id: 'long', startFloor: 1, endFloor: 5, content: '已存长期历史', status: 'frozen', sourceReplaced: true }];
     f.store.current().keepRegistry['KEEP-0001'] = { text: '独立秘密及承诺', sourceFloor: 1, sourceInvalidated: true, status: 'active' };
@@ -343,7 +343,7 @@ test('238 floors retain all records and replace the inflated snapshot with Long 
     const { refreshSnapshot } = await import('../src/cache-control.js');
     const { buildInjection } = await import('../src/injection.js');
     const { aggregateVersion } = await import('../src/memory-store.js');
-    const f = fixture(238), entries = getAssistantMessages(f.chat), settings = normalizeSettings();
+    const f = fixture(238), entries = getAssistantMessages(f.chat), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     for (let start = 1; start <= 235; start += 5) {
         const sources = entries.slice(start - 1, start + 4);
         f.store.current().checkpoints.push({ id: `cp-${start}`, startFloor: start, endFloor: start + 4,
@@ -414,7 +414,7 @@ test('confirmed matching alternate becomes the sole current Summary; unrelated p
 
 test('same-ID edit keeps existing memory and frozen injection through a failed replacement save', async () => {
     const { refreshSnapshot } = await import('../src/cache-control.js');
-    const f = fixture(), entries = getAssistantMessages(f.chat), entry = entries[0], settings = normalizeSettings();
+    const f = fixture(), entries = getAssistantMessages(f.chat), entry = entries[0], settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     f.store.current().checkpoints = [{ id: 'cp', startFloor: 1, endFloor: 5, content: '仅属于旧正文的剧情', status: 'frozen',
         summaryIds: entries.map(e => e.messageId), sourceVersions: Object.fromEntries(entries.map(e => [e.messageId, summaryVersion(f.store.getSummary(e.messageId))])) }];
     refreshSnapshot(f.store.current(), settings, 'manual reinject', f.store.effectiveStore(f.chat));
@@ -435,7 +435,7 @@ test('same-ID edit keeps existing memory and frozen injection through a failed r
 
 test('a KEEP-only frozen snapshot survives body edits and incomplete loading', async () => {
     const { refreshSnapshot } = await import('../src/cache-control.js');
-    const f = fixture(), entry = getAssistantMessages(f.chat)[0], settings = normalizeSettings();
+    const f = fixture(), entry = getAssistantMessages(f.chat)[0], settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     f.store.current().keepRegistry['KEEP-0001'] = { text: '只属于当前正文的秘密', sourceId: entry.messageId, sourceFloor: 1, status: 'active' };
     const value = refreshSnapshot(f.store.current(), settings, 'manual reinject', f.store.effectiveStore(f.chat)).value;
     assert.match(value, /只属于当前正文的秘密/);
@@ -472,7 +472,7 @@ test('real-shaped flags and old Swipe references retain all raw aggregates and u
     const { aggregateVersion } = await import('../src/memory-store.js');
     const { refreshSnapshot } = await import('../src/cache-control.js');
     const { memoryOverviewStats } = await import('../src/ui.js');
-    const f = fixture(238), entries = getAssistantMessages(f.chat), settings = normalizeSettings();
+    const f = fixture(238), entries = getAssistantMessages(f.chat), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     const flagged = new Set([3, 30, 31, 37, 39, 41, 42, 43, 44, 45]);
     for (let n = 1; n <= 47; n++) {
         const sources = entries.slice((n - 1) * 5, n * 5);
@@ -555,7 +555,7 @@ test('unloaded sources cannot clear ambiguous legacy flags just because Summary 
 
 test('diagnostic CP count ignores inner structured headers, including text-only old snapshots', async () => {
     const { memoryOverviewStats } = await import('../src/ui.js');
-    const raw = createEmptyStore('a'), settings = normalizeSettings();
+    const raw = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     raw.injectionSnapshot = { value: '[CHECKPOINT_041 | 第201-205层]\n[CHECKPOINT]\n内容\n[CHECKPOINT_043 | 第211-215层]\n[CHECKPOINT]\n内容', blocks: [] };
     assert.equal(memoryOverviewStats(raw, [], settings).injectedCheckpoints, 2);
     raw.injectionSnapshot.value = '[LATEST_CHECKPOINT]\n[CHECKPOINT]\n内容';
@@ -564,7 +564,7 @@ test('diagnostic CP count ignores inner structured headers, including text-only 
 
 test('upgrade rebuilds the old snapshot once without needing chat bodies', async () => {
     const { refreshSnapshot } = await import('../src/cache-control.js');
-    const f = fixture(10), entries = getAssistantMessages(f.chat), settings = normalizeSettings();
+    const f = fixture(10), entries = getAssistantMessages(f.chat), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     f.store.current().checkpoints = [{ id: 'cp', startFloor: 1, endFloor: 5, content: '有效历史', status: 'frozen',
         sourceReplaced: true, summaryIds: entries.slice(0, 5).map(e => e.messageId),
         sourceVersions: Object.fromEntries(entries.slice(0, 5).map(e => [e.messageId, 's2:metadata-drift'])) }];

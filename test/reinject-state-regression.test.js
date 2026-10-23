@@ -92,7 +92,7 @@ test('manual reinjection uses saved Summary deltas regardless of source fingerpr
     data.longMemories.push(longResult());
     const content = '[Story So Far]\n历史警戒值46造成误会\n[Current State]\n- 角色乙 · 警戒值：46\n- 角色乙 · 警戒值/红字数值：100%\n[Open Threads]\n- 角色甲 · 归还书本：尚未领取';
     data.checkpoints.push({ id: 'checkpoint-041', startFloor: 201, endFloor: 205, memoryKind: 'state', status: 'frozen', content });
-    const settings = normalizeSettings();
+    const settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     data.injectionSnapshot = { signature: JSON.stringify([settings.enabled, true, settings.injectionMode]), value: 'original published bytes', blocks: [] };
     assert.equal(refreshSnapshot(data, settings, 'new summary').value, 'original published bytes');
     const sourceView = { ...data, summaries: Object.fromEntries(store.currentSummaries(chat).map(row => [row.messageId, row])) };

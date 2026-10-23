@@ -7,7 +7,7 @@ import { currentInjectionBlocks } from '../src/injection.js';
 
 for (const section of ['Stage Story', 'Story So Far', 'Events']) {
     test(`135 floors with ${section} keep 27 CP stories; two Long stories replace only their covered 20 CPs`, () => {
-        const store = createEmptyStore('a'), settings = normalizeSettings();
+        const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
         for (let n = 1; n <= 27; n++) store.checkpoints.push({ id: `checkpoint-${n}`, memoryKind: 'state',
             startFloor: n * 5 - 4, endFloor: n * 5, status: 'frozen', content: `[CHECKPOINT]\n[${section}]\n第${n}阶段：守卫交还钥匙并承诺“天亮前回来”。\n[Characters]\n医师是守卫的姐姐\n[Current State]\n当时地点${n}\n[Secrets & Knowledge]\n医师知道密道，守卫不知道。` });
         const originals = structuredClone(store.checkpoints);
@@ -41,7 +41,7 @@ test('an old state-only CP retains its sole historical record instead of silentl
     store.checkpoints.push({ id: 'cp-1', startFloor: 1, endFloor: 5, status: 'frozen', memoryKind: 'state',
         content: '[CHECKPOINT]\n[Current State]\n旅人交出钥匙，守卫当面拒收。' });
     const original = structuredClone(store);
-    const cp = currentInjectionBlocks(store, normalizeSettings()).find(block => block.type === 'checkpoint');
+    const cp = currentInjectionBlocks(store, normalizeSettings({ injectionMode: 'checkpoint_boundary' })).find(block => block.type === 'checkpoint');
     assert.match(cp.text, /历史剧情[\s\S]*历史记录[\s\S]*旅人交出钥匙，守卫当面拒收/);
     assert.deepEqual(store, original);
 });

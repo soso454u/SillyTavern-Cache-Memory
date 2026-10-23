@@ -16,7 +16,7 @@ const relation = { ...identity, key: '与守卫关系', value: '守卫的姐姐'
 const knowledge = { ...identity, key: '密道认知', value: '知道桥下密道', category: 'knowledge', evidence: '医师知道桥下密道' };
 const task = { ...identity, kind: 'thread', key: '护送', value: '护送村民，奖励通行权', category: 'task', lifetime: 'temporary', condition: '天亮前送至诊所', evidence: '医师答应护送村民', acquisition: 'pending' };
 const allTables = { characters: true, relationships: true, knowledge: true, tasks: true };
-const settings = normalizeSettings({ globalPromptMode: 'blank' });
+const settings = normalizeSettings({ injectionMode: 'checkpoint_boundary', globalPromptMode: 'blank' });
 
 function fixture(mode = 'normal', preferences = {}) {
     const source = [identity, relation, knowledge, task].map(row => row.evidence).join('。');
@@ -161,7 +161,7 @@ test('the main manager offers a small story workflow and optional tables; legacy
 });
 
 for (const tables of [false, true]) test(`55-floor end-to-end story pipeline keeps CP5/Long50 and ${tables ? 'selected tables' : 'no tables'} without extra calls`, async () => {
-    const config = normalizeSettings({ globalPromptMode: 'blank' }), metadata = {}, requests = [];
+    const config = normalizeSettings({ injectionMode: 'checkpoint_boundary', globalPromptMode: 'blank' }), metadata = {}, requests = [];
     const chat = Array.from({ length: 55 }, (_, i) => ({ name: '医师', mes: '医师来自旧城。她当众拒收纸包，说：“我只在大堂见过他。”', gen_started: `g${i}` }));
     const original = structuredClone(chat);
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {},

@@ -16,7 +16,7 @@ function addTurn(chat, floor) {
 const pendingUser = { name: '旅人', is_user: true, send_date: 'new', mes: '新的请求' };
 function setup(floors = 10) {
     const chat = [{ name: '守卫', is_user: false, mes: '角色卡开场白', send_date: 'greeting' }];
-    const store = createEmptyStore('a'), settings = normalizeSettings({ historyHandoff: true });
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary', historyHandoff: true });
     for (let floor = 1; floor <= floors; floor++) {
         addTurn(chat, floor);
         const id = messageIdentity(chat.at(-1));
@@ -117,12 +117,12 @@ test('swipe, continue, system/tool entries, ambiguous identities and regex-proce
 
 test('feature is opt-in; enabling rebuilds only injection and disabling preserves the original full projection', () => {
     const { store } = setup();
-    const old = normalizeSettings();
+    const old = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     assert.equal(old.historyHandoff, false);
     const records = structuredClone({ summaries: store.summaries, checkpoints: store.checkpoints });
     refreshSnapshot(store, old, 'settings changed');
     assert.match(store.injectionSnapshot.value, /CHECKPOINT_10/);
-    refreshSnapshot(store, normalizeSettings({ historyHandoff: true }), 'settings changed');
+    refreshSnapshot(store, normalizeSettings({ injectionMode: 'checkpoint_boundary', historyHandoff: true }), 'settings changed');
     assert.doesNotMatch(store.injectionSnapshot.value, /CHECKPOINT_10/);
     assert.match(store.injectionSnapshot.value, /CHECKPOINT_5/);
     assert.deepEqual({ summaries: store.summaries, checkpoints: store.checkpoints }, records);
@@ -156,7 +156,7 @@ test('imported message IDs may differ when a unique exact body fingerprint confi
 
 test('latest-user-only is off by default and independently filters old user turns without memory publication', () => {
     const { chat } = setup();
-    assert.equal(normalizeSettings().lastUserOnly, false);
+    assert.equal(normalizeSettings({ injectionMode: 'checkpoint_boundary' }).lastUserOnly, false);
     const original = structuredClone(chat);
     const options = { historyHandoff: false, lastUserOnly: true };
     const result = filterCoveredHistory(structuredClone(chat), chat, null, '', options);

@@ -28,7 +28,7 @@ function persistenceFixture(authority = false) {
 }
 
 test('legacy clipped snapshots survive reload, then regain every retained block at the next normal boundary', () => {
-    const store = createEmptyStore('a'), settings = normalizeSettings();
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     store.checkpoints = [cp('checkpoint-001', 1, 5, '完整早期事实'.repeat(1000)), cp('checkpoint-002', 6, 10, '完整近期事实'.repeat(1000))];
     refreshSnapshot(store, settings, 'new checkpoint');
     store.injectionSnapshot.blocks = [{ ...store.injectionSnapshot.blocks[0], text: '截断…' }];
@@ -43,7 +43,7 @@ test('legacy clipped snapshots survive reload, then regain every retained block 
 });
 
 test('full injection keeps Long/CP coverage and KEEP rules, without injecting per-floor summaries in the default mode', () => {
-    const store = createEmptyStore('a'), settings = normalizeSettings();
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     store.longMemories = [cp('long-001', 1, 50, '历史事实'.repeat(2000))];
     store.checkpoints = [cp('checkpoint-001', 1, 5, '已覆盖的 CP'), cp('checkpoint-011', 51, 55, '未覆盖的 CP')];
     store.summaries.m56 = row('m56', '不应发送逐层全文');
@@ -172,7 +172,7 @@ test('empty CP records are pending while complete CP without fingerprints is fro
 });
 
 test('legacy validation flags do not remove generated blocks at the next publish boundary', () => {
-    const store = createEmptyStore('a'), settings = normalizeSettings();
+    const store = createEmptyStore('a'), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     store.checkpoints = [cp('checkpoint-001', 1, 5, '已被改写的旧事实'), cp('checkpoint-002', 6, 10, '仍有效的历史')];
     const frozen = refreshSnapshot(store, settings, 'new checkpoint').value;
     store.checkpoints[0].status = 'stale'; store.checkpoints[0].sourceValidity = 'changed';

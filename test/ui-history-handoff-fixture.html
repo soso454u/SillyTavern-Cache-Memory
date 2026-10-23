@@ -10,7 +10,7 @@ import { refreshSnapshot } from '../src/cache-control.js';
 import { filterCoveredHistory } from '../src/history-handoff.js';
 import { getAssistantMessages } from '../src/utils.js';
 import { getOpeningSource } from '../src/opening-source.js';
-let settings = normalizeSettings(), publications = 0;
+let settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' }), publications = 0;
 const chat = [{name:'守卫',mes:'第0条开场白'}], metadata = {}, results = window.handoffResults = [];
 for(let n=1;n<=10;n++) chat.push({name:'旅人',is_user:true,send_date:`u${n}`,mes:`请求${n}`},{name:'守卫',send_date:`a${n}`,gen_started:`g${n}`,mes:`答复${n}`});
 const store = new MemoryStore({getChatId:()=> 'synthetic-handoff',getMetadata:()=>metadata,saveMetadata:()=>{}});

@@ -1,21 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.26.1';
-import { applyUITheme } from './ui-theme.js?v=1.26.1';
-import { stageStartLabel } from './opening-source.js?v=1.26.1';
-import { generationPrompt } from './generation-prompts.js?v=1.26.1';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.26.1';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.26.1';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.26.1';
-import { HistoryBackfill } from './history-backfill.js?v=1.26.1';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.26.1';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.26.1';
-import { buildStructuredSummary } from './summary-format.js?v=1.26.1';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.26.1';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.26.1';
-import { parseFloorSummary } from './summarizer.js?v=1.26.1';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.26.1';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.0';
+import { applyUITheme } from './ui-theme.js?v=1.27.0';
+import { stageStartLabel } from './opening-source.js?v=1.27.0';
+import { generationPrompt } from './generation-prompts.js?v=1.27.0';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.0';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.0';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.0';
+import { HistoryBackfill } from './history-backfill.js?v=1.27.0';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.27.0';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.0';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.0';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.0';
+import { parseFloorSummary } from './summarizer.js?v=1.27.0';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.0';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.26.1';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.26.1';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.0';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.0';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -186,13 +186,16 @@ export function memoryOverviewStats(store, assistants, settings) {
         activeKeeps: collectKeepItems(safeStore).filter(item => isTrackedActive(item)).length,
         injectedCheckpoints: safeStore.injectionSnapshot?.blocks?.length ? blockCount : textCount,
         injectedLongMemories: safeStore.injectionSnapshot?.blocks?.length ? longBlockCount : longTextCount,
+        injectedSummaries: (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'summary-story').length,
         injectedTables: (safeStore.injectionSnapshot?.blocks ?? []).filter(block => ['table', 'snapshot'].includes(block.type)).length,
-        injectionExplanation: [!checkpoints.length ? (usableSummaries.length < checkpointInterval
+        injectionExplanation: settings?.injectionMode === INJECTION_MODES.ROLLING
+            ? `最近${settings.recentRawFloors}层正文＋每层更新记忆：旧剧情用大总结／阶段总结，阶段外使用楼层摘要；缺少可核实记忆时暂留对应原文并提示。开场在首段记忆接管前保留。`
+            : [!checkpoints.length ? (usableSummaries.length < checkpointInterval
             ? `当前仅有 ${usableSummaries.length} 条可用摘要，尚未凑齐 ${checkpointInterval} 层阶段总结；重新注入不会自动生成。`
             : '已有摘要但阶段总结尚未生成，请在概览检查聚合进度。')
             : !blockCount && !textCount ? '已有阶段总结尚未进入冻结快照；可手动重新注入，或等待原有发布边界。' : '', missingLongExplanation].filter(Boolean).join(' '),
         estimatedTokens: estimateTokenCount(injectionValue),
-        recentBodyWindow: '由 SillyTavern 上下文设置控制',
+        recentBodyWindow: settings?.injectionMode === INJECTION_MODES.ROLLING ? `最近${settings.recentRawFloors}层 char（缺记忆时额外保留）` : '由 SillyTavern 上下文设置控制',
         storedSummaryRecords: Object.keys(safeStore.summaries).length,
         summaryDetails, aggregateDetails,
         issues,
@@ -402,7 +405,7 @@ export function configTemplate() {
                             <label class="cache-memory-toggle"><span><strong>启用插件</strong><small>显示楼层记忆并启用处理流程</small></span><input type="checkbox" data-setting="enabled"></label>
                             <label class="cache-memory-toggle"><span><strong>自动生成小总结</strong><small>正常回复结束后自动排队</small></span><input type="checkbox" data-setting="autoSummarize"></label>
                             <label class="cache-memory-toggle"><span><strong>使用独立模型接口</strong><small>不占用 SillyTavern 当前聊天模型</small></span><input type="checkbox" data-setting="independentApi"></label>
-                            <label class="cache-memory-toggle"><span><strong>严格缓存模式</strong><small>小总结仅后台保存，主 Prompt 只在边界更新</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
+                            <label class="cache-memory-toggle"><span><strong>严格缓存模式</strong><small>阶段模式仅边界更新；最近正文模式仍每层更新</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
                         <div class="cache-memory-grid">
@@ -476,12 +479,14 @@ export function configTemplate() {
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
-                        <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择发送请求时附加到上下文的冻结记忆层。</p></div></div>
-                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.NONE}">不注入（缓存最安全）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（新安装默认）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">旧版近期模式（按阶段总结发送）</option></select></label>
-                        <div class="cache-memory-note"><i class="fa-solid fa-shield-halved"></i><span>严格模式不注入逐层小总结；Checkpoint / Long Memory 提交后更新一次，其余楼层逐字冻结。Long Memory 边界可替换其覆盖的阶段注入，原始记录仍保留。</span></div>
+                        <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择正文保留层数与历史记忆的发送方式。</p></div></div>
+                        <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.ROLLING}">最近正文＋每层更新记忆（默认）</option><option value="${INJECTION_MODES.NONE}">不注入记忆（旧剧情不会通过记忆发送）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（保留旧策略）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">旧版近期模式（按阶段总结发送）</option></select></label>
+                        <label class="cache-memory-field">保留最近几层 char 正文<input type="number" min="1" max="100" step="1" data-setting="recentRawFloors"></label>
+                        <small class="cache-memory-help">默认3层，只在“最近正文＋每层更新记忆”模式生效，按正常char回复计数，不按user／char消息深度计数。旧剧情继续注入；整段交给CP／Long，不足整段的部分用楼层摘要，每层更新。请停用原来整条清空char的深度正则，插件不会恢复被正则清空的正文。摘要缺失时提示并暂留对应原文；开场在首段记忆接管前保留。</small>
+                        <div class="cache-memory-note" data-boundary-injection><i class="fa-solid fa-shield-halved"></i><span>以下冻结规则仅用于旧阶段模式：严格模式不注入逐层小总结；Checkpoint / Long Memory 提交后更新一次，其余楼层逐字冻结。Long Memory 边界可替换其覆盖的阶段注入，原始记录仍保留。</span></div>
                         <p class="cache-memory-warning" data-cache-mode-warning></p>
-                        <label class="cache-memory-toggle"><span><strong>正文与记忆自动衔接</strong><small>正常续聊至少保留最近5层原文，较早原文由已发送的阶段剧情接管</small></span><input type="checkbox" data-setting="historyHandoff"></label>
-                        <small class="cache-memory-help">启用后请停用原来按深度清空 char 的正则。默认CP5时通常发送最近5–9层正常回复。第0条开场白与1–5层一并总结为首段0–5，之后仍为6–10；长期总结继续接管首段，不常驻独立开场块。只有已发送记忆接管后才移除开场原文。旧聊天请重新生成第一份阶段总结，已有首段大总结时也需重新生成该段。不会删除聊天或更改原正则。</small>
+                        <label class="cache-memory-toggle" data-boundary-injection><span><strong>旧阶段模式：正文与记忆自动衔接</strong><small>正常续聊至少保留最近5层原文，较早原文由已发送的阶段剧情接管</small></span><input type="checkbox" data-setting="historyHandoff"></label>
+                        <small class="cache-memory-help" data-boundary-injection>启用后请停用原来按深度清空 char 的正则。默认CP5时通常发送最近5–9层正常回复。第0条开场白与1–5层一并总结为首段0–5，之后仍为6–10；长期总结继续接管首段，不常驻独立开场块。只有已发送记忆接管后才移除开场原文。旧聊天请重新生成第一份阶段总结，已有首段大总结时也需重新生成该段。不会删除聊天或更改原正则。</small>
                         <label class="cache-memory-toggle"><span><strong>只发送最后一条 user</strong><small>默认关闭；开启后过滤更早的user输入，可独立于正文衔接使用</small></span><input type="checkbox" data-setting="lastUserOnly"></label>
                         <small class="cache-memory-help">关闭时沿用现有user历史发送方式；开启后只保留最后一条非开场白user输入。第0条在首段记忆接管前暂时保留，避免初始背景丢失。原“不发送用户”正则可以保留，开启此开关后也可停用；继续生成时旧深度正则可能清空最后一条user。开关不改写已冻结记忆。</small>
                         <small class="cache-memory-help">仅把“替换为”留空才表示删除匹配内容，“查找”不能为空。酒馆深度按消息计数：普通一问一答、末尾为新user时，char最小深度9清空通常只留4条回复，11才留5条。固定深度仍可能与CP重叠或出现缺口。</small>
@@ -802,9 +807,12 @@ export class CacheMemoryUI {
             if (modeHelp) modeHelp.textContent = '基础摘要、阶段总结、长期总结共用一套规则；角色表格独立勾选，不增加摘要长度。自定义提示词仍会保留。';
             this.renderPromptPreviews(scope);
             const warning = scope.querySelector('[data-cache-mode-warning]');
-            if (warning) warning.textContent = settings.strictCacheMode
+            if (warning) warning.textContent = settings.injectionMode === INJECTION_MODES.ROLLING
+                ? `当前：最近${settings.recentRawFloors}层 char 正文＋每层更新记忆。更早剧情使用 Long／CP，未成整段的部分使用楼层摘要；缺少可核实记忆时提示并暂留原文，避免丢剧情。此模式优先缩短正文，不保证缓存命中；预设、世界书和历史记忆仍占输入。`
+                : settings.strictCacheMode
                 ? `近期小总结会每轮改变 Prompt，不适合严格缓存模式。当前实际策略：${effectiveInjectionMode(settings)}；近期模式会自动降级到 Checkpoint 边界。`
                 : '严格缓存模式已关闭：当前长期事实、KEEP 等动态内容可能改变 Prompt Prefix。';
+            for (const element of scope.querySelectorAll('[data-boundary-injection]')) element.hidden = settings.injectionMode === INJECTION_MODES.ROLLING;
             for (const element of scope.querySelectorAll('[data-legacy-setting]')) element.hidden = settings.memoryStrategy !== 'legacy';
             for (const element of scope.querySelectorAll('[data-custom-filter]')) element.hidden = settings.summaryFilterMode !== SUMMARY_FILTER_MODES.CUSTOM;
             for (const element of scope.querySelectorAll('[data-setting]')) {
@@ -812,6 +820,8 @@ export class CacheMemoryUI {
                 const key = element.dataset.setting;
                 if (element.type === 'checkbox') element.checked = Boolean(settings[key]);
                 else element.value = settings[key] ?? '';
+                if (['strictCacheMode', 'historyHandoff'].includes(key)) element.disabled = settings.injectionMode === INJECTION_MODES.ROLLING;
+                if (key === 'recentRawFloors') element.disabled = settings.injectionMode !== INJECTION_MODES.ROLLING;
             }
             for (const element of scope.querySelectorAll('[data-prompt]')) {
                 element.value = settings.prompts[element.dataset.prompt] ?? '';
@@ -1054,7 +1064,7 @@ export class CacheMemoryUI {
             const element = event.target.closest('[data-setting]');
             if (!element) return;
             const key = element.dataset.setting;
-            const numeric = ['checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens'];
+            const numeric = ['recentRawFloors', 'checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens'];
             const value = element.type === 'checkbox' ? element.checked : numeric.includes(key) ? Number(element.value) : element.value;
             const previousApiBaseUrl = this.getSettings().apiBaseUrl;
             if (key === 'apiBaseUrl') {
@@ -1074,7 +1084,7 @@ export class CacheMemoryUI {
             this.markSettingsDirty();
             this.populateSettings();
             if (key === 'showWandButton') this.syncWandEntry();
-            if (['enabled', 'strictCacheMode', 'historyHandoff', 'injectionMode', 'recentSummaryCount', 'recentCheckpointCount', 'memoryStrategy'].includes(key)) this.updateInjection('settings changed');
+            if (['enabled', 'strictCacheMode', 'historyHandoff', 'injectionMode', 'recentRawFloors', 'recentSummaryCount', 'recentCheckpointCount', 'memoryStrategy'].includes(key)) this.updateInjection('settings changed');
             this.renderMessageMemories();
         }, { signal: this.controller.signal });
         root.addEventListener('input', event => {
@@ -1933,7 +1943,7 @@ export class CacheMemoryUI {
             health.append(this.element('p', '', '当前应有的 Summary、Checkpoint 与 Long Memory 均已生成。'));
         }
         const diagnostics = this.manager.querySelector('[data-memory-diagnostics]');
-        if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 小总结已存 ${overview.checkpoints.actual}/${overview.checkpoints.expected} · 大总结已存 ${overview.longMemories.actual}/${overview.longMemories.expected} · 已注入 ${overview.injectedLongMemories} 份大总结＋${overview.injectedCheckpoints} 份小总结 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
+        if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 小总结已存 ${overview.checkpoints.actual}/${overview.checkpoints.expected} · 大总结已存 ${overview.longMemories.actual}/${overview.longMemories.expected} · 已注入 ${overview.injectedLongMemories} 份大总结＋${overview.injectedCheckpoints} 份小总结＋${overview.injectedSummaries} 份楼层摘要 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
         if (overview.injectionExplanation) health.append(this.element('p', '', overview.injectionExplanation));
         if (this.showSummaryHealthDetails) {
             const detailSection = this.element('div', 'cache-memory-summary-health-details');

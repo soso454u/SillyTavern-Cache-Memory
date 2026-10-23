@@ -35,7 +35,7 @@ function aggregateFixture() {
     };
     store.addCheckpoint(cp(1, 5, 'checkpoint-001'));
     store.addCheckpoint(cp(6, 10, 'checkpoint-002', 'checkpoint-001'));
-    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings(), apiClient: { complete: async req => { calls.push(req); return { content: '[CHECKPOINT]\n[Current State]\n新阶段状态\n[Open Threads]\n无' }; } } });
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => normalizeSettings({ injectionMode: 'checkpoint_boundary' }), apiClient: { complete: async req => { calls.push(req); return { content: '[CHECKPOINT]\n[Current State]\n新阶段状态\n[Open Threads]\n无' }; } } });
     return { chat, metadata, store, summarizer, reasons, calls };
 }
 
@@ -44,7 +44,7 @@ function correctFact(f, floors = [1]) {
 }
 
 test('new defaults and reset templates preserve structure, NPC rules and custom prompts', () => {
-    assert.deepEqual(normalizeSettings().prompts, DEFAULT_PROMPTS);
+    assert.deepEqual(normalizeSettings({ injectionMode: 'checkpoint_boundary' }).prompts, DEFAULT_PROMPTS);
     assert.deepEqual(normalizeSettings({ prompts: V1200_DEFAULT_PROMPTS }).prompts, DEFAULT_PROMPTS);
     for (const name of Object.keys(DEFAULT_PROMPTS)) {
         const custom = `${V1200_DEFAULT_PROMPTS[name]}\n自定义内容`;
@@ -181,7 +181,7 @@ test('ordinary CP content edits keep later frozen CP and Long records', () => {
 });
 
 test('explicit fact-correction maintenance updates CPs using existing summaries without publishing snapshot', async () => {
-    const f = aggregateFixture(), settings = normalizeSettings();
+    const f = aggregateFixture(), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     refreshSnapshot(f.store.current(), settings, 'manual reinject'); const frozen = f.store.current().injectionSnapshot.value;
     correctFact(f, [1, 6]);
     f.reasons.length = 0;
@@ -215,7 +215,7 @@ test('health ignores obsolete source flags but reports failed Summary and missin
     Object.values(f.store.current().summaries)[1].status = 'failed';
     f.store.current().checkpoints[0].status = 'stale'; f.store.current().checkpoints[0].staleReason = '来源版本不一致';
     f.store.current().injectionSnapshot = { value: '', blocks: [], budget: { omitted: 2 } };
-    const overview = memoryOverviewStats(f.store.current(), entries, normalizeSettings());
+    const overview = memoryOverviewStats(f.store.current(), entries, normalizeSettings({ injectionMode: 'checkpoint_boundary' }));
     assert.doesNotMatch(overview.issues.join('\n'), /校验信息缺失/); assert.match(overview.issues.join('\n'), /生成失败/);
     assert.doesNotMatch(overview.issues.join('\n'), /需要更新|来源版本/);
     assert.ok(!overview.aggregateDetails.some(row => row.id === 'checkpoint-002'));
@@ -223,7 +223,7 @@ test('health ignores obsolete source flags but reports failed Summary and missin
 });
 
 test('maintenance snapshot is retained on reload and rebuilt at the next permitted boundary', async () => {
-    const f = aggregateFixture(), settings = normalizeSettings();
+    const f = aggregateFixture(), settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
     refreshSnapshot(f.store.current(), settings, 'manual reinject'); const frozen = f.store.current().injectionSnapshot.value;
     correctFact(f);
     await f.summarizer.updateCheckpoints();
@@ -237,7 +237,7 @@ test('maintenance snapshot is retained on reload and rebuilt at the next permitt
 
 test('manual tracked corrections retain frozen CP and allow requested maintenance without publishing snapshot', () => {
     const f = aggregateFixture(), source = Object.values(f.store.current().summaries)[0];
-    refreshSnapshot(f.store.current(), normalizeSettings(), 'manual reinject'); const frozen = f.store.current().injectionSnapshot.value;
+    refreshSnapshot(f.store.current(), normalizeSettings({ injectionMode: 'checkpoint_boundary' }), 'manual reinject'); const frozen = f.store.current().injectionSnapshot.value;
     f.store.editTrackedState({ kind: 'state', entity: '合成人物', key: '技能', value: 'Lv.3', sourceFloor: source.floor, status: 'active', lifetime: 'permanent' });
     assert.equal(f.store.current().checkpoints[0].status, 'frozen'); assert.equal(f.store.current().injectionSnapshot.value, frozen);
     assert.equal(f.store.current().injectionSnapshot.needsRebuild, true);

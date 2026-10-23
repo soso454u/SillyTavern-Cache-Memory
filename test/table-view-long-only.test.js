@@ -48,7 +48,7 @@ test('all four tables have independent view buttons and counts; browsing unselec
 });
 
 function fixture(loadedFloors = 145) {
-    const settings = normalizeSettings(), metadata = {};
+    const settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' }), metadata = {};
     const chat = Array.from({ length: loadedFloors }, (_, i) => ({ name: '医师', mes: `正文${i}`, gen_started: `g${i}` }));
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'a', saveMetadata() {}, onChange: (data, reason) => refreshSnapshot(data, settings, reason) });
     for (const entry of getAssistantMessages(chat).slice(-3)) store.addSummary({ messageId: entry.messageId, floor: entry.floor, event: '仅有近期三条摘要', status: 'frozen' });

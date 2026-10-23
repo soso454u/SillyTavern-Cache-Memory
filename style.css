@@ -595,3 +595,6 @@ body.cache-memory-config-open { overflow: hidden; }
     .cache-memory-table-choices .cache-memory-toggle > span { min-width: 0; }
     .cache-memory-table-choices small { font-size: 11px; line-height: 1.5; }
 }
+[data-boundary-injection][hidden] {
+    display: none !important;
+}

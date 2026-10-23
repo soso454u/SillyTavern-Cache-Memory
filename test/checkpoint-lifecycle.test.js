@@ -9,7 +9,7 @@ import { normalizeSettings } from '../src/defaults.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { getAssistantMessages } from '../src/utils.js';
 
-const settings = normalizeSettings();
+const settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
 const state = (key, value, extra = {}) => ({ kind: 'state', entity: '旅人', key, value, category: 'effect',
     lifetime: 'temporary', status: 'active', evidence: '来源的明确证据', ...extra });
 function put(store, floor, changes, event = '', fields = {}) {
