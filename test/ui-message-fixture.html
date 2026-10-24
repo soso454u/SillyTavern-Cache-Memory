@@ -32,7 +32,7 @@ try {
     assert('单个居中入口，无原生箭头', document.querySelectorAll('#chat .cache-memory-message').length === 1 && getComputedStyle(widget().querySelector('summary')).textAlign === 'center' && getComputedStyle(widget().querySelector('summary'), '::marker').content === '""');
     widget().querySelector('summary').click(); await settle();
     widget().querySelector('[data-memory-action=edit]').click();
-    assert('楼层下直接编辑九个字段，无管理窗口', widget().querySelectorAll('[data-edit-field]').length === 9 && ui.config.hidden);
+    assert('楼层下只编辑五个基本字段，无管理窗口', widget().querySelectorAll('[data-edit-field]').length === 5 && !widget().querySelector('[data-edit-field=state], [data-edit-field=open], [data-edit-field=quote], [data-edit-field=keep]') && ui.config.hidden);
     await settle();
     assert('标题日期地点保持单行输入，短内容编辑框紧凑', ['title', 'storyTime', 'location'].every(key => widget().querySelector(`[data-edit-field=${key}]`).tagName === 'INPUT') && widget().querySelector('[data-edit-field=characters]').getBoundingClientRect().height <= 48);
     let field = widget().querySelector('[data-edit-field=event]');

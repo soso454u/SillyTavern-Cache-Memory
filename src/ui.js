@@ -1,21 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.5';
-import { applyUITheme } from './ui-theme.js?v=1.27.5';
-import { stageStartLabel } from './opening-source.js?v=1.27.5';
-import { generationPrompt } from './generation-prompts.js?v=1.27.5';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.5';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.5';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.5';
-import { HistoryBackfill } from './history-backfill.js?v=1.27.5';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.27.5';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.5';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.5';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.5';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.5';
-import { parseFloorSummary } from './summarizer.js?v=1.27.5';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.5';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.6';
+import { applyUITheme } from './ui-theme.js?v=1.27.6';
+import { stageStartLabel } from './opening-source.js?v=1.27.6';
+import { generationPrompt } from './generation-prompts.js?v=1.27.6';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.6';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.6';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.6';
+import { HistoryBackfill } from './history-backfill.js?v=1.27.6';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.27.6';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.6';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.6';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.6';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.6';
+import { parseFloorSummary } from './summarizer.js?v=1.27.6';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.6';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.5';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.5';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.6';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.6';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -599,7 +599,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.5', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.6', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -1492,7 +1492,7 @@ export class CacheMemoryUI {
                         : record.status === 'failed' ? '本层记忆 · 生成失败' : `本层记忆 · ${record.title || '未命名摘要'}`);
                     const body = this.element('div', 'cache-memory-message-body');
                     if (editing) {
-                        this.inlineEditor(body, this.summaryEditorFields(this.messageEditing.values), 'message');
+                        this.inlineEditor(body, this.summaryEditorFields(this.messageEditing.values, { includeLegacy: false }), 'message');
                     } else {
                         if (record?.status === 'failed') body.append(this.line('错误', formatSummaryFailure(record)));
                         else if (record) body.append(this.line('剧情日期/时间｜地点', `${record.storyTime || '未提供'}｜${record.location || '未提供'}`),
@@ -1626,14 +1626,14 @@ export class CacheMemoryUI {
         });
     }
 
-    summaryEditorFields(record) {
+    summaryEditorFields(record, { includeLegacy = true } = {}) {
         return [
             { key: 'title', label: '标题', value: record.title },
             { key: 'storyTime', label: '剧情日期/时间', value: record.storyTime },
             { key: 'location', label: '地点', value: record.location },
             ...[['characters', '人物', 3], ['event', '事件', 7], ['state', '状态', 5], ['open', '未解决事项', 5], ['quote', '原话', 4], ['keep', 'KEEP', 5]]
                 .map(([key, label, rows]) => ({ key, label, rows, multiline: true, value: record[key] })),
-        ];
+        ].filter(field => includeLegacy || !['state', 'open', 'quote', 'keep'].includes(field.key));
     }
 
     editSummary(messageId) {
@@ -1660,7 +1660,9 @@ export class CacheMemoryUI {
             notify('warning', '该消息或摘要已发生变化，请取消编辑后重新打开。草稿尚未保存。');
             return;
         }
-        const values = this.inlineEditValues(widget);
+        // Only five fields are visible below a message. Preserve the legacy
+        // values in both the record and its rebuilt structured raw payload.
+        const values = { ...draft.values, ...this.inlineEditValues(widget) };
         this.messageEditing = null;
         this.saveSummaryValues(draft.summaryId || draft.messageId, values);
     }

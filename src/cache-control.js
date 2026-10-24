@@ -1,6 +1,6 @@
-import { INJECTION_MODES } from './defaults.js?v=1.27.5';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.5';
-import { fnv1a } from './utils.js?v=1.27.5';
+import { INJECTION_MODES } from './defaults.js?v=1.27.6';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.6';
+import { fnv1a } from './utils.js?v=1.27.6';
 
 export function effectiveInjectionMode(settings) {
     if (settings.injectionMode === INJECTION_MODES.ROLLING) return INJECTION_MODES.ROLLING;
