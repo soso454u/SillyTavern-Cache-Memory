@@ -24,7 +24,7 @@ test('official aggregate templates upgrade, custom prompts and existing length/t
     }
     assert.equal(normalizeSettings().longMemoryMaxLength, 2200);
     assert.equal(normalizeSettings().longMemoryMaxTokens, 4096);
-    assert.equal(DEFAULT_PROMPTS.summary, V1270_DEFAULT_PROMPTS.summary);
+    assert.notEqual(DEFAULT_PROMPTS.summary, V1270_DEFAULT_PROMPTS.summary);
 });
 
 test('narrative stage sections hide wire markers, preserve paragraphs, and round-trip without adding state tables', () => {
@@ -86,7 +86,7 @@ test('editing stage narrative saves the structure and leaves adjacent ranges unt
     assert.deepEqual(store.current().checkpoints[1], neighbor);
 });
 
-test('Long regeneration sends all ten stages with detailed chronological rules in one unchanged-size request', async () => {
+test('Long regeneration sends all ten stages with objective recap rules in one unchanged-size request', async () => {
     const metadata = {}, requests = [], config = normalizeSettings({ globalPromptMode: 'blank', longMemoryMaxLength: 3200, longMemoryMaxTokens: 6500 });
     const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'detail-long', saveMetadata() {} });
     const paragraphs = [];
@@ -106,8 +106,9 @@ test('Long regeneration sends all ten stages with detailed chronological rules i
     assert.match(requests[0].systemPrompt, /目标约3200字/);
     assert.match(requests[0].systemPrompt, /每一份阶段总结/);
     assert.match(requests[0].systemPrompt, /前期到末段/);
-    assert.match(requests[0].systemPrompt, /约70%–100%/);
-    assert.match(requests[0].systemPrompt, /已经结束的日常互动/);
+    assert.doesNotMatch(requests[0].systemPrompt, /约70%–100%/);
+    assert.match(requests[0].systemPrompt, /不要求接近目标字数/);
+    assert.match(requests[0].systemPrompt, /核心原话不是对话回放/);
     for (const paragraph of paragraphs) {
         assert.ok(requests[0].userContent.includes(paragraph.split('\n')[1]));
         assert.ok(parseLongMemorySections(result.content).storyArc.includes(paragraph));

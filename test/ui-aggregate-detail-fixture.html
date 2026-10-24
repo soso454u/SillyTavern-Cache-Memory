@@ -34,7 +34,9 @@ try{
  check('保存后恢复内部结构且页面不露出标记',store.current().checkpoints[0].content.startsWith('[CHECKPOINT]\n[Stage Story]\n')&&!card().textContent.includes('[Stage Story]')&&card().textContent.includes('船夫随后获知归还结果'));
  check('保存不新增空白角色状态表且不修改邻段',!store.current().checkpoints[0].content.includes('[Current State]')&&store.current().checkpoints[1].content===JSON.parse(before)[1].content);
  click('[data-settings-tab="prompts"]');
- check('大总结模板包含逐段覆盖和目标字数约束',document.querySelector('[data-prompt="longMemory"]').value.includes('每一份阶段总结')&&document.querySelector('[data-prompt="longMemory"]').value.includes('约70%–100%'));
+ check('大总结模板包含来源核对和客观提要规则',document.querySelector('[data-prompt="longMemory"]').value.includes('每一份阶段总结')&&document.querySelector('[data-prompt="longMemory"]').value.includes('不要求接近目标字数'));
+ check('三个层级共用客观规则并保留核心原话',[...document.querySelectorAll('[data-prompt]')].filter(el=>['summary','checkpoint','longMemory'].includes(el.dataset.prompt)).every(el=>el.value.includes('客观前情提要')&&el.value.includes('核心原话')&&el.value.includes('同一事实只出现一次')));
+ check('小总结不要求写满字数且限制原话数量',document.querySelector('[data-prompt="summary"]').value.includes('通常0–1句')&&document.querySelector('[data-prompt="summary"]').value.includes('不设最低字数'));
  click('[data-settings-tab="manager"]');await settle();
  check('没有横向溢出',document.documentElement.scrollWidth<=innerWidth);
  document.querySelector('#results').textContent=JSON.stringify(results,null,2);
