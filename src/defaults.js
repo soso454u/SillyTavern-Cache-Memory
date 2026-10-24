@@ -1,11 +1,11 @@
-import { normalizeCharacterTables } from './character-tables.js?v=1.27.0';
-import { normalizeThemeMode } from './ui-theme.js?v=1.27.0';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.0';
+import { normalizeCharacterTables } from './character-tables.js?v=1.27.1';
+import { normalizeThemeMode } from './ui-theme.js?v=1.27.1';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.1';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.0';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.0';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.1';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.1';
 
-export const PLUGIN_VERSION = '1.27.0';
+export const PLUGIN_VERSION = '1.27.1';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1531,9 +1531,8 @@ export const V12423_DEFAULT_PROMPTS = Object.freeze({
 - fact-id | 明确失效原因 | NEW_SUMMARIES 的逐字证据；无则写无。`,
     state: IMPORTANT_STATE_PROMPT,
 });
-// Both modes share this compact narrative pipeline. "advanced" now enables
-// optional tables, never another long Summary / CP / Long prompt family.
-export const DEFAULT_PROMPTS = Object.freeze({
+// Previous official templates are retained for exact, custom-safe migration.
+export const V1270_DEFAULT_PROMPTS = Object.freeze({
     summary: `你是剧情摘要记录员，只总结本层正文中实际发生或被明确获知的事。不要续写。
 长度：标题、人物、事件合用约 {{maxLength}} 字；复杂剧情最多略超约15%，不设最低字数。默认约350–400字，禁止逐动作复述整段原文。
 事件中保留：关键人物（含有作用的NPC）→ 必要起因 → 关键动作／选择 → 转折与结果。推动剧情、体现关系边界、改变物品归属或揭示信息的动作必须保留；普通姿势、重复动作、修辞和重复背景可省略。
@@ -1572,6 +1571,42 @@ fact-id | 替代后的事实 | NEW_SUMMARIES 的连续原句；没有则无
 [RETIRED_FACTS]
 fact-id | 明确失效原因 | NEW_SUMMARIES 的连续原句；没有则无`,
     state: IMPORTANT_STATE_PROMPT,
+});
+
+// Both modes share the story templates; optional tables keep their own rules.
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V1270_DEFAULT_PROMPTS,
+    checkpoint: `你是剧情记忆编辑，把第{{startFloor}}–{{endFloor}}层的 NEW_SUMMARIES 整理为可独立读懂的阶段剧情，目标约{{maxLength}}字。只根据来源，不续写、不猜测。
+按实际时间和场景分成自然段，写清起因 → 谁对谁做了什么／说了什么 → 对方反应或关键选择 → 转折、结果与留下的条件。各层有新信息的事件都要覆盖；同一事件的连续过程可以合并，不逐层复写，也不能只留下一个笼统结论。
+保留重要NPC及支线人物的具体作用、关系边界、约定或拒绝、秘密揭露与各自认知、重要物品／金钱／合同的归属和条件。已经结束的冲突、玩笑、误会、日常互动，若解释关系变化、人物特点、后续提及的梗或承诺，仍要简述经过和结果，不能只因已结束就删掉。
+关键动作和关键对话要相互对应；措辞影响关系、身份、承诺、威胁或信息真伪时，保留说话人与简短原话。其他对话准确转述；不能把“先提出后取消”“声称做过后承认没做”压成相反事实。任务完成与奖励领取分开，人物各自认知、未来预演／猜测与现实分别记录。
+来源信息充分时尽量接近{{maxLength}}字；按信息量分配篇幅，删重复和修辞，不为缩短而省略独立事件，也不为凑字添加细节。只总结本阶段，上一阶段背景仅用于理解。输出剧情叙述，不展开角色档案、任务表或当前状态表。无字数硬截断。
+正文有明确日期时间、地点时照录，用普通文字作为段首；未知不补。段内不要新增方括号栏目，格式标记只用于下列固定结构：
+[CHECKPOINT]
+[Stage Story]
+按场景分段的本阶段剧情经过、必要原话与结果
+[RESOLVED_KEEP]
+仅在本阶段明确兑现／结束时：keep-id | 原因 | NEW_SUMMARIES 中至少4字的连续原句；无则无
+[SUPERSEDED_KEEP]
+仅在本阶段明确替代时：keep-id | 新事实 | NEW_SUMMARIES 中至少4字的连续原句；无则无`,
+    longMemory: `你是长篇剧情档案编辑，把第{{startFloor}}–{{endFloor}}层的全部来源阶段总结整理成一份详实、按时间推进的长期剧情大总结，目标约{{maxLength}}字。这里要保存本区间发生过的故事，不能用一段关系概述或少数高潮替代整段历史。只根据来源，不续写、不补写缺失事实。
+【逐段覆盖】
+先在内部依次核对 CHECKPOINT_STATE 中每一份阶段总结的独立事件、重要人物及各自结果；从前期到末段都应有对应叙述，不得只详写最后几层。同一事件跨阶段延续可合并成完整因果链，重复背景只写一次；相邻但不同的事件不能因人物相同就合并成一句。NEW_SUMMARIES 若有可核实的细节，用于补足对应阶段，不借其推翻没有新证据的历史。来源没有某类信息时不编造。
+【需要保留的细节】
+每个重要场景交代已知时间／地点、参与者、必要起因、具体行动与关键对话、回应或选择、转折、结果及留下的条件。保留主线和有独立意义的支线，重要NPC及配角的介入、人物关系如何变化、约定如何达成或取消、冲突如何解决、秘密由谁得知／谁仍不知、重要物品／金额／合同及承诺条件。
+已经结束的日常互动、玩笑、误会、争执或小事件，若建立人物关系、留下后续会引用的梗、揭示人物特点或解释某次选择，也要简述经过与结果。不得以“已完成”“不是当前任务”或“与当前主线无关”为由一概删除。只删无独立信息的重复、修辞和普通动作，不把所有支线都压成“期间发生了一些互动”。
+关系确立、身份承认、拒绝、承诺、威胁、否认、秘密揭露等影响含义的原话，保留说话人与简短引句，并写清触发语境及对方回应；其他对话转述。不把互不相同的关键台词只概括为“关系升温”。明确区分计划／提出／声称、实际执行、取消或否认，任务完成与奖励领取也分别记录。各自认知与未来预演／梦境／猜测的来源不能混淆；旧地点和已完成动作只能作为当时历史，不写成现在。
+【篇幅与组织】
+信息充分时，剧情正文应接近{{maxLength}}字，通常使用目标的约70%–100%，不要在来源丰富时提前收成几百字。按各阶段实际信息量分配篇幅，留出前、中、后段的位置；重要因果确实需要时允许略超，不硬截断。来源简单时可以更短，禁止为达到字数编剧情、凑重复或添加文学描写。LONG_MEMORY等附栏不能挤占主要剧情的篇幅。
+在同一个 [STORY_ARC] 中按时间／场景写多个自然段。可用“第x–y层｜来源已知日期／场景”这种普通文字段首，跨阶段同一事件可合并；不得另加方括号小标题，以免切断剧情字段。输出前在内部逐份回查来源，确认每个重要事件、配角作用、关键条件与结果都有落点，遗漏则在本次回答内补齐；不输出检查过程。不展开角色表格，也不逐字抄整份CP。
+[STORY_ARC]
+分段展开的本区间剧情经过、关键原话、转折和各方结果
+[LONG_MEMORY]
+只补充故事未涵盖、确有长期影响的事实；没有则无
+[UPDATED_FACTS]
+fact-id | 替代后的事实 | NEW_SUMMARIES 的连续原句；没有则无
+[RETIRED_FACTS]
+fact-id | 明确失效原因 | NEW_SUMMARIES 的连续原句；没有则无`,
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1664,7 +1699,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1270_DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];

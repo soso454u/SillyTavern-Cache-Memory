@@ -1,21 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.0';
-import { applyUITheme } from './ui-theme.js?v=1.27.0';
-import { stageStartLabel } from './opening-source.js?v=1.27.0';
-import { generationPrompt } from './generation-prompts.js?v=1.27.0';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.0';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.0';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.0';
-import { HistoryBackfill } from './history-backfill.js?v=1.27.0';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.27.0';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.0';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.0';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.0';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.0';
-import { parseFloorSummary } from './summarizer.js?v=1.27.0';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.0';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.1';
+import { applyUITheme } from './ui-theme.js?v=1.27.1';
+import { stageStartLabel } from './opening-source.js?v=1.27.1';
+import { generationPrompt } from './generation-prompts.js?v=1.27.1';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.1';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.1';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.1';
+import { HistoryBackfill } from './history-backfill.js?v=1.27.1';
+import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.27.1';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.1';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.1';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.1';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.1';
+import { parseFloorSummary } from './summarizer.js?v=1.27.1';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.1';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.0';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.0';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.1';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.1';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -26,6 +26,7 @@ const WAND_CONTAINER_ID = 'cache-memory-wand-container';
 const WAND_ENTRY_ID = 'cache-memory-wand-entry';
 
 const CHECKPOINT_SECTIONS = Object.freeze([
+    ['stageStory', 'Stage Story', '本阶段剧情总结'],
     ['storySoFar', 'Story So Far', '必要前情'],
     ['characters', 'Characters', '人物状态'],
     ['currentState', 'Current State', '当前世界状态'],
@@ -204,13 +205,22 @@ export function memoryOverviewStats(store, assistants, settings) {
 
 export function parseCheckpointSections(content) {
     const text = String(content ?? '');
-    if (!/^\s*\[CHECKPOINT\]\s*$/im.test(text)) return null;
-    const fields = Object.fromEntries(CHECKPOINT_SECTIONS.map(([key, section]) => [key, readSection(text, section)]));
+    const parts = text.split(/^\s*\[([^\]\n]+)\]\s*$/m);
+    const names = parts.filter((_, index) => index % 2 === 1).map(name => name.toLowerCase());
+    const allowed = ['checkpoint', 'keep', 'resolved_keep', 'superseded_keep', 'state_resolutions',
+        ...CHECKPOINT_SECTIONS.map(([, section]) => section.toLowerCase())];
+    // Recognize narrative CPs without displaying protocol markers. Unknown or
+    // duplicated custom fields keep the raw editor so no content is lost on save.
+    if (parts[0].trim() || readSection(text, 'CHECKPOINT').trim() || !names.some(name => ['checkpoint', 'stage story'].includes(name))
+        || new Set(names).size !== names.length || names.some(name => !allowed.includes(name))) return null;
+    const fields = Object.fromEntries(CHECKPOINT_SECTIONS.filter(([, section]) => names.includes(section.toLowerCase()))
+        .map(([key, section]) => [key, readSection(text, section)]));
     return Object.values(fields).some(Boolean) ? fields : null;
 }
 
 export function buildCheckpointContent(fields) {
-    return ['[CHECKPOINT]', ...CHECKPOINT_SECTIONS.flatMap(([key, section]) => [`[${section}]`, String(fields[key] ?? '').trim() || '无'])]
+    return ['[CHECKPOINT]', ...CHECKPOINT_SECTIONS.filter(([key]) => Object.hasOwn(fields, key))
+        .flatMap(([key, section]) => [`[${section}]`, String(fields[key] ?? '').trim() || '无'])]
         .join('\n');
 }
 
@@ -578,7 +588,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.0', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.1', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2575,8 +2585,8 @@ export class CacheMemoryUI {
                 body.append(this.line('剧情日期/时间范围', item.storyStartTime && item.storyEndTime ? `${item.storyStartTime} → ${item.storyEndTime}` : item.storyStartTime || item.storyEndTime),
                     this.line('当前剧情日期/时间｜地点', `${item.currentStoryTime || '未提供'}｜${item.currentLocation || '未提供'}`));
                 if (this.isEditing('checkpoint', item.id)) {
-                    this.inlineEditor(body, fields ? CHECKPOINT_SECTIONS.map(([key, section, label]) => ({
-                        key, label: `${label} · ${section}`, value: fields[key], multiline: true, rows: 5,
+                    this.inlineEditor(body, fields ? CHECKPOINT_SECTIONS.filter(([key]) => Object.hasOwn(fields, key)).map(([key, , label]) => ({
+                        key, label, value: fields[key], multiline: true, rows: 5,
                     })) : [{ key: 'rawContent', label: '原始 Checkpoint（旧格式）', value: item.content, multiline: true, rows: 14 }]);
                     return;
                 }

@@ -1,4 +1,4 @@
-import { messageContentFingerprint, messageFingerprint } from './utils.js?v=1.27.0';
+import { messageContentFingerprint, messageFingerprint } from './utils.js?v=1.27.1';
 
 // Opening is an extra source of the first stage, never a permanent prompt block
 // or a renumbering of the existing assistant floors / CP5 / Long50 ranges.

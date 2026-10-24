@@ -1,0 +1,42 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>阶段剧情展示与编辑 · 合成验证</title>
+<style>body{margin:0;background:#26292d;font:16px/1.5 sans-serif}#results{white-space:pre-wrap}</style>
+<div id="extensions_settings2"></div><div id="chat"></div><pre id="results">正在验证…</pre>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { MemorySummarizer } from '../src/summarizer.js';
+import { normalizeSettings } from '../src/defaults.js';
+const story='第一天傍晚，旅人在渡口向守卫借船，约定“明日天亮前归还”；守卫答应，但要求保留一盏灯。\n\n翌日清晨，旅人依约还船，澄清原先的误会。守卫已知信件内容，船夫仍不知情。';
+let settings=normalizeSettings({globalPromptMode:'blank'});
+const metadata={},results=window.detailResults=[];
+const store=new MemoryStore({getChatId:()=> 'synthetic-detail',getMetadata:()=>metadata,saveMetadata:()=>{}});
+for(const end of [5,10])store.addCheckpoint({id:`cp-${end}`,startFloor:end-4,endFloor:end,content:`[CHECKPOINT]\n[Stage Story]\n${story}`,status:'frozen'});
+const apiClient={hasApiKey:()=>false,complete:()=>{throw Error('Model calls disabled');}};
+const summarizer=new MemorySummarizer({store,getSettings:()=>settings,getChat:()=>[],apiClient});
+const ui=window.detailUI=new CacheMemoryUI({store,getSettings:()=>settings,updateSettings:patch=>settings=normalizeSettings({...settings,...patch}),persistSettings:async()=>{},getChat:()=>[],apiClient,summarizer});
+const check=(name,passed)=>{results.push({name,passed:Boolean(passed)});if(!passed)throw Error(name);};
+const settle=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+const click=selector=>{const element=document.querySelector(selector);if(!element)throw Error(`缺少${selector}`);element.click();};
+const card=()=>document.querySelector('[data-memory-type="checkpoint"][data-memory-id="cp-5"]');
+try{
+ ui.mountSettings();if(!ui.style.sheet)await new Promise(resolve=>ui.style.addEventListener('load',resolve,{once:true}));
+ ui.managerExpanded.checkpoints.add('cp-5');ui.openManager();click('[data-manager-view="checkpoints"]');await settle();
+ const before=JSON.stringify(store.current().checkpoints);
+ check('内容框有中文剧情标题且不显示协议标记',card().textContent.includes('本阶段剧情总结')&&!/\[CHECKPOINT\]|\[Stage Story\]/.test(card().textContent));
+ check('原有两段剧情和关键原话完整显示',card().querySelector('.cache-memory-structured-section p').textContent===story);
+ check('仅查看不改写已有阶段记录',JSON.stringify(store.current().checkpoints)===before);
+ card().querySelector('[data-manager-action="edit"]').click();await settle();
+ const editor=card().querySelector('textarea');
+ check('编辑框只显示剧情且只有一个字段',editor.value===story&&card().querySelectorAll('textarea').length===1);
+ editor.value=story+'\n\n船夫随后获知归还结果。';
+ card().querySelector('[data-manager-edit-save]').click();await settle();
+ check('保存后恢复内部结构且页面不露出标记',store.current().checkpoints[0].content.startsWith('[CHECKPOINT]\n[Stage Story]\n')&&!card().textContent.includes('[Stage Story]')&&card().textContent.includes('船夫随后获知归还结果'));
+ check('保存不新增空白角色状态表且不修改邻段',!store.current().checkpoints[0].content.includes('[Current State]')&&store.current().checkpoints[1].content===JSON.parse(before)[1].content);
+ click('[data-settings-tab="prompts"]');
+ check('大总结模板包含逐段覆盖和目标字数约束',document.querySelector('[data-prompt="longMemory"]').value.includes('每一份阶段总结')&&document.querySelector('[data-prompt="longMemory"]').value.includes('约70%–100%'));
+ click('[data-settings-tab="manager"]');await settle();
+ check('没有横向溢出',document.documentElement.scrollWidth<=innerWidth);
+ document.querySelector('#results').textContent=JSON.stringify(results,null,2);
+}catch(error){window.detailFailure=error.message;document.querySelector('#results').textContent=error.stack;}
+</script></html>
