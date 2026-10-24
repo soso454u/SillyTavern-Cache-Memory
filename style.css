@@ -202,7 +202,7 @@
 .cache-memory-actions .cache-memory-primary:hover { border-color: var(--cm-teal-dark); background: var(--cm-teal-dark); color: var(--cm-panel, #fff); }
 #cache-memory-wand-entry { align-items: center; cursor: pointer; }
 #cache-memory-wand-entry span { min-width: 0; white-space: nowrap; }
-#chat .cache-memory-message { display: block; position: relative; clear: both; width: 100%; min-width: 0; box-sizing: border-box; margin: 10px 0 0; padding: 6px 0; border: 0; border-top: 1px solid var(--SmartThemeBorderColor, currentColor); color: var(--SmartThemeBodyColor, inherit); background: transparent; font: inherit; font-size: 0.9em; line-height: 1.5; }
+#chat .cache-memory-message { display: block; position: relative; clear: both; width: 100%; min-width: 0; box-sizing: border-box; margin: 10px 0 0; padding: 6px 0; border: 0; color: var(--SmartThemeBodyColor, inherit); background: transparent; font: inherit; font-size: 0.9em; line-height: 1.5; }
 #chat .cache-memory-message > summary { display: block; position: static; width: 100%; box-sizing: border-box; padding: 8px 12px; color: var(--SmartThemeBodyColor, inherit); background: transparent; text-align: center; overflow-wrap: anywhere; list-style: none; cursor: pointer; user-select: none; }
 #chat .cache-memory-message > summary::marker { content: ''; }
 #chat .cache-memory-message > summary::-webkit-details-marker { display: none; }
