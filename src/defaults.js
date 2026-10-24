@@ -1,11 +1,11 @@
-import { normalizeCharacterTables } from './character-tables.js?v=1.27.3';
-import { normalizeThemeMode } from './ui-theme.js?v=1.27.3';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.3';
+import { normalizeCharacterTables } from './character-tables.js?v=1.27.4';
+import { normalizeThemeMode } from './ui-theme.js?v=1.27.4';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.4';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.3';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.3';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.4';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.4';
 
-export const PLUGIN_VERSION = '1.27.3';
+export const PLUGIN_VERSION = '1.27.4';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
