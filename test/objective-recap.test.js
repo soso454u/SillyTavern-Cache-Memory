@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PROMPTS, V1270_DEFAULT_PROMPTS, V1271_DEFAULT_PROMPTS, OBJECTIVE_RECAP_RULES, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
+import { DEFAULT_PROMPTS, V1270_DEFAULT_PROMPTS, V1271_DEFAULT_PROMPTS, OBJECTIVE_RECAP_RULES, OBJECTIVE_SUMMARY_RULES, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
 import { generationPrompt } from '../src/generation-prompts.js';
 import { parseStructuredSummary } from '../src/summary-format.js';
 import { readSection } from '../src/continuity.js';
@@ -27,13 +27,15 @@ test('both official generations migrate every stage to objective recaps while ed
     }
 });
 
-test('every actual default prompt asks for neutral event entries, conditional quotes and no target-filling quota', () => {
+test('all prompts stay objective while Summary uses narrative and aggregates keep event entries', () => {
     for (const mode of ['normal', 'advanced']) {
         const config = memoryGenerationSettings(normalizeSettings({ globalPromptMode: 'blank' }), mode);
         for (const stage of ['summary', 'checkpoint', 'longMemory']) {
             const prompt = generationPrompt(config, stage);
-            assert.ok(prompt.includes(OBJECTIVE_RECAP_RULES));
-            assert.match(prompt, /关键事件（/); assert.match(prompt, /核心原话/);
+            assert.ok(prompt.includes(stage === 'summary' ? OBJECTIVE_SUMMARY_RULES : OBJECTIVE_RECAP_RULES));
+            if (stage === 'summary') assert.match(prompt, /一段连贯叙述/);
+            else assert.match(prompt, /关键事件（/);
+            assert.match(prompt, /核心/);
             assert.match(prompt, /同一事实只出现一次/); assert.match(prompt, /不能自动当作事实/);
             assert.match(prompt, /不能拼接或删掉否定、条件、对象/);
             assert.match(prompt, /不设最低字数/); assert.doesNotMatch(prompt, /约70%–100%|尽量接近|应接近/);
@@ -63,7 +65,7 @@ for (const mode of ['normal', 'advanced']) test(`summary → CP → Long keeps r
     await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
     assert.equal(requests.length, 3);
     assert.deepEqual(requests.map(row => row.maxTokens), [settings.summaryMaxTokens + (mode === 'advanced' ? 384 : 0), settings.checkpointMaxTokens, settings.longMemoryMaxTokens]);
-    for (const request of requests) assert.ok(request.systemPrompt.includes(OBJECTIVE_RECAP_RULES));
+    for (const [index, request] of requests.entries()) assert.ok(request.systemPrompt.includes(index === 0 ? OBJECTIVE_SUMMARY_RULES : OBJECTIVE_RECAP_RULES));
     const data = store.current();
     assert.equal(Object.values(data.summaries)[0].event, event);
     assert.ok(data.checkpoints[0].content.includes(quote)); assert.ok(data.longMemories[0].content.includes(quote));

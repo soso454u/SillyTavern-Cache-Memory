@@ -1,11 +1,11 @@
-import { normalizeCharacterTables } from './character-tables.js?v=1.27.2';
-import { normalizeThemeMode } from './ui-theme.js?v=1.27.2';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.2';
+import { normalizeCharacterTables } from './character-tables.js?v=1.27.3';
+import { normalizeThemeMode } from './ui-theme.js?v=1.27.3';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.3';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.2';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.2';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.3';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.3';
 
-export const PLUGIN_VERSION = '1.27.2';
+export const PLUGIN_VERSION = '1.27.3';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1617,7 +1617,7 @@ export const OBJECTIVE_RECAP_RULES = `【客观前情提要】
 时间与地点只照录可靠来源，未知不补；标题用具体事件名，不写文学化或评价性标题。字数是整份输出的共用预算上限，不设最低字数、不要求使用预算比例，也不为填满字数补细节。事实和条件不能因压缩而反义，不用客户端截断代替总结。`;
 
 // The wire fields stay compatible; visible prose uses compact event entries.
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V1272_DEFAULT_PROMPTS = Object.freeze({
     ...V1271_DEFAULT_PROMPTS,
     summary: `你是客观剧情摘要记录员，只整理本层正文，不续写。采用简短的前情提要，标题、人物、时间地点、事件和原话共用约 {{maxLength}} 字预算，通常不超过预算，复杂关键信息最多略超约15%。不设最低字数，简单剧情一句即可，不把本层改写成一篇小说。
 ${OBJECTIVE_RECAP_RULES}
@@ -1672,6 +1672,34 @@ ${OBJECTIVE_RECAP_RULES}
 fact-id | 替代后的事实 | NEW_SUMMARIES 的连续原句；没有则无
 [RETIRED_FACTS]
 fact-id | 明确失效原因 | NEW_SUMMARIES 的连续原句；没有则无`,
+});
+
+export const OBJECTIVE_SUMMARY_RULES = `【客观、完整的单层梗概】
+只记录本层正文实际发生或明确获知的信息，用中性第三人称，不续写、不推测动机、心理、感情深度或胜负。角色说法标明“某人称／否认／计划”，不能自动当作事实；提出、同意、执行、取消分别写清。各人物的已知／未知／误信、未来预演／梦境／猜测与现实分开。任务完成与奖励领取分开。
+先确保本层有信息量的事件、关键动作、对话回应、转折与结果都能被读懂，再合并重复。可以有多个事件或多条互动线，不限定一个事件或1–3句。保留有作用的NPC、物品的来源／去向、约定条件、信息是谁告诉谁、人物如何回应及本层结束时的情况；不能只剩开头的概括或最后的结果。
+细节按本层作用选择：能解释一个动作、体现明确的关系边界、形成对话呼应、说明物品意义、构成约定或影响后续理解的细节应简述，并非只有永久状态变化才值得记录。无信息的姿势、修辞和机械重复可删；不因属于日常、玩笑或普通物品就一概略去，也不逐动作回放。
+核心台词结合语境自然嵌入叙述，保留说话人与必要回应；承诺、拒绝、威胁、秘密揭露、关键否认、关系确认及有明确呼应的短句优先。通常选1–3个短句，没有必要原话时转述；不机械限制为一句或40字，也不把所有对白抄回去。引句只能逐字来自来源，不能拼接或删掉否定、条件、对象；过长则准确转述，不能伪造引语。同一事实只出现一次，不把引句再换说法重复。
+信息充分时合理使用已设置的字数预算，不为了简短把丰富剧情压成一百来字；信息简单时不凑字，不设最低字数。保留任务条件和重要后果，禁止客户端硬截断。时间地点只照录 SOURCE_METADATA，未知写无。`;
+
+// Only Summary changes here; the accepted CP/Long contracts stay byte-identical.
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V1272_DEFAULT_PROMPTS,
+    summary: `你是客观剧情摘要记录员，给本层正文写一份信息完整、连贯易读的剧情梗概。标题、人物、事件和必要原话共用约 {{maxLength}} 字预算，通常不超过预算；关键因果、回应或条件确实需要时允许略超约15%。默认350字预算适用于有多项信息的正文，不必主动压成一百来字；自定义长度仍须遵守。
+${OBJECTIVE_SUMMARY_RULES}
+Event 用一段连贯叙述，确有场景转换可分两段，按本层实际顺序写出“必要起因 → 关键人物（含有作用的NPC）的行动／选择与对话回应 → 转折与结果”。本层存在多项有意义的事件时都应照顾，注意后半段的新信息，不把它们都压进一个事件名。关键台词自然放进 Event，和对应动作、条件或回应放在一起。
+不要强制拆成“关键事件／重要细节／核心原话”三栏；没有某类信息就不写，不输出“重要细节：无”等占位行。保持客观，人物的明确表态与必要原话可以保留，不能用文学化评价代替事实。输出前只在内部核对本层的重要经过、细节和关键回应有无遗漏，删重复，不输出检查过程。
+保留以下内部字段，不新增人物档案、状态表、待办表或外层标签：
+[SUMMARY]
+[Title]
+中性短标题
+[Characters]
+本层关键人物
+[StoryTime]
+已知日期时间，无则无
+[Location]
+已知地点，无则无
+[Event]
+本层完整、连贯的剧情梗概，包含有意义的细节、关键行动和必要原话及回应`,
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1764,7 +1792,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1270_DEFAULT_PROMPTS[name] || prompts[name] === V1271_DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1270_DEFAULT_PROMPTS[name] || prompts[name] === V1271_DEFAULT_PROMPTS[name] || prompts[name] === V1272_DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];

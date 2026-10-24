@@ -1,10 +1,10 @@
-import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.2';
-import { INJECTION_MODES } from './defaults.js?v=1.27.2';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.2';
-import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.2';
-import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.2';
-import { historyPublicationLimit } from './history-handoff.js?v=1.27.2';
-import { stageStartLabel } from './opening-source.js?v=1.27.2';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.3';
+import { INJECTION_MODES } from './defaults.js?v=1.27.3';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.3';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.3';
+import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.3';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.3';
+import { stageStartLabel } from './opening-source.js?v=1.27.3';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
