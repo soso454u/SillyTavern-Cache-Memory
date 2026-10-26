@@ -1,6 +1,7 @@
-import { LocalMemoryStorage } from './local-memory-storage.js?v=1.27.6';
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.27.6';
-import { retryOperation, waitForRetry } from './retry.js?v=1.27.6';
+import { LocalMemoryStorage } from './local-memory-storage.js?v=1.27.7';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.27.7';
+import { retryOperation, waitForRetry } from './retry.js?v=1.27.7';
+import { chatFileIdentity, memoryFromChatFile } from './chat-file.js?v=1.27.7';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -69,6 +70,7 @@ export class MemoryPersistenceCoordinator {
         this.retryDelay = retryDelay;
         this.getChatId = getChatId;
         this.getMetadata = getMetadata;
+        this.importedChatBindings = new Set();
         this.readRemoteStore = readRemoteStore;
         this.saveMetadata = saveMetadata;
         this.readAuthoritativeStore = readAuthoritativeStore;
@@ -416,6 +418,23 @@ export class MemoryPersistenceCoordinator {
         return this.getMetadata().cache_memory;
     }
 
+    async rebindImportedChatMemory() {
+        await this.ready;
+        const id = String(this.getChatId() ?? ''), metadata = this.getMetadata();
+        const original = metadata.cache_memory, captured = JSON.stringify(original), epoch = this.epoch;
+        if (!id || !original?.chatId || original.chatId === id) throw new Error('没有需要核对的导入聊天身份');
+        // readRemoteStore must verify the native file and its complete live
+        // transcript before returning a copy bound to the new scoped identity.
+        const rebound = await withDeadline(() => this.readRemoteStore(id), this.timeoutMs);
+        if (String(this.getChatId()) !== id || this.epoch !== epoch || this.getMetadata() !== metadata
+            || JSON.stringify(metadata.cache_memory) !== captured) throw new Error('核对期间聊天或记忆已变化，原副本保留');
+        if (rebound?.chatId !== id || memoryContentDigest(rebound) !== memoryContentDigest(original))
+            throw new Error('聊天文件与页面记忆不一致，原副本保留，未自动迁移');
+        metadata.cache_memory = normalizeRemote(clone(rebound), id);
+        this.importedChatBindings.add(id);
+        return metadata.cache_memory;
+    }
+
     async sync(chatId = this.getChatId(), loadedValue = this.getMetadata().cache_memory) {
         if (!this.journalReady) await this.ready;
         const id = String(chatId ?? '');
@@ -647,7 +666,7 @@ export class MemoryPersistenceCoordinator {
             replacementFallback = incoming;
         }
         const digest = memoryContentDigest(snapshot);
-        const explicit = ['manual save', 'memory import', 'store migration', 'initial authoritative migration'].includes(reason);
+        const explicit = ['manual save', 'memory import', 'store migration', 'initial authoritative migration', 'chat file identity changed'].includes(reason);
         // Rendering/reloading the same snapshot must not restart a failed save.
         // An explicit upload remains available even when the content is unchanged.
         if (!explicit && (previous?.digest === digest || !previous
@@ -666,6 +685,7 @@ export class MemoryPersistenceCoordinator {
             baseSnapshot: previous?.baseSnapshot ?? baseline?.snapshot ?? clone(snapshot),
             reason,
             restore: reason === 'memory import' || Boolean(previous?.restore),
+            writeIdentity: reason === 'chat file identity changed' || Boolean(previous?.writeIdentity),
             sequence: ++this.sequence,
             queuedAt: new Date().toISOString(),
             ...(replacementFallback ? { replacementFallback } : {}),
@@ -1007,7 +1027,7 @@ export class MemoryPersistenceCoordinator {
             }
             const firstAuthority = useAuthority && !authoritativeRecord?.store && Number(this.baselines.get(chatId)?.revision ?? 0) === 0;
             if (!firstAuthority && this.protectRead(chatId, entry.baseSnapshot, remote)) { await this.persistPending(); return this.getState(chatId); }
-            if (remoteDigest === entry.digest && !restoredConflict && !Object.keys(remoteRecovery ?? {}).length) {
+            if (remoteDigest === entry.digest && !restoredConflict && !Object.keys(remoteRecovery ?? {}).length && !(entry.writeIdentity && !useAuthority)) {
                 await this.rememberSnapshot(chatId, remote);
                 if (!stillActive() || this.pending.get(chatId)?.sequence !== entry.sequence) continue;
                 this.getMetadata().cache_memory = clone(remote);
@@ -1135,6 +1155,9 @@ export class MemoryPersistenceCoordinator {
                 return this.getState(chatId);
             }
             if (!stillActive()) return this.getState(chatId);
+            if (entry.writeIdentity && verified.sync.writeId !== desired.sync.writeId) {
+                return this.setState(chatId, MEMORY_SAVE_STATES.FAILED, '导入聊天的新身份尚未写回聊天文件；原记忆和待保存副本已保留，可重试核验');
+            }
             const verifiedDigest = memoryContentDigest(verified);
             if (verifiedDigest !== entry.digest) {
                 if (verifiedDigest === remoteDigest) {
@@ -1304,11 +1327,12 @@ export class MemoryPersistenceCoordinator {
 export async function readSillyTavernRemoteStore(getContext, chatId, fetchImpl = globalThis.fetch, { signal } = {}) {
     const context = getContext();
     if (String(context?.chatId ?? '') !== String(chatId ?? '')) throw new Error('当前聊天已切换');
+    const identity = chatFileIdentity(context, chatId);
     const headers = context?.getRequestHeaders?.();
     if (!headers) throw new Error('SillyTavern 未提供请求头，无法安全读取服务器聊天');
     let endpoint;
     let body;
-    if (context.groupId) {
+    if (context.groupId !== null && context.groupId !== undefined && context.groupId !== '') {
         endpoint = '/api/chats/group/get';
         body = { id: chatId };
     } else {
@@ -1327,11 +1351,13 @@ export async function readSillyTavernRemoteStore(getContext, chatId, fetchImpl =
     });
     if (!response.ok) throw new Error(`服务器读取失败：HTTP ${response.status}`);
     const data = await response.json();
+    const live = getContext();
+    if (chatFileIdentity(live, chatId) !== identity) throw new Error('读取期间聊天已切换');
     if (!Array.isArray(data) || !data.length || !data[0] || !Object.hasOwn(data[0], 'chat_metadata')) {
         throw new Error('服务器返回无法验证的聊天数据');
     }
     const metadata = data[0].chat_metadata ?? {};
-    const expectedIntegrity = context.chatMetadata?.integrity;
+    const expectedIntegrity = live.chatMetadata?.integrity;
     if (expectedIntegrity && metadata.integrity && expectedIntegrity !== metadata.integrity) throw new Error('服务器聊天身份与当前页面不一致');
-    return metadata.cache_memory ?? null;
+    return memoryFromChatFile(data, identity, live);
 }

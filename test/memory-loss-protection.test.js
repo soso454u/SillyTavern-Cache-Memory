@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { chatFileIdentity } from '../src/chat-file.js';
 import { readFile } from 'node:fs/promises';
 import { MemoryPersistenceCoordinator, missingMemoryRecords } from '../src/persistence.js';
 import { MemoryStore, createEmptyStore, memoryContentDigest, normalizeStore } from '../src/memory-store.js';
@@ -141,7 +142,7 @@ test('initialization does not create a scoped ID until the selected chat and own
     const source = await readFile(new URL('../index.js', import.meta.url), 'utf8');
     const body = source.match(/function memoryChatId\(\) \{([\s\S]*?)\n\}/)[1];
     let context = { chatId: 'story', characterId: 0, characters: [] }, id = 'story';
-    const getId = new Function('getContext', 'getCurrentChatId', body).bind(null, () => context, () => id);
+    const getId = new Function('getContext', 'getCurrentChatId', 'chatFileIdentity', body).bind(null, () => context, () => id, chatFileIdentity);
     assert.equal(getId(), ''); context.characters = [{ avatar: 'a.png' }];
     assert.equal(getId(), JSON.stringify(['character', 'a.png', 'story']));
     context.chatId = 'other'; assert.equal(getId(), '');

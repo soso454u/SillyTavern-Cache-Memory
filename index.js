@@ -12,19 +12,20 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.6';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.6';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.6';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.6';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.6';
-import { getAssistantMessages } from './src/utils.js?v=1.27.6';
-import { isUsableMemory } from './src/continuity.js?v=1.27.6';
-import { MemoryStore } from './src/memory-store.js?v=1.27.6';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.6';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.6';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.6';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.6';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.6';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.7';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.7';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.7';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.7';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.7';
+import { getAssistantMessages } from './src/utils.js?v=1.27.7';
+import { isUsableMemory } from './src/continuity.js?v=1.27.7';
+import { MemoryStore } from './src/memory-store.js?v=1.27.7';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.7';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.7';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.7';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.7';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.7';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.7';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -46,13 +47,7 @@ let publishedMemoryValue = null;
 
 // ST chat filenames are only unique inside a character/group, not globally.
 function memoryChatId() {
-    const context = getContext();
-    const id = getCurrentChatId();
-    if (!id || String(context?.chatId ?? '') !== String(id)) return '';
-    const group = context.groupId !== null && context.groupId !== undefined && context.groupId !== '';
-    const owner = group ? context.groupId : context.characters?.[context.characterId]?.avatar;
-    if (owner === null || owner === undefined || owner === '') return '';
-    return JSON.stringify([group ? 'group' : 'character', String(owner), String(id)]);
+    return chatFileIdentity(getContext(), getCurrentChatId());
 }
 
 const apiCacheAdapter = new ApiCacheAdapterBridge({
@@ -223,15 +218,35 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     const revision = ++refreshRevision;
     await persistence.ready;
     if (revision !== refreshRevision || !memoryChatId()) return;
-    let current;
+    let current, rebound = false;
     try { current = store.current(); }
-    catch (error) { ui?.setStatus('error', error.message); console.warn(LOG_PREFIX, error); return; }
+    catch (error) {
+        if (chat_metadata.cache_memory?.chatId && chat_metadata.cache_memory.chatId !== memoryChatId()) {
+            summarizer.invalidateContext();
+            injectionPublisher.publish(''); publishedMemoryValue = ''; activeChatId = null;
+            try { current = await persistence.rebindImportedChatMemory(); rebound = true; }
+            catch (verificationError) {
+                if (revision === refreshRevision) ui?.setStatus('error', verificationError.message);
+                console.warn(LOG_PREFIX, verificationError); return;
+            }
+        } else { ui?.setStatus('error', error.message); console.warn(LOG_PREFIX, error); return; }
+    }
+    if (revision !== refreshRevision || memoryChatId() !== current.chatId) return;
     const chatId = current.chatId;
     if (!chatId) return;
     if (chatId !== activeChatId || serverLoaded) summarizer.invalidateContext();
     if (chatId !== activeChatId || serverLoaded) current = persistence.activate(chatId, current) ?? current;
     if (chatId !== activeChatId || serverLoaded) await persistence.loadLatest(chatId);
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
+    if ((rebound || persistence.importedChatBindings.has(chatId)) && !['failed', 'conflict'].includes(persistence.getState(chatId).state)) {
+        await persistence.enqueue(store.current(), 'chat file identity changed');
+        await persistence.flush(chatId);
+        if (revision !== refreshRevision || memoryChatId() !== chatId) return;
+        if (persistence.getState(chatId).state === 'confirmed') {
+            persistence.importedChatBindings.delete(chatId);
+            ui?.setStatus('success', '已核对导入聊天，原有摘要、阶段总结和大总结已恢复。');
+        }
+    }
     store.persistMigration();
     store.syncMessages(chat);
     observedAssistantEntries = new Map(getAssistantMessages(chat).map(entry => [entry.messageIndex, entry]));
@@ -395,7 +410,7 @@ function initialize() {
     window.addEventListener('online', onlineHandler, { signal: runtimeController.signal });
     let checkingMemory = false;
     const checkMemory = async () => {
-        if (checkingMemory || document.visibilityState === 'hidden' || !memoryChatId()) return;
+        if (checkingMemory || document.visibilityState === 'hidden' || !memoryChatId() || memoryChatId() !== activeChatId) return;
         checkingMemory = true;
         try { await persistence.verify(); }
         finally { checkingMemory = false; }
