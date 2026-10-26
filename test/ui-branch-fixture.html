@@ -1,0 +1,25 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>合成平行线界面</title>
+<style>body{background:#222;color:#ddd;font:16px sans-serif} :root{--SmartThemeBodyColor:#ddd;--SmartThemeBlurTintColor:#222;--SmartThemeBorderColor:#666}</style>
+<div id="extensions_settings2"></div><div id="extensionsMenu"></div><div id="chat"></div>
+<script type="module">
+import {CacheMemoryUI} from '../src/ui.js';
+import {MemorySummarizer} from '../src/summarizer.js';
+import {MemoryStore} from '../src/memory-store.js';
+import {normalizeSettings} from '../src/defaults.js';
+import {getAssistantMessages} from '../src/utils.js';
+import {chatFileIdentity} from '../src/chat-file.js';
+import {captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch} from '../src/chat-branch.js';
+const chat=[{mes:'合成开场',is_user:false}];
+for(let i=1;i<=8;i++) chat.push({mes:`合成输入${i}`,is_user:true,send_date:`u${i}`},{mes:`合成正文${i}`,is_user:false,gen_started:`g${i}`});
+const metadata={integrity:'synthetic-only'},settings=normalizeSettings(),files=new Map();
+const context={chatId:'original',characterId:0,groupId:null,characters:[{name:'合成角色',avatar:'synthetic.png'}],chat,chatMetadata:metadata,getRequestHeaders:()=>({'Content-Type':'application/json'})};
+const store=new MemoryStore({getChatId:()=>chatFileIdentity(context),getMetadata:()=>metadata,saveMetadata(){}});
+for(const row of getAssistantMessages(chat))store.addSummary({messageId:row.messageId,floor:row.floor,event:`合成剧情${row.floor}`,sourceContentFingerprint:row.contentFingerprint,status:'frozen',frozen:true});
+const summarizer=new MemorySummarizer({store,getSettings:()=>settings,getChat:()=>chat,apiClient:{complete(){throw Error('No model calls in UI fixture');}}});
+const ui=new CacheMemoryUI({store,getSettings:()=>settings,updateSettings:patch=>Object.assign(settings,patch),getChat:()=>chat,apiClient:{hasApiKey:()=>false},summarizer,
+ captureChat:()=>captureChatFile(context,store.current()),exportChat:rows=>chatFileDownload(rows,'合成聊天'),
+ createChatBranch:async(rows,options)=>saveChatBranch({branch:prepareChatBranch(rows,options,settings),context,getContext:()=>context,openAfterCreate:options.openAfterCreate,
+ fetchImpl:async(url,init)=>{const body=JSON.parse(init.body);if(url.endsWith('/save')){files.set(body.file_name,body.chat);return new Response('{}');}return new Response(JSON.stringify(files.get(body.file_name)??[]));}})});
+window.fixture={ui,store,settings,context,files};
+ui.mountSettings();ui.openManager();
+</script></html>

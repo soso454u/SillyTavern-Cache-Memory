@@ -12,20 +12,22 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.7';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.7';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.7';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.7';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.7';
-import { getAssistantMessages } from './src/utils.js?v=1.27.7';
-import { isUsableMemory } from './src/continuity.js?v=1.27.7';
-import { MemoryStore } from './src/memory-store.js?v=1.27.7';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.7';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.7';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.7';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.7';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.7';
-import { chatFileIdentity } from './src/chat-file.js?v=1.27.7';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.8';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.8';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.8';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.8';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.8';
+import { getAssistantMessages } from './src/utils.js?v=1.27.8';
+import { isUsableMemory } from './src/continuity.js?v=1.27.8';
+import { MemoryStore } from './src/memory-store.js?v=1.27.8';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.8';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.8';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.8';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.8';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.8';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.8';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.8';
+import { memoryContentDigest } from './src/memory-store.js?v=1.27.8';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -380,6 +382,24 @@ function initialize() {
         store,
         summarizer,
         getChat: () => chat,
+        captureChat: () => {
+            if (isGenerating() || memoryChatId() !== activeChatId) throw new Error('请等待当前聊天加载及回复生成完成');
+            return captureChatFile(getContext(), store.current());
+        },
+        exportChat: rows => chatFileDownload(rows, getCurrentChatId()),
+        createChatBranch: async (rows, options) => {
+            const context = getContext(), identity = memoryChatId();
+            if (isGenerating() || identity !== activeChatId || rows[0].chat_metadata.cache_memory.chatId !== identity
+                || memoryContentDigest(rows[0].chat_metadata.cache_memory) !== memoryContentDigest(store.current())
+                || JSON.stringify(rows.slice(1)) !== JSON.stringify(chat)) throw new Error('选择期间聊天或记忆已变化，请重新打开平行线设置');
+            const branch = prepareChatBranch(rows, options, settings);
+            let saveGroupBranch;
+            if (context.groupId !== null && context.groupId !== undefined && context.groupId !== '') {
+                ({ saveGroupBookmarkChat: saveGroupBranch } = await import('../../../group-chats.js'));
+            }
+            return saveChatBranch({ branch, context, getContext, fetchImpl: window.fetch.bind(window), saveGroupBranch,
+                openAfterCreate: options.openAfterCreate, canSwitch: () => !isGenerating() });
+        },
         updateInjection,
         persistence,
         apiCacheAdapter,

@@ -52,10 +52,11 @@ function swipeMessageIds(message) {
 }
 
 export function getAssistantMessages(chat) {
-    let floor = 0;
+    let floor = chatFloorOffset(chat);
     return (Array.isArray(chat) ? chat : []).flatMap((message, messageIndex) => {
         if (!isNormalAssistant(message)) return [];
         const isUngeneratedGreeting = messageIndex === 0
+            && message.extra?.cache_memory_branch?.hasOpening !== false
             && !message.gen_started
             && !message.gen_finished
             && !message.extra?.api
@@ -74,6 +75,11 @@ export function getAssistantMessages(chat) {
             sourceMessageKey: relatedMessageIds[0] ?? messageIdentity(message),
         }];
     });
+}
+
+export function chatFloorOffset(chat) {
+    const offset = chat?.[0]?.extra?.cache_memory_branch?.floorOffset;
+    return Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
 }
 
 export function replacePromptVariables(template, values) {
@@ -96,7 +102,11 @@ export function formatDate(iso) {
 }
 
 export function downloadJson(filename, data, doc = document) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    downloadText(filename, JSON.stringify(data, null, 2), 'application/json', doc);
+}
+
+export function downloadText(filename, content, type = 'text/plain', doc = document) {
+    const blob = new Blob([content], { type });
     const link = doc.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = filename;

@@ -1,5 +1,5 @@
-import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.7';
-import { publishedOpeningCoverage } from './opening-source.js?v=1.27.7';
+import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.8';
+import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.8';
 
 export const RECENT_RAW_FLOORS = 5;
 
@@ -77,7 +77,8 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
     if (!historyHandoff && !lastUserOnly && !rolling) return unchanged('selection-disabled');
     const originalById = unique(chat);
     const sourceFor = promptSourceResolver(chat);
-    const latestUser = chat.findLast((row, index) => index > 0 && row.is_user === true
+    const openingMessage = getOpeningSource(chat)?.message;
+    const latestUser = chat.findLast(row => row !== openingMessage && row.is_user === true
         && !row.is_system && !Array.isArray(row.extra?.tool_invocations));
     const openingCovered = publishedOpeningCoverage(chat, snapshot, publishedValue);
     const selected = coreChat.filter(row => {
@@ -86,7 +87,7 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
         if (!source) return true;
         // Do not silently discard the only copy of the initial facts while
         // upgrading old CPs or before the first stage has been published.
-        if (source === chat[0]) return !openingCovered;
+        if (source === openingMessage) return !openingCovered;
         return !lastUserOnly || source.is_user !== true || source === latestUser;
     });
     const entries = getAssistantMessages(chat);
@@ -144,7 +145,7 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
             // the independent latest-user-only selection already excluded it.
             for (let i = previousIndex + 1; i <= entry.messageIndex; i++) {
                 const original = chat[i];
-                if (original === chat[0]) continue; // only the opening-coverage policy may remove it
+                if (original === openingMessage) continue; // only the opening-coverage policy may remove it
                 if (i !== entry.messageIndex && original.is_user !== true) continue;
                 if (lastUserOnly && original === latestUser) continue;
                 if (original.is_system || Array.isArray(original.extra?.tool_invocations)) continue;

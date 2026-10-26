@@ -1,21 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.7';
-import { applyUITheme } from './ui-theme.js?v=1.27.7';
-import { stageStartLabel } from './opening-source.js?v=1.27.7';
-import { generationPrompt } from './generation-prompts.js?v=1.27.7';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.7';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.7';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.7';
-import { HistoryBackfill } from './history-backfill.js?v=1.27.7';
-import { downloadJson, formatDate, getAssistantMessages } from './utils.js?v=1.27.7';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.7';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.7';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.7';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.7';
-import { parseFloorSummary } from './summarizer.js?v=1.27.7';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.7';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.8';
+import { applyUITheme } from './ui-theme.js?v=1.27.8';
+import { stageStartLabel } from './opening-source.js?v=1.27.8';
+import { generationPrompt } from './generation-prompts.js?v=1.27.8';
+import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.8';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.8';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.8';
+import { HistoryBackfill } from './history-backfill.js?v=1.27.8';
+import { downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.8';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.8';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.8';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.8';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.8';
+import { parseFloorSummary } from './summarizer.js?v=1.27.8';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.8';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.7';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.7';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.8';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.8';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -360,6 +360,8 @@ function managerPanelTemplate() {
                 <button type="button" class="menu_button" data-save-memory title="以当前本机记忆为准上传，覆盖前备份服务器原数据">上传记忆到服务器</button>
                 <button type="button" class="menu_button" data-read-server>从服务器恢复记忆</button>
                 <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 下载记忆 JSON</button>
+                <button type="button" class="menu_button" data-export-chat>下载聊天＋记忆</button>
+                <button type="button" class="menu_button" data-create-branch>创建平行线聊天</button>
                 <button type="button" class="menu_button" data-import-merge><i class="fa-solid fa-upload"></i> 导入记忆 JSON</button>
                 <input type="file" accept="application/json,.json" data-import-merge-file hidden>
             </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
@@ -533,7 +535,7 @@ export function configTemplate() {
 }
 
 export class CacheMemoryUI {
-    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, updateInjection, persistence, apiCacheAdapter }) {
+    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, captureChat, exportChat, createChatBranch, updateInjection, persistence, apiCacheAdapter }) {
         this.root = resolveUIRoot();
         this.doc = this.root.document;
         this.getSettings = getSettings;
@@ -543,6 +545,9 @@ export class CacheMemoryUI {
         this.store = store;
         this.summarizer = summarizer;
         this.getChat = getChat;
+        this.captureChat = captureChat;
+        this.exportChat = exportChat;
+        this.createChatBranch = createChatBranch;
         this.updateInjection = updateInjection;
         this.persistence = persistence;
         this.apiCacheAdapter = apiCacheAdapter;
@@ -599,7 +604,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.7', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.8', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -1580,8 +1585,11 @@ export class CacheMemoryUI {
                 label.append(this.element('span', '', field.label));
                 const input = this.element(field.options ? 'select' : field.multiline ? 'textarea' : 'input');
                 if (field.options) for (const [value, text] of field.options) { const option = this.element('option', '', text); option.value = value; input.append(option); }
-                else if (!field.multiline) input.type = 'text';
+                else if (!field.multiline) input.type = field.type || 'text';
                 else input.rows = 1;
+                if (field.min != null) input.min = field.min;
+                if (field.max != null) input.max = field.max;
+                if (field.type === 'number') input.step = '1';
                 input.name = field.key;
                 input.value = String(field.value ?? '');
                 label.append(input);
@@ -1594,6 +1602,16 @@ export class CacheMemoryUI {
             confirm.type = 'submit';
             actions.append(cancel, confirm);
             form.append(header, content, actions);
+            const syncFields = () => {
+                for (const field of fields.filter(field => field.visibleWhen)) {
+                    const input = form.elements.namedItem(field.key);
+                    const visible = form.elements.namedItem(field.visibleWhen.key)?.value === field.visibleWhen.value;
+                    input.closest('label').hidden = !visible;
+                    input.disabled = !visible;
+                }
+            };
+            content.addEventListener('change', syncFields);
+            syncFields();
             overlay.append(form);
             this.doc.body.append(overlay);
             const anchor = this.config && !this.config.hidden ? this.config.querySelector('.cache-memory-config-frame') : null;
@@ -2737,7 +2755,7 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
-        const button = event.target.closest('[data-audit-open], [data-audit-step], [data-audit-select-floor], [data-audit-regenerate], [data-audit-batch], [data-audit-stop], [data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
+        const button = event.target.closest('[data-audit-open], [data-audit-step], [data-audit-select-floor], [data-audit-regenerate], [data-audit-batch], [data-audit-stop], [data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-export-chat], [data-create-branch], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
         if (!button) return this.performManagerClick(event);
         if (button.matches('[data-audit-stop]')) {
             if (this.summaryAuditRun?.running) this.summaryAuditRun.stop = true;
@@ -3147,6 +3165,30 @@ export class CacheMemoryUI {
             try { await this.summarizer.enqueueForCurrentChat(() => this.summarizer.generateAggregatesFrom(start)); }
             catch (error) { notify('error', error.message); }
             this.renderManager();
+            return;
+        }
+        if (event.target.closest('[data-export-chat]')) {
+            const file = this.exportChat(this.captureChat());
+            downloadText(file.filename, file.content, 'application/x-ndjson', this.doc);
+            this.setManagerActionStatus('success', '已发起聊天＋记忆 JSONL 下载，可直接导入酒馆聊天管理。');
+            return;
+        }
+        if (event.target.closest('[data-create-branch]')) {
+            const rows = this.captureChat(), entries = getAssistantMessages(rows.slice(1)), latest = entries.at(-1)?.floor;
+            if (!latest) throw new Error('当前聊天没有可选择的正常 char 楼层');
+            const values = await this.showPluginDialog({ title: '创建平行线聊天',
+                message: `按正常 char 回复计层，当前原文为第 ${entries[0].floor}–${latest} 层。最近模式保留早期记忆；历史分叉仅继承分叉点前记忆，不复制其他扩展的当前状态。创建后默认留在原聊天。`,
+                confirmLabel: '创建独立聊天', fields: [
+                    { key: 'name', label: '新聊天名称', value: '平行线' },
+                    { key: 'mode', label: '选择方式', value: 'recent', options: [['recent', '只带最近 N 层正文＋此前记忆'], ['through', '从开头保留到第 N 层并分叉']] },
+                    { key: 'count', label: `保留多少层正文（1–${entries.length}）`, value: Math.min(3, entries.length), type: 'number', min: 1, max: entries.length, visibleWhen: { key: 'mode', value: 'recent' } },
+                    { key: 'endFloor', label: `截至第几层（${entries[0].floor}–${latest}）`, value: latest, type: 'number', min: entries[0].floor, max: latest, visibleWhen: { key: 'mode', value: 'through' } },
+                    { key: 'switch', label: '创建后的操作', value: 'stay', options: [['stay', '只创建，暂不切换'], ['open', '创建后立即切换']] },
+                ] });
+            if (!values) return;
+            const result = await this.createChatBranch(rows, { name: values.name, mode: values.mode, count: Number(values.count),
+                endFloor: Number(values.endFloor), openAfterCreate: values.switch === 'open' });
+            this.setManagerActionStatus('success', `已创建「${result.filename}」。${result.switched ? '已切换到新聊天。' : '当前聊天保留，可稍后从酒馆聊天列表打开。'}`);
             return;
         }
         if (event.target.closest('[data-export]')) {
