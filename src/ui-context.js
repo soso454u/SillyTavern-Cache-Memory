@@ -10,11 +10,44 @@ export function viewportSize(root) {
         left: root.visualViewport?.offsetLeft || 0, top: root.visualViewport?.offsetTop || 0 };
 }
 
-// iOS keyboards and zoom change the visible area without changing layout vh.
+// Capture layout space once. lvh also works when a dialog is first opened
+// while a keyboard has already reduced innerHeight on Android.
+function layoutViewport(root) {
+    let width = root.innerWidth, height = Math.max(root.innerHeight || 0, root.document?.documentElement?.clientHeight || 0);
+    if (root.CSS?.supports?.('height', '100lvh') && root.document?.body) {
+        const probe = root.document.createElement('div');
+        probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;width:100lvw;height:100lvh;inset:0;border:0;padding:0;margin:0;';
+        root.document.body.append(probe);
+        const rect = probe.getBoundingClientRect();
+        width = Math.max(width || 0, rect.width); height = Math.max(height, rect.height);
+        probe.remove();
+    }
+    return { width, height, left: 0, top: 0 };
+}
+
+export function lockDialogSize(panel) {
+    if (!panel || panel.dataset.memorySizeLocked) return;
+    const rect = panel.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return;
+    panel.style.width = `${rect.width}px`;
+    panel.style.height = `${rect.height}px`;
+    panel.dataset.memorySizeLocked = 'true';
+}
+
+// Keyboard/focus events may scroll content, never change a window's geometry.
 export function bindDialogViewport(overlay, root, signal, anchor = null) {
     let frame = null;
-    let fullHeight = viewportSize(root).height;
-    let fullWidth = root.innerWidth;
+    const view = layoutViewport(root);
+    const mobile = root.matchMedia?.('(pointer: coarse)')?.matches || view.width <= 650;
+    const rect = !mobile ? anchor?.getBoundingClientRect() : null;
+    const left = rect ? Math.max(view.left, rect.left) : view.left;
+    const top = rect ? Math.max(view.top, rect.top) : view.top;
+    const right = rect ? Math.min(view.width, rect.right) : view.width;
+    const bottom = rect ? Math.min(view.height, rect.bottom) : view.height;
+    Object.assign(overlay.style, { top: `${top}px`, left: `${left}px`,
+        width: `${Math.max(0, right - left)}px`, height: `${Math.max(0, bottom - top)}px`, right: 'auto', bottom: 'auto' });
+    overlay.style.setProperty('--cm-dialog-height', `${Math.max(0, bottom - top)}px`);
+    lockDialogSize(overlay.querySelector?.('.cache-memory-modal-panel'));
     const editable = () => {
         const input = root.document?.activeElement;
         return overlay.contains(input) && input?.matches('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]') ? input : null;
@@ -38,46 +71,15 @@ export function bindDialogViewport(overlay, root, signal, anchor = null) {
     };
     const update = () => {
         frame = null;
-        const view = viewportSize(root);
-        // A confirmation lives within both the plugin frame and the visual viewport.
-        // Use viewport coordinates because this overlay is fixed on document.body.
-        const mobile = (root.matchMedia?.('(pointer: coarse)')?.matches || view.width <= 650);
+        const visible = viewportSize(root);
         const input = editable();
-        if (Math.abs(root.innerWidth - fullWidth) > 80) { fullHeight = view.height; fullWidth = root.innerWidth; }
-        if (!input && view.height >= fullHeight - 100 || view.height > fullHeight) fullHeight = view.height;
-        const keyboard = mobile && Boolean(input) && fullHeight - view.height > 100;
+        const inset = Math.max(0, view.height - visible.height);
+        const keyboard = mobile && Boolean(input) && inset > 100;
         overlay.dataset.keyboardOpen = String(keyboard);
-        // iOS/WebKit can pan the visual viewport several times during focus.
-        // Updating the MAIN window's geometry on every intermediate offset
-        // causes it to jump above the screen. Freeze its *existing* geometry
-        // from the first input focus (like the stable Selene music panel);
-        // allow only its internal scroller to reveal the active field.
-        // Confirmation dialogs remain keyboard-sized separately below.
-        const freezeMain = mobile && Boolean(input)
-            && overlay.classList?.contains('cache-memory-overlay');
-        if (freezeMain) {
-            overlay.style.setProperty('--cm-keyboard-inset',
-                keyboard ? `${Math.max(0, fullHeight - view.height)}px` : '0px');
-            keepInputVisible();
-            return;
-        }
-        const rect = !mobile ? anchor?.getBoundingClientRect() : null;
-        const left = rect ? Math.max(view.left, rect.left) : view.left;
-        const top = rect ? Math.max(view.top, rect.top) : view.top;
-        const right = rect ? Math.min(view.left + view.width, rect.right) : view.left + view.width;
-        const bottom = rect ? Math.min(view.top + view.height, rect.bottom) : view.top + view.height;
-        const width = Math.max(0, right - left), height = Math.max(0, bottom - top);
-        overlay.style.setProperty('--cm-keyboard-inset', '0px');
-        Object.assign(overlay.style, { top: `${top}px`, left: `${left}px`,
-            width: `${width}px`, height: `${height}px`, right: 'auto', bottom: 'auto' });
-        overlay.style.setProperty('--cm-dialog-height', `${height}px`);
+        overlay.style.setProperty('--cm-keyboard-inset', keyboard ? `${inset}px` : '0px');
         keepInputVisible();
     };
     const schedule = () => { if (frame === null) frame = root.requestAnimationFrame(update); };
-    const resizeObserver = anchor && root.ResizeObserver ? new root.ResizeObserver(schedule) : null;
-    const styleObserver = anchor && root.MutationObserver ? new root.MutationObserver(schedule) : null;
-    resizeObserver?.observe(anchor);
-    styleObserver?.observe(anchor, { attributes: true, attributeFilter: ['style'] });
     const dispose = () => {
         if (frame !== null) root.cancelAnimationFrame(frame);
         frame = null;
@@ -87,8 +89,6 @@ export function bindDialogViewport(overlay, root, signal, anchor = null) {
         root.visualViewport?.removeEventListener('resize', schedule);
         root.visualViewport?.removeEventListener('scroll', schedule);
         signal?.removeEventListener('abort', dispose);
-        resizeObserver?.disconnect();
-        styleObserver?.disconnect();
     };
     update();
     root.addEventListener('resize', schedule);

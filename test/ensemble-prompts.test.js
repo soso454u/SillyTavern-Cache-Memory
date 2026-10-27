@@ -45,7 +45,7 @@ function viewportFixture() {
     return { root, overlay, handlers, viewportHandlers, frames };
 }
 
-test('dialogs intersect plugin bounds with offset visualViewport and clean up listeners on cancellation', () => {
+test('desktop dialogs capture plugin bounds once despite visualViewport changes and clean up on cancellation', () => {
     const f = viewportFixture(), controller = new AbortController();
     const anchor = { getBoundingClientRect: () => ({ left: 10, top: 20, right: 380, bottom: 800 }) };
     f.overlay.contains = () => false; f.overlay.dataset = {};
@@ -53,15 +53,17 @@ test('dialogs intersect plugin bounds with offset visualViewport and clean up li
     f.root.innerWidth = 1200; f.root.visualViewport.width = 1200;
     bindDialogViewport(f.overlay, f.root, controller.signal, anchor);
     assert.equal(f.overlay.style.left, '10px');
-    assert.equal(f.overlay.style.top, '40px');
+    assert.equal(f.overlay.style.top, '20px');
     assert.equal(f.overlay.style.width, '370px');
-    assert.equal(f.overlay.style.height, '420px');
+    assert.equal(f.overlay.style.height, '780px');
     f.root.visualViewport.height = 260;
     f.viewportHandlers.get('resize')();
     f.viewportHandlers.get('scroll')();
     assert.equal(f.frames.size, 1);
     [...f.frames.values()][0](); f.frames.clear();
-    assert.equal(f.overlay.style['--cm-dialog-height'], '260px');
+    assert.equal(f.overlay.style['--cm-dialog-height'], '780px');
+    assert.equal(f.overlay.style.top, '20px');
+    assert.equal(f.overlay.style.height, '780px');
     f.viewportHandlers.get('resize')();
     controller.abort();
     assert.equal(f.frames.size, 0);

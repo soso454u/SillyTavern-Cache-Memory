@@ -529,19 +529,12 @@ body.cache-memory-config-open { overflow: hidden; }
     #cache-memory-config .cache-memory-dialog-title > div > small:first-of-type { display: none; }
 }
 
-/* Use one measured visible viewport for the dialog; dvh and focus zoom must
-   not independently resize its descendants while a keyboard is opening. */
+/* Input focus and keyboard changes must not resize windows or collapse tabs. */
 @media (max-width: 650px), (pointer: coarse) {
     #cache-memory-config input:not([type="checkbox"]):not([type="radio"]),
     #cache-memory-config textarea, #cache-memory-config select,
     .cache-memory-modal-field input, .cache-memory-modal-field textarea,
     .cache-memory-modal-field select { font-size: 16px; }
-    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-pinned { display: block; }
-    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-pinned > :not(.cache-memory-dialog-header) { display: none !important; }
-    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-config-panel { scroll-padding-top: 72px; }
-    .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-dialog-title small { display: none; }
-    .cache-memory-overlay[data-keyboard-open="true"] textarea,
-    .cache-memory-modal-overlay[data-keyboard-open="true"] textarea { max-height: max(64px, calc(var(--cm-dialog-height) - 160px)); }
 }
 
 /* Source-to-Summary manual review; the check has no memory side effects. */
@@ -568,6 +561,10 @@ body.cache-memory-config-open { overflow: hidden; }
 @media (max-width:650px), (pointer:coarse) {
   .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-config-panel {
       padding-bottom:calc(var(--cm-keyboard-inset, 0px) + 28px);
+      scroll-padding-bottom:24px;
+  }
+  .cache-memory-modal-overlay[data-keyboard-open="true"] .cache-memory-modal-content {
+      padding-bottom:calc(var(--cm-keyboard-inset, 0px) + 12px);
       scroll-padding-bottom:24px;
   }
 }

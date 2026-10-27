@@ -1,7 +1,7 @@
-import { LocalMemoryStorage } from './local-memory-storage.js?v=1.27.8';
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.27.8';
-import { retryOperation, waitForRetry } from './retry.js?v=1.27.8';
-import { chatFileIdentity, memoryFromChatFile } from './chat-file.js?v=1.27.8';
+import { LocalMemoryStorage } from './local-memory-storage.js?v=1.27.9';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.27.9';
+import { retryOperation, waitForRetry } from './retry.js?v=1.27.9';
+import { chatFileIdentity, memoryFromChatFile } from './chat-file.js?v=1.27.9';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',

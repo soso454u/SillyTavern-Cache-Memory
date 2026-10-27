@@ -1,5 +1,5 @@
-import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.8';
-import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.8';
+import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.9';
+import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.9';
 
 export const RECENT_RAW_FLOORS = 5;
 

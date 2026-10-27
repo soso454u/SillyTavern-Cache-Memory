@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from '../src/ui-context.js';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from '../src/ui-context.js';
 import { buildCheckpointContent, buildLongMemoryContent, CacheMemoryUI, configTemplate, estimateTokenCount, memoryOverviewStats, parseCheckpointSections, parseLongMemorySections, summaryHealthDetails } from '../src/ui.js';
 
 test('overview reports expected memory counts, injection size and broken chains locally', () => {
@@ -191,7 +191,7 @@ test('Long Memory inline save uses the existing store edit path and keeps its ca
     assert.equal(calls[1][2].content, '完整旧格式正文\n[Extra]\n独有信息');
 });
 
-test('mobile visual viewport resize and pan keeps inputs visible without clipping against a shrinking parent, then restores', () => {
+test('mobile modal geometry stays fixed through keyboard pan, Android layout shrink and delayed blur', () => {
     const vvListeners = {}, overlayListeners = {}, frames = new Map(); let sequence = 0;
     const vv = { width: 390, height: 844, offsetLeft: 0, offsetTop: 0,
         addEventListener: (name, fn) => { vvListeners[name] = fn; }, removeEventListener: name => { delete vvListeners[name]; } };
@@ -207,10 +207,12 @@ test('mobile visual viewport resize and pan keeps inputs visible without clippin
     vv.height = 400; vv.offsetTop = 38;
     for (let n = 0; n < 30; n++) vvListeners.resize();
     assert.equal(frames.size, 1); const frame = [...frames.values()][0]; frames.clear(); frame();
-    assert.equal(style.height, '400px'); assert.equal(style.top, '38px'); assert.equal(overlay.dataset.keyboardOpen, 'true'); assert.ok(scroller.scrollTop > 0);
-    // Android may shrink the layout viewport itself; it must use the same dimensions once.
+    assert.equal(style.height, '844px'); assert.equal(style.top, '0px'); assert.equal(overlay.dataset.keyboardOpen, 'true'); assert.ok(scroller.scrollTop > 0);
+    // Android may shrink the layout viewport too; this must not resize either window.
     root.innerHeight = 400; vv.offsetTop = 0; vvListeners.resize(); [...frames.values()][0](); frames.clear();
-    assert.equal(style.height, '400px'); assert.equal(style.top, '0px');
+    assert.equal(style.height, '844px'); assert.equal(style.top, '0px');
+    root.document.activeElement = null; overlayListeners.focusout(); [...frames.values()][0](); frames.clear();
+    assert.equal(style.height, '844px'); // Blur can arrive before keyboard dismissal.
     root.innerHeight = vv.height = 844; root.document.activeElement = null; overlayListeners.focusout(); [...frames.values()][0](); frames.clear();
     assert.equal(style.height, '844px'); assert.equal(overlay.dataset.keyboardOpen, 'false');
     dispose(); assert.equal(Object.keys(vvListeners).length, 0); assert.equal(Object.keys(overlayListeners).length, 0);
@@ -274,4 +276,76 @@ test('mobile main settings never repositions on focus, keyboard pan or partial v
     assert.equal(style['--cm-keyboard-inset'],'0px');
     assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
     stop();
+});
+
+test('initial pixel dimensions lock once and do not overwrite a later manual size', () => {
+    let reads = 0;
+    const panel = { dataset: {}, style: {}, getBoundingClientRect() { reads++; return { width: 374, height: 610 }; } };
+    lockDialogSize(panel);
+    assert.equal(panel.style.width, '374px'); assert.equal(panel.style.height, '610px');
+    panel.style.height = '480px';
+    lockDialogSize(panel);
+    assert.equal(panel.style.height, '480px'); assert.equal(reads, 1);
+});
+
+test('focusing a child dialog never shrinks the parent; closing it before keyboard dismissal also keeps both dimensions', () => {
+    const frames = new Map(), vvHandlers = new Map(); let nextFrame = 0;
+    const vv = { width: 390, height: 844, offsetTop: 0, offsetLeft: 0,
+        addEventListener(k, f) { const set = vvHandlers.get(k) ?? new Set(); set.add(f); vvHandlers.set(k, set); },
+        removeEventListener(k, f) { vvHandlers.get(k)?.delete(f); } };
+    const root = { innerWidth: 390, innerHeight: 844, visualViewport: vv, document: { activeElement: null }, matchMedia: () => ({ matches: true }),
+        requestAnimationFrame(f) { frames.set(++nextFrame, f); return nextFrame; }, cancelAnimationFrame(id) { frames.delete(id); }, addEventListener() {}, removeEventListener() {},
+        ResizeObserver: class { constructor() { assert.fail('Do not resize a dialog in response to its parent'); } },
+        MutationObserver: class { constructor() { assert.fail('Do not resize a dialog in response to parent style changes'); } } };
+    const scroller = { scrollTop: 0, getBoundingClientRect: () => ({ top: 80, bottom: 700 }), querySelector: () => null };
+    const input = { matches: () => true, closest: () => scroller, getBoundingClientRect: () => ({ top: 640, bottom: 680 }) };
+    const makeOverlay = contains => ({ style: { setProperty(k,v) {this[k]=v;} }, dataset: {}, contains,
+        addEventListener() {}, removeEventListener() {} });
+    const main = makeOverlay(() => false), modal = makeOverlay(el => el === input);
+    const panel = { style: {}, dataset: {}, getBoundingClientRect: () => ({ width: 374, height: 620 }) };
+    modal.querySelector = () => panel;
+    const parentCtrl = new AbortController(), modalCtrl = new AbortController();
+    bindDialogViewport(main, root, parentCtrl.signal);
+    bindDialogViewport(modal, root, modalCtrl.signal, { getBoundingClientRect: () => ({ left:0,right:390,top:100,bottom:700 }) });
+    const geometry = target => [target.style.top, target.style.left, target.style.width, target.style.height];
+    const parentBefore = geometry(main), modalBefore = geometry(modal);
+    root.document.activeElement = input; vv.height = root.innerHeight = 390; vv.offsetTop = 38;
+    for (const fn of vvHandlers.get('resize')) fn();
+    for (const fn of [...frames.values()]) fn(); frames.clear();
+    assert.deepEqual(geometry(main), parentBefore); assert.deepEqual(geometry(modal), modalBefore);
+    assert.equal(panel.style.height, '620px'); assert.ok(scroller.scrollTop > 0);
+    root.document.activeElement = null; modalCtrl.abort();
+    for (const fn of vvHandlers.get('scroll')) fn();
+    for (const fn of [...frames.values()]) fn(); frames.clear();
+    assert.deepEqual(geometry(main), parentBefore);
+    assert.equal(vvHandlers.get('resize').size, 1);
+    parentCtrl.abort();
+    assert.equal(vvHandlers.get('resize').size, 0);
+});
+
+test('only edge pointer gestures resize windows; viewport events cannot clamp a manual height', () => {
+    const frames = new Map(); let next = 0, captured = null;
+    const handlers = {}, rootHandlers = {}, viewHandlers = {};
+    const edge = { dataset: { resizeEdge: 's' }, addEventListener(k,f) { handlers[k]=f; },
+        setPointerCapture(id) { captured=id; }, hasPointerCapture:id=>captured===id, releasePointerCapture(){captured=null;} };
+    const handle = { addEventListener(){}, classList:{add(){},remove(){}} };
+    const panel = { style:{removeProperty(k){delete this[k];}}, querySelector:()=>handle, querySelectorAll:()=>[edge],
+        getBoundingClientRect:()=>({width:600,height:600,left:100,right:700,top:100,bottom:700}) };
+    const overlay = { querySelector:()=>panel, classList:{add(){},remove(){}} };
+    const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { controller:new AbortController(), root:{
+        innerWidth:1200,innerHeight:900,visualViewport:{width:1200,height:900,addEventListener(k,f){viewHandlers[k]=f;}},
+        requestAnimationFrame(f){frames.set(++next,f);return next;},cancelAnimationFrame(id){frames.delete(id);},
+        addEventListener(k,f){rootHandlers[k]=f;},getComputedStyle:()=>({paddingTop:'8px',paddingBottom:'8px'}) } });
+    ui.bindDialogDrag(overlay);
+    assert.equal(panel.style.height, undefined);
+    handlers.pointerdown({button:0,pointerId:7,clientX:400,clientY:700,preventDefault(){}});
+    handlers.pointermove({pointerId:7,clientX:400,clientY:500});
+    for(const fn of [...frames.values()]) fn(); frames.clear(); handlers.pointerup();
+    assert.equal(panel.style.height,'400px'); assert.equal(captured,null);
+    ui.root.innerHeight = ui.root.visualViewport.height = 300;
+    rootHandlers.resize?.(); viewHandlers.resize?.();
+    for(const fn of [...frames.values()]) fn(); frames.clear();
+    assert.equal(panel.style.height,'400px');
+    assert.equal(rootHandlers.resize,undefined); assert.equal(viewHandlers.resize,undefined);
+    ui.controller.abort();
 });

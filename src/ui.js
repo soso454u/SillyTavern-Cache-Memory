@@ -1,21 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.8';
-import { applyUITheme } from './ui-theme.js?v=1.27.8';
-import { stageStartLabel } from './opening-source.js?v=1.27.8';
-import { generationPrompt } from './generation-prompts.js?v=1.27.8';
-import { bindDialogViewport, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.8';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.8';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.8';
-import { HistoryBackfill } from './history-backfill.js?v=1.27.8';
-import { downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.8';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.8';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.8';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.8';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.8';
-import { parseFloorSummary } from './summarizer.js?v=1.27.8';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.8';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.9';
+import { applyUITheme } from './ui-theme.js?v=1.27.9';
+import { stageStartLabel } from './opening-source.js?v=1.27.9';
+import { generationPrompt } from './generation-prompts.js?v=1.27.9';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.9';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.9';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.9';
+import { HistoryBackfill } from './history-backfill.js?v=1.27.9';
+import { downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.9';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.9';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.9';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.9';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.9';
+import { parseFloorSummary } from './summarizer.js?v=1.27.9';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.9';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.8';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.8';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.9';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.9';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -604,7 +604,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.8', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.9', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -666,9 +666,9 @@ export class CacheMemoryUI {
         }, { signal: this.controller.signal });
     }
 
-    bindDialogDrag(overlay) {
-        const panel = overlay.querySelector('.cache-memory-config-frame') ?? overlay.querySelector('.cache-memory-config-panel, .cache-memory-manager-panel');
-        const handle = panel.querySelector('.cache-memory-dialog-header');
+    bindDialogDrag(overlay, signal = this.controller.signal) {
+        const panel = overlay.querySelector('.cache-memory-config-frame') ?? overlay.querySelector('.cache-memory-config-panel, .cache-memory-manager-panel, .cache-memory-modal-panel');
+        const handle = panel.querySelector('.cache-memory-dialog-header, .cache-memory-modal-header');
         const root = this.root;
         let drag = null;
         let frame = null;
@@ -707,14 +707,14 @@ export class CacheMemoryUI {
             overlay.classList.add('is-dragging');
             panel.style.willChange = 'transform';
             event.preventDefault();
-        }, { signal: this.controller.signal });
+        }, { signal });
         handle.addEventListener('pointermove', event => {
             if (drag?.id !== event.pointerId) return;
             x = Math.max(drag.minX, Math.min(drag.maxX, drag.x + event.clientX - drag.pointerX));
             y = Math.max(drag.minY, Math.min(drag.maxY, drag.y + event.clientY - drag.pointerY));
             queuePaint();
-        }, { signal: this.controller.signal });
-        for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(name, stop, { signal: this.controller.signal });
+        }, { signal });
+        for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(name, stop, { signal });
         const limits = () => {
             const view = viewportSize(root), padding = root.getComputedStyle?.(overlay);
             return { left: view.left + (parseFloat(padding?.paddingLeft) || 8), right: view.left + view.width - (parseFloat(padding?.paddingRight) || 8),
@@ -729,7 +729,7 @@ export class CacheMemoryUI {
                 edge.setPointerCapture(event.pointerId);
                 panel.style.willChange = 'width, height, transform';
                 event.preventDefault();
-            }, { signal: this.controller.signal });
+            }, { signal });
             edge.addEventListener('pointermove', event => {
                 if (drag?.id !== event.pointerId || drag.target !== edge) return;
                 const r = drag.rect, b = drag.bounds, dx = event.clientX - drag.pointerX, dy = event.clientY - drag.pointerY;
@@ -743,28 +743,10 @@ export class CacheMemoryUI {
                 x = drag.x + (left + right - r.left - r.right) / 2;
                 y = drag.y + (top + bottom - r.top - r.bottom) / 2;
                 queuePaint();
-            }, { signal: this.controller.signal });
-            for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) edge.addEventListener(name, stop, { signal: this.controller.signal });
+            }, { signal });
+            for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) edge.addEventListener(name, stop, { signal });
         }
-        const resize = () => {
-            if (overlay.hidden || !overlay.isConnected) return;
-            // Keyboard/visualViewport scrolling must not reset desktop drag or
-            // permanently clamp the user's saved size to the keyboard height.
-            if (viewportSize(root).width <= 650 || root.matchMedia?.('(pointer: coarse)')?.matches) return;
-            reset();
-            const b = limits();
-            if (width !== null) { width = Math.min(width, b.right - b.left); panel.style.width = `${width}px`; }
-            if (height !== null) { height = Math.min(height, b.bottom - b.top); panel.style.height = `${height}px`; }
-        };
-        let viewportFrame = null;
-        const queueResize = () => {
-            if (overlay.hidden || viewportFrame !== null) return;
-            viewportFrame = root.requestAnimationFrame(() => { viewportFrame = null; resize(); });
-        };
-        root.addEventListener('resize', queueResize, { signal: this.controller.signal });
-        root.visualViewport?.addEventListener('resize', queueResize, { signal: this.controller.signal });
-        this.controller.signal.addEventListener('abort', () => { if (viewportFrame !== null) root.cancelAnimationFrame(viewportFrame); }, { once: true });
-        this.controller.signal.addEventListener('abort', stop, { once: true });
+        signal.addEventListener('abort', stop, { once: true });
         return reset;
     }
 
@@ -1298,6 +1280,7 @@ export class CacheMemoryUI {
         this.populateSettings();
         this.renderModelOptions(this.modelOptions);
         this.config.hidden = false;
+        lockDialogSize(this.config.querySelector('.cache-memory-config-frame'));
         this.resizeTextareas(this.config);
         if (this.debugSnapshot) this.setCacheDebug(this.debugSnapshot);
         this.doc.body.classList.add('cache-memory-config-open');
@@ -1602,6 +1585,12 @@ export class CacheMemoryUI {
             confirm.type = 'submit';
             actions.append(cancel, confirm);
             form.append(header, content, actions);
+            for (const edge of ['n', 'e', 's', 'w']) {
+                const grip = this.element('span', 'cache-memory-resize-handle');
+                grip.dataset.resizeEdge = edge;
+                grip.setAttribute('aria-hidden', 'true');
+                form.append(grip);
+            }
             const syncFields = () => {
                 for (const field of fields.filter(field => field.visibleWhen)) {
                     const input = form.elements.namedItem(field.key);
@@ -1615,7 +1604,9 @@ export class CacheMemoryUI {
             overlay.append(form);
             this.doc.body.append(overlay);
             const anchor = this.config && !this.config.hidden ? this.config.querySelector('.cache-memory-config-frame') : null;
-            const releaseViewport = bindDialogViewport(overlay, this.root, this.controller.signal, anchor);
+            const dialogController = new (this.root.AbortController ?? AbortController)();
+            bindDialogViewport(overlay, this.root, dialogController.signal, anchor);
+            this.bindDialogDrag(overlay, dialogController.signal);
             this.activeDialog = overlay;
             this.applyTheme();
             let settled = false;
@@ -1625,7 +1616,7 @@ export class CacheMemoryUI {
                 if (this.activeDialog === overlay) this.activeDialog = null;
                 if (this.cancelActiveDialog === cancelDialog) this.cancelActiveDialog = null;
                 this.controller.signal.removeEventListener('abort', cancelDialog);
-                releaseViewport();
+                dialogController.abort();
                 overlay.remove();
                 resolve(value);
             };
