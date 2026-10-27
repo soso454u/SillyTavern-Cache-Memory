@@ -1,11 +1,11 @@
-import { normalizeCharacterTables } from './character-tables.js?v=1.27.10';
-import { normalizeThemeMode } from './ui-theme.js?v=1.27.10';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.10';
+import { normalizeCharacterTables } from './character-tables.js?v=1.27.11';
+import { normalizeThemeMode } from './ui-theme.js?v=1.27.11';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.11';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.10';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.10';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.11';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.11';
 
-export const PLUGIN_VERSION = '1.27.10';
+export const PLUGIN_VERSION = '1.27.11';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1714,7 +1714,7 @@ export const LAYERED_MEMORY_RULES = Object.freeze({
 已结束但能解释关系、后续选择或明确呼应的日常事件，留下有辨识度的触发点与结果即可；同类普通互动合并，不逐件罗列。不把“已经结束”当删除全部历史的理由，也不为每段日常互动添加主观意义。`,
 });
 
-export const DEFAULT_PROMPTS = Object.freeze({
+export const V12710_DEFAULT_PROMPTS = Object.freeze({
     ...V1273_DEFAULT_PROMPTS,
     summary: V1273_DEFAULT_PROMPTS.summary.replace(`${OBJECTIVE_SUMMARY_RULES}\n`, `${OBJECTIVE_SUMMARY_RULES}\n${LAYERED_MEMORY_RULES.summary}\n`),
     checkpoint: `把第{{startFloor}}–{{endFloor}}层 NEW_SUMMARIES 整理成客观、精简的阶段前情提要，目标约{{maxLength}}字作为整份输出的共用预算，不追求写满。只写本阶段，旧背景仅帮助理解。
@@ -1756,6 +1756,14 @@ ${LAYERED_MEMORY_RULES.longMemory}
 fact-id | 替代后的事实 | NEW_SUMMARIES 的连续原句；没有则无
 [RETIRED_FACTS]
 fact-id | 明确失效原因 | NEW_SUMMARIES 的连续原句；没有则无`,
+});
+
+
+export const LONG_MEMORY_EVENT_REVIEW = '输出前逐条判断：这条是否保存了独立的重要经历，或解释关系、选择、约定、秘密、物品意义及后续呼应？若只是重复互动或普通步骤，合并或省略；不要为了证明检查过所有阶段，把每个场景都写进大总结。';
+
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V12710_DEFAULT_PROMPTS,
+    longMemory: V12710_DEFAULT_PROMPTS.longMemory.replace('输出前只在内部核对来源', `${LONG_MEMORY_EVENT_REVIEW}\n输出前只在内部核对来源`),
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1848,7 +1856,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1270_DEFAULT_PROMPTS[name] || prompts[name] === V1271_DEFAULT_PROMPTS[name] || prompts[name] === V1272_DEFAULT_PROMPTS[name] || prompts[name] === V1273_DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1270_DEFAULT_PROMPTS[name] || prompts[name] === V1271_DEFAULT_PROMPTS[name] || prompts[name] === V1272_DEFAULT_PROMPTS[name] || prompts[name] === V1273_DEFAULT_PROMPTS[name] || prompts[name] === V12710_DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];

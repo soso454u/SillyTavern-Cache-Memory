@@ -1,17 +1,17 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.10';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.10';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.10';
-import { generationPrompt } from './generation-prompts.js?v=1.27.10';
-import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.27.10';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.10';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.10';
-import { extractSummarySource } from './summary-source.js?v=1.27.10';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.10';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.10';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.10';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.10';
-import { retryOperation, waitForRetry } from './retry.js?v=1.27.10';
-import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.10';
+import { selectedTableRecords } from './character-tables.js?v=1.27.11';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.11';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.11';
+import { generationPrompt } from './generation-prompts.js?v=1.27.11';
+import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.27.11';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.11';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.11';
+import { extractSummarySource } from './summary-source.js?v=1.27.11';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.11';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.11';
+import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.11';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.11';
+import { retryOperation, waitForRetry } from './retry.js?v=1.27.11';
+import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.11';
 
 function pad(value) {
     return String(value).padStart(3, '0');

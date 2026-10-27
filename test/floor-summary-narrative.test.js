@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PROMPTS, V1272_DEFAULT_PROMPTS, V1273_DEFAULT_PROMPTS, LAYERED_MEMORY_RULES, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
+import { DEFAULT_PROMPTS, V1272_DEFAULT_PROMPTS, V1273_DEFAULT_PROMPTS, V12710_DEFAULT_PROMPTS, LAYERED_MEMORY_RULES, LONG_MEMORY_EVENT_REVIEW, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
 import { generationPrompt } from '../src/generation-prompts.js';
 import { MemoryStore } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
@@ -10,7 +10,7 @@ import { currentInjectionBlocks } from '../src/injection.js';
 const event = '登船前，商会信使交给旅人一个木匣，内有四枚刻着各人姓名的铜制通行牌，称由守桥人连夜打制。船夫检查背面编号，确认可在北岸码头使用；修桥工暂未领牌，将自己的份额托旅人转交妹妹。旅人发现地图上旧渡口被划去，船夫解释昨夜涨水后改走东岸，并要求众人在下一个桥洞前坐回舱内。途中旅人把新路线抄给医师，医师认出补画标记出自守桥人，追问消息来源；旅人答“是他亲口告诉我的”，并约定天亮后再确认回程时间。守卫在旁听见后提醒“回程还没定，别让码头先派车”，旅人答应先撤销订车。船到东岸时，修桥工取回药箱，说明其中一瓶药须避光保存，医师接过并放入内袋。';
 
 test('official narrative templates upgrade by stage while custom prompts and budgets remain exact', () => {
-    for (const previous of [V1272_DEFAULT_PROMPTS, V1273_DEFAULT_PROMPTS]) {
+    for (const previous of [V1272_DEFAULT_PROMPTS, V1273_DEFAULT_PROMPTS, V12710_DEFAULT_PROMPTS]) {
         const config = normalizeSettings({ prompts: previous });
         assert.deepEqual(config.prompts, DEFAULT_PROMPTS);
         assert.equal(config.prompts.state, previous.state);
@@ -32,6 +32,8 @@ test('official narrative templates upgrade by stage while custom prompts and bud
             }
         }
     }
+    for (const stage of ['summary', 'checkpoint', 'state']) assert.equal(DEFAULT_PROMPTS[stage], V12710_DEFAULT_PROMPTS[stage]);
+    assert.equal(DEFAULT_PROMPTS.longMemory.replace(LONG_MEMORY_EVENT_REVIEW + '\n', ''), V12710_DEFAULT_PROMPTS.longMemory);
     // The migration snapshots must remain the versions users actually saved.
     assert.equal(V1273_DEFAULT_PROMPTS.checkpoint, V1272_DEFAULT_PROMPTS.checkpoint);
     assert.equal(V1273_DEFAULT_PROMPTS.longMemory, V1272_DEFAULT_PROMPTS.longMemory);
@@ -44,6 +46,7 @@ test('both modes send distinct compression roles without applying Long selection
         for (const stage of ['summary', 'checkpoint', 'longMemory']) {
             const prompt = generationPrompt(config, stage);
             assert.ok(prompt.includes(LAYERED_MEMORY_RULES[stage]));
+            assert.equal(prompt.includes(LONG_MEMORY_EVENT_REVIEW), stage === 'longMemory');
             for (const other of ['summary', 'checkpoint', 'longMemory'].filter(key => key !== stage)) assert.ok(!prompt.includes(LAYERED_MEMORY_RULES[other]));
         }
         assert.match(config.prompts.summary, /不提前按长期价值筛掉日常互动/);
