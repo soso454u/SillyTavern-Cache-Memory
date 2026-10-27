@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PROMPTS, V1270_DEFAULT_PROMPTS, V1271_DEFAULT_PROMPTS, OBJECTIVE_RECAP_RULES, OBJECTIVE_SUMMARY_RULES, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
+import { DEFAULT_PROMPTS, V1270_DEFAULT_PROMPTS, V1271_DEFAULT_PROMPTS, OBJECTIVE_RECAP_RULES, OBJECTIVE_SUMMARY_RULES, LAYERED_MEMORY_RULES, normalizeSettings, memoryGenerationSettings } from '../src/defaults.js';
 import { generationPrompt } from '../src/generation-prompts.js';
 import { parseStructuredSummary } from '../src/summary-format.js';
 import { readSection } from '../src/continuity.js';
@@ -65,7 +65,10 @@ for (const mode of ['normal', 'advanced']) test(`summary → CP → Long keeps r
     await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
     assert.equal(requests.length, 3);
     assert.deepEqual(requests.map(row => row.maxTokens), [settings.summaryMaxTokens + (mode === 'advanced' ? 384 : 0), settings.checkpointMaxTokens, settings.longMemoryMaxTokens]);
-    for (const [index, request] of requests.entries()) assert.ok(request.systemPrompt.includes(index === 0 ? OBJECTIVE_SUMMARY_RULES : OBJECTIVE_RECAP_RULES));
+    for (const [index, request] of requests.entries()) {
+        assert.ok(request.systemPrompt.includes(index === 0 ? OBJECTIVE_SUMMARY_RULES : OBJECTIVE_RECAP_RULES));
+        assert.ok(request.systemPrompt.includes(LAYERED_MEMORY_RULES[['summary', 'checkpoint', 'longMemory'][index]]));
+    }
     const data = store.current();
     assert.equal(Object.values(data.summaries)[0].event, event);
     assert.ok(data.checkpoints[0].content.includes(quote)); assert.ok(data.longMemories[0].content.includes(quote));

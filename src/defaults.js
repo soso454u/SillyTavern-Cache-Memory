@@ -1,11 +1,11 @@
-import { normalizeCharacterTables } from './character-tables.js?v=1.27.9';
-import { normalizeThemeMode } from './ui-theme.js?v=1.27.9';
-import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.9';
+import { normalizeCharacterTables } from './character-tables.js?v=1.27.10';
+import { normalizeThemeMode } from './ui-theme.js?v=1.27.10';
+import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.10';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.9';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.9';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.10';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.10';
 
-export const PLUGIN_VERSION = '1.27.9';
+export const PLUGIN_VERSION = '1.27.10';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1681,8 +1681,8 @@ export const OBJECTIVE_SUMMARY_RULES = `【客观、完整的单层梗概】
 核心台词结合语境自然嵌入叙述，保留说话人与必要回应；承诺、拒绝、威胁、秘密揭露、关键否认、关系确认及有明确呼应的短句优先。通常选1–3个短句，没有必要原话时转述；不机械限制为一句或40字，也不把所有对白抄回去。引句只能逐字来自来源，不能拼接或删掉否定、条件、对象；过长则准确转述，不能伪造引语。同一事实只出现一次，不把引句再换说法重复。
 信息充分时合理使用已设置的字数预算，不为了简短把丰富剧情压成一百来字；信息简单时不凑字，不设最低字数。保留任务条件和重要后果，禁止客户端硬截断。时间地点只照录 SOURCE_METADATA，未知写无。`;
 
-// Only Summary changes here; the accepted CP/Long contracts stay byte-identical.
-export const DEFAULT_PROMPTS = Object.freeze({
+// Preserve the previously shipped templates for exact official-template migration.
+export const V1273_DEFAULT_PROMPTS = Object.freeze({
     ...V1272_DEFAULT_PROMPTS,
     summary: `你是客观剧情摘要记录员，给本层正文写一份信息完整、连贯易读的剧情梗概。标题、人物、事件和必要原话共用约 {{maxLength}} 字预算，通常不超过预算；关键因果、回应或条件确实需要时允许略超约15%。默认350字预算适用于有多项信息的正文，不必主动压成一百来字；自定义长度仍须遵守。
 ${OBJECTIVE_SUMMARY_RULES}
@@ -1700,6 +1700,62 @@ Event 用一段连贯叙述，确有场景转换可分两段，按本层实际�
 已知地点，无则无
 [Event]
 本层完整、连贯的剧情梗概，包含有意义的细节、关键行动和必要原话及回应`,
+});
+
+// Compression belongs in generation instructions, never in stored-text truncation.
+export const LAYERED_MEMORY_RULES = Object.freeze({
+    summary: `【单层：保留经过，轻量去重】
+本层摘要负责保留有意义的经过、人物回应与核心话，不提前按长期价值筛掉日常互动。只合并同一事实的重复说法、连续小动作和没有新信息的反复确认；有独立结果、关系边界、物品意义或后续呼应的细节仍须保留。不要把完整梗概压成一句结论，也不要逐轮抄对白。`,
+    checkpoint: `【阶段：合并互动，保留事件链】
+阶段总结不串接各层摘要，也不按每层一条复述。同一场景或同一事件里的调侃、讨价还价、反复确认，合并为“必要起因＋关键选择／变化＋最终约定或结果”；保留解释结果所需的关键回应，不保留没有新增信息的每轮问答。跨场景仍在延续的同一事件可以合并，具有独立结果的事件不能因人物相同就混为一条。
+日常互动若形成明确边界、约定、物品意义或后续会引用的梗，简述触发点与落点，不因属于日常就删除；来源没有持续影响时不替它推断意义。`,
+    longMemory: `【长期：筛选历史，保留持续影响】
+大总结不拼接阶段总结，也不逐场重放。优先保存关系转折、重要经历、关键选择及其原因、秘密与各自认知、重要物品意义和归属、未兑现约定、持续责任与后果。同一事件跨阶段的发展合为一条因果链，说明最初条件、关键变化和本区间结束时的结果；新约定替代旧约定时交代替代关系，不能把两者都写成仍有效。
+已结束但能解释关系、后续选择或明确呼应的日常事件，留下有辨识度的触发点与结果即可；同类普通互动合并，不逐件罗列。不把“已经结束”当删除全部历史的理由，也不为每段日常互动添加主观意义。`,
+});
+
+export const DEFAULT_PROMPTS = Object.freeze({
+    ...V1273_DEFAULT_PROMPTS,
+    summary: V1273_DEFAULT_PROMPTS.summary.replace(`${OBJECTIVE_SUMMARY_RULES}\n`, `${OBJECTIVE_SUMMARY_RULES}\n${LAYERED_MEMORY_RULES.summary}\n`),
+    checkpoint: `把第{{startFloor}}–{{endFloor}}层 NEW_SUMMARIES 整理成客观、精简的阶段前情提要，目标约{{maxLength}}字作为整份输出的共用预算，不追求写满。只写本阶段，旧背景仅帮助理解。
+${OBJECTIVE_RECAP_RULES}
+${LAYERED_MEMORY_RULES.checkpoint}
+按时间以事件为单位分条，写清重要NPC及其他参与者的作用、必要起因、关键行动／选择、转折与结果，保留约定的对象、期限、条件、例外和知情范围。每条通常用1–3句，关键因果确有需要时可增加；先保证事件完整，再合并重复，不为缩短丢掉否定、条件或独立结果。
+核心原话只在准确措辞影响承诺、拒绝、边界、关系确认、信息真伪或后续呼应时保留，并标明说话人及必要语境；其余转述。全篇通常0–2句，必要问答可相邻保留，通常合计不超80字，不必凑数。同一事实只出现一次；事件已说清的内容不再换说法放进“重要细节”或“核心原话”。没有必要补充或引句就省略对应行。
+输出前只在内部核对：关键事件和条件是否完整，重复互动能否合并，计划／声称是否误写为执行，核心原话是否必要。超出预算时先删重复背景、过程性对白和普通步骤，再准确转述长引句；只在关键因果或条件无法再压缩时适度超出，不以信息多为由成倍扩写，不硬截断句子，不输出检查过程。
+只使用以下内部字段；Stage Story 中用普通中文条目，不新增方括号小标题：
+[CHECKPOINT]
+[Stage Story]
+- 时间：来源已知时间或范围；未知时省略该行
+  关键事件（中性事件名）：必要起因、关键选择与结果或最终约定
+  重要细节：未重复的必要条件或事实；无则省略
+  核心原话：说话人“必要短引句”；无则省略
+[RESOLVED_KEEP]
+仅在本阶段明确兑现／结束时：keep-id | 原因 | NEW_SUMMARIES 中至少4字的连续原句；无则无
+[SUPERSEDED_KEEP]
+仅在本阶段明确替代时：keep-id | 新事实 | NEW_SUMMARIES 中至少4字的连续原句；无则无`,
+    longMemory: `把第{{startFloor}}–{{endFloor}}层的来源阶段总结整理成客观、精简、按关键事件分条的长期前情提要，目标约{{maxLength}}字作为整份输出的共用预算。保留核心历史，不续写，不逐场复述，不要求接近目标字数。
+${OBJECTIVE_RECAP_RULES}
+${LAYERED_MEMORY_RULES.longMemory}
+【覆盖与取舍】
+内部回查每一份阶段总结，从前期到末段筛出重要事件、必要因果、重要NPC作用及各方结果，避免只详写末段。独立的重要经历不能合成“关系升温”等空泛结论；连续事件则合并，不把逐份来源核对变成逐阶段流水账。NEW_SUMMARIES 仅补充可核实的对应事实，不据此补写缺失历史。
+以事件为单位按时间分条，必要时简述已知地点；通常用1–3句写出“必要起因→关键行动／选择→结果及留下的条件”。人物闲聊、调侃、反复确认和普通生活步骤转述或合并，保留理解这段历史所需的一笔，不复述完整过程。“重要细节”只补充事件未涵盖的必要事实。
+【核心话与去重】
+核心原话不是对话回放：准确措辞影响承诺、拒绝、边界、关系确认、秘密或后续呼应时才保留。全篇优先选3–5个必要短句，通常合计不超过120字，不必凑满；同一问答共同确立事实时可相邻保留，并标明说话人及必要语境。同一事实只出现一次，不把引句再转述一遍，也不在重要细节和LONG_MEMORY重复剧情。
+超出预算时先合并同一事件与重复背景，删无新增结果的对白和动作步骤，再转述非必要长引句；保住关键转折、核心话、条件、各自认知和持续后果。只在这些信息确实无法再压缩时适度超出，不因来源阶段多就成倍扩写，不硬截断句子，不为凑字添加细节。
+输出前只在内部核对来源、前中后段覆盖、事件重复、人物说法与事实、否定条件及引用准确性；不输出检查过程，不展开角色表格。
+只使用以下内部字段；STORY_ARC 中用中文条目，不新增方括号小标题或外层标签：
+[STORY_ARC]
+- 时间：来源已知时间或范围；未知时省略该行
+  关键事件（中性事件名）：必要起因、关键变化与结果或持续影响
+  重要细节：未重复的必要条件或事实；无则省略
+  核心原话：说话人“必要短引句”；无则省略
+[LONG_MEMORY]
+只补充提要未涵盖、确有长期影响的事实；没有则无
+[UPDATED_FACTS]
+fact-id | 替代后的事实 | NEW_SUMMARIES 的连续原句；没有则无
+[RETIRED_FACTS]
+fact-id | 明确失效原因 | NEW_SUMMARIES 的连续原句；没有则无`,
 });
 
 const DEFAULT_PROMPT_FINGERPRINTS = new Set([
@@ -1792,7 +1848,7 @@ export function normalizeSettings(saved = {}) {
     const defaults = DEFAULT_PROMPTS;
     const prompts = { ...defaults, ...(source.prompts ?? {}) };
     for (const name of Object.keys(defaults)) {
-        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1270_DEFAULT_PROMPTS[name] || prompts[name] === V1271_DEFAULT_PROMPTS[name] || prompts[name] === V1272_DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
+        if (prompts[name] === LEGACY_PROMPTS[name] || prompts[name] === DEFAULT_PROMPTS[name] || prompts[name] === V1270_DEFAULT_PROMPTS[name] || prompts[name] === V1271_DEFAULT_PROMPTS[name] || prompts[name] === V1272_DEFAULT_PROMPTS[name] || prompts[name] === V1273_DEFAULT_PROMPTS[name] || prompts[name] === V12423_DEFAULT_PROMPTS[name] || prompts[name] === V12422_DEFAULT_PROMPTS[name] || prompts[name] === V12421_DEFAULT_PROMPTS[name] || prompts[name] === V12419_DEFAULT_PROMPTS[name] || prompts[name] === V12416_DEFAULT_PROMPTS[name] || prompts[name] === V12415_DEFAULT_PROMPTS[name] || prompts[name] === PRE_QUALITY_DEFAULT_PROMPTS[name] || prompts[name] === V1210_DEFAULT_PROMPTS[name] || prompts[name] === V1200_DEFAULT_PROMPTS[name] || prompts[name] === V1160_DEFAULT_PROMPTS[name]
             || prompts[name] === V190_DEFAULT_PROMPTS[name]
             || prompts[name] === PREVIOUS_DEFAULT_PROMPTS[name] || prompts[name] === PRE_STREAM_DEFAULT_PROMPTS[name]
             || DEFAULT_PROMPT_FINGERPRINTS.has(promptFingerprint(prompts[name] ?? ''))) prompts[name] = defaults[name];
