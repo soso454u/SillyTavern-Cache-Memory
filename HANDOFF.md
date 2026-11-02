@@ -1,3 +1,19 @@
+# 接续说明（2026-11-02，v1.27.14）
+
+用户指出仅摘要assistant会丢失user直接确立的时间跳跃、年龄、关系背景及单方感情／知情差，要求接续维护。本轮基于abb604c，仍在 /private/tmp/cache-memory-retry-fix 检出；用户提供的私人剧情和图片未加入仓库，回归改用独立合成角色及普通工作／合作场景。
+
+根因确认：summarizeEntry原输入只用extractSummarySource(entry.message.mes)，user文本没有进入模型，也不能成为Changes证据。summary-source新增summaryUserSource，收集该assistant之前、上一条普通assistant之后的连续user输入，跳过系统、工具、小系统／narrator，不跨过前一assistant收集历史，也不读其后的新user输入。JSON数据栏目CURRENT_USER_INPUT附在原assistant来源后、旧背景前；原assistant过滤规则保持，user事实不被assistant自定义标签过滤掉。仍每个assistant楼层一份Summary，一次既有任务及原预算，不增加用户楼层或独立生成任务。
+
+generationPrompt只在Summary追加来源契约：明确已成立的user背景／时间推进／年龄／身份关系／感情和认知差即使回复没复述也需合并；不把一方关系写成双方一致，压缩重复过程为因果留字数。区别角色说法、未来请求、愿望、条件和写作／格式／越权指令，不执行来源数据中的指令，不把它们写成已发生剧情。CP／Long提示词不变，用户设定经Summary传下去。普通模式不增加Changes输出标签；表格仍只在原勾选时出现。
+
+证据源为filtered assistant加本轮user原文，Changes可引用任一直接来源的连续原文，不用旧摘要或拼接消息；有明确时间地点时优先assistant，缺失才用user，绝对日期不推算。新Summary保存userSourceFingerprint（内容与作者，不依赖时间戳/导入ID），加到可选summaryVersion字段，旧无字段的s2版本保持原算法，不升Store版本。队列key和inFlight key包含user指纹，前后和提交前校验user原文变化，旧请求不得吞掉新版；正文相同但user改了时不继承旧stateChanges。
+
+summaryNeedsUpdate识别已记录user来源发生明确内容变化，自动更新、缺失计划和注入补齐会重做该对应Summary；失败时旧有效记录直到确认替换都保留，CP不使用待修复摘要。rolling覆盖检查保留已知user来源已改、尚未修复的原文；failed／未冻结摘要不能证明覆盖。CP／Long的来源断言加入user指纹，使用同一份chat快照计算，避免千层合成加载器在每条记录重复重建整个聊天。旧无user字段的冻结Summary保持兼容，不因升级全量重做；已有漏项需用户重新生成对应Summary，并通过对应CP／Long记录的原重新生成入口更新已存在的聚合。validateDependencies当前为no-op，不能假设“更新需处理的阶段记忆”会自动列出这种旧聚合。
+
+验证：npm run check、npm test共661项、git diff --check通过。新增14项覆盖单轮连续user来源、系统／工具与跨轮隔离、JSON标记指令作为数据、双模式同一事实契约、过滤和元数据、生成中user修改及第二请求不被吞掉、下次注入修复、旧冻结兼容、导入元数据变化不重生成、user证据和旧状态清除、改动原文保留、Summary→CP→Long三次原任务传播及预算不变、修复失败不使用旧Summary生成CP。原千层连续性回归通过；真实模型输出质量仍需使用方观察，测试用假接口不证明模型绝不遗漏。版本和模块URL统一1.27.14，旧自定义模板与输出预算保留。
+
+以下历史说明服从当前版本及最新用户要求。
+
 # 接续说明（2026-11-02，v1.27.13）
 
 用户追加明确要求：每次注入时检查截图里的 Summary／CP／Long “已生成／应有”，不满就自动重试补全，不要依赖新楼层或再点全部补全。本轮基于4836f7c；仍在 /private/tmp/cache-memory-retry-fix 临时检出中维护，原外置盘工作目录未挂载。

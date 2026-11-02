@@ -1,17 +1,17 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.13';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.13';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.13';
-import { generationPrompt } from './generation-prompts.js?v=1.27.13';
-import { getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.13';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.13';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.13';
-import { extractSummarySource } from './summary-source.js?v=1.27.13';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.13';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.13';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.13';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.13';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.13';
-import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.13';
+import { selectedTableRecords } from './character-tables.js?v=1.27.14';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.14';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.14';
+import { generationPrompt } from './generation-prompts.js?v=1.27.14';
+import { getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.14';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.14';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.14';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource } from './summary-source.js?v=1.27.14';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.14';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.14';
+import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.14';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.14';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.14';
+import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.14';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -251,7 +251,8 @@ export class MemorySummarizer {
         const selected = getAssistantMessages(this.getChat()).find(item => item.messageId === messageId);
         const fingerprint = options.expectedFingerprint ?? selected?.fingerprint ?? '';
         // A pending old Swipe must not swallow the new current text.
-        const key = `${chatId}:${messageId}:${fingerprint}`;
+        const userFingerprint = summaryUserSource(this.getChat(), selected).fingerprint;
+        const key = `${chatId}:${messageId}:${fingerprint}:${userFingerprint}`;
         if (this.pendingSummaries.has(key)) return this.pendingSummaries.get(key);
         const pending = this.enqueue(() => {
             if (revision !== this.contextRevision || this.store.current().chatId !== chatId) throw chatChangedError('摘要');
@@ -260,6 +261,9 @@ export class MemorySummarizer {
             if (!entry) throw new Error('原文不存在，无法生成');
             if (fingerprint && fingerprint !== entry.fingerprint) {
                 throw Object.assign(new Error('原文已编辑或切换备选回复，请重新选择楼层'), { code: 'SOURCE_CHANGED' });
+            }
+            if (summaryUserSource(this.getChat(), entry).fingerprint !== userFingerprint) {
+                throw Object.assign(new Error('排队期间本轮用户输入已变化，请重试本层'), { code: 'SOURCE_CHANGED' });
             }
             return options.recoverPending ? this.summarizeAutomaticEntry(entry, options) : this.summarizeEntry(entry, options);
         }).finally(() => {
@@ -286,7 +290,7 @@ export class MemorySummarizer {
         const floors = Object.values(this.store.current().summaries).map(item => item.floor).filter(Number.isFinite);
         const firstFloor = floors.length ? Math.min(...floors) : entry.floor;
         const pending = getAssistantMessages(this.getChat()).filter(item => item.floor >= firstFloor && item.floor < entry.floor
-            && !isUsableMemory(this.store.getSummaryForEntry(item)));
+            && this.summaryNeedsUpdate(item));
         const errors = [];
         let latest = null;
         return this.store.withAggregateBatch(async () => {
@@ -317,13 +321,23 @@ export class MemorySummarizer {
         });
     }
 
+    summarySourceVersion(chat = this.getChat()) {
+        return JSON.stringify(getAssistantMessages(chat).map(item => [item.messageId, item.fingerprint, summaryUserSource(chat, item).fingerprint]));
+    }
+
+    summaryNeedsUpdate(entry, record = this.store.getSummaryForEntry(entry), chat = null) {
+        return !isUsableMemory(record) || Object.hasOwn(record, 'userSourceFingerprint')
+            && record.userSourceFingerprint !== summaryUserSource(chat ?? this.getChat(), entry).fingerprint;
+    }
+
     async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal, retryDelay, onRetry } = {}) {
         const existing = this.store.getSummaryForEntry(entry);
         // Reuse saved floor memory regardless of identity/source drift. Only
         // an explicit overwrite regenerates it; missing-floor scans do not.
-        if (isUsableMemory(existing) && !overwrite) return existing;
+        if (!this.summaryNeedsUpdate(entry, existing) && !overwrite) return existing;
         overwrite ||= Boolean(this.store.getSummary(entry.messageId));
-        const flightKey = `${this.store.current().chatId}:${entry.messageId}:${entry.fingerprint}`;
+        const userSource = summaryUserSource(this.getChat(), entry);
+        const flightKey = `${this.store.current().chatId}:${entry.messageId}:${entry.fingerprint}:${userSource.fingerprint}`;
         if (this.inFlight.has(flightKey)) return null;
         this.inFlight.add(flightKey);
         const settings = this.getSettings();
@@ -337,7 +351,8 @@ export class MemorySummarizer {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('摘要');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             const current = getAssistantMessages(this.getChat()).find(item => item.messageId === entry.messageId);
-            if (!current || current.fingerprint !== entry.fingerprint || current.floor !== entry.floor) {
+            if (!current || current.fingerprint !== entry.fingerprint || current.floor !== entry.floor
+                || summaryUserSource(this.getChat(), current).fingerprint !== userSource.fingerprint) {
                 throw Object.assign(new Error('请求期间原文已编辑、删除或切换备选回复，请重试本层'), { code: 'SOURCE_CHANGED' });
             }
             if (targetVersions() !== expectedTargets) throw Object.assign(new Error('另一窗口或设备已更新本层记忆，未覆盖较新摘要'), { code: 'SOURCE_CHANGED' });
@@ -350,7 +365,11 @@ export class MemorySummarizer {
                 floor: entry.floor,
             });
             const summarySource = extractSummarySource(entry.message.mes, settings);
-            const sourceMetadata = extractStoryMetadata(entry.message.mes);
+            const userText = userSource.messages.map(message => message.text).join('\n\n');
+            const evidenceSource = summarySource.text + (userText ? '\n\n' + userText : '');
+            const replyMetadata = extractStoryMetadata(entry.message.mes), userMetadata = extractStoryMetadata(userText);
+            const sourceMetadata = { storyTime: replyMetadata.storyTime || userMetadata.storyTime,
+                location: replyMetadata.location || userMetadata.location };
             if (settings.cacheDebug) console.info('[Cache Memory] SUMMARY SOURCE', {
                 strategy: settings.summaryFilterMode,
                 source: summarySource.source,
@@ -362,6 +381,7 @@ export class MemorySummarizer {
             const request = {
                 systemPrompt,
                 userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata)
+                    + formatSummaryUserSource(userSource)
                     + priorNormalContext(this.generationStore(), settings, entry.floor)
                     + trackedContext(this.generationStore(), settings, entry.floor - 1),
                 // Reserve output only for selected table deltas; the story's visible
@@ -373,7 +393,7 @@ export class MemorySummarizer {
             responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);
             const parsed = await this.completeWithRetry(request, assertContext, responseKey, { retryDelay, onRetry, validate: result => {
                 if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
-                const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: summarySource.text, prompt: settings.prompts.summary });
+                const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: evidenceSource, prompt: settings.prompts.summary });
                 return parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
             } });
             parsed.storyTime = sourceMetadata.storyTime;
@@ -387,6 +407,7 @@ export class MemorySummarizer {
                 sourceFingerprint: entry.fingerprint,
                 sourceContentFingerprint: entry.contentFingerprint,
                 sourceMessageKey: entry.sourceMessageKey,
+                userSourceFingerprint: userSource.fingerprint,
                 title: parsed.title,
                 characters: parsed.characters,
                 storyTime: parsed.storyTime,
@@ -396,7 +417,7 @@ export class MemorySummarizer {
                 open: parsed.open,
                 quote: parsed.quote,
                 keep: parsed.keep,
-                ...(settings.activeStateEnabled ? { stateChanges: parseStateChanges(parsed.changes, summarySource.text, projectActiveState(this.generationStore(), entry.floor - 1), { advanced }) } : {}),
+                ...(settings.activeStateEnabled ? { stateChanges: parseStateChanges(parsed.changes, evidenceSource, projectActiveState(this.generationStore(), entry.floor - 1), { advanced }) } : {}),
                 raw: parsed.raw,
                 format: parsed.format,
                 createdAt: new Date().toISOString(),
@@ -414,7 +435,8 @@ export class MemorySummarizer {
             const sameSource = existing && (entry.contentFingerprint && existing.sourceContentFingerprint
                 ? existing.sourceContentFingerprint === entry.contentFingerprint
                 : entry.fingerprint && existing.sourceFingerprint === entry.fingerprint);
-            if (sameSource && Array.isArray(existing.stateChanges)) {
+            const sameUserSource = existing && (!Object.hasOwn(existing, 'userSourceFingerprint') || existing.userSourceFingerprint === userSource.fingerprint);
+            if (sameSource && sameUserSource && Array.isArray(existing.stateChanges)) {
                 const changes = new Map(existing.stateChanges.map(row => [row.id || stateId(row), structuredClone(row)]));
                 for (const row of record.stateChanges ?? []) changes.set(row.id || stateId(row), row);
                 record.stateChanges = [...changes.values()];
@@ -516,7 +538,7 @@ export class MemorySummarizer {
             }
             return { latestFloor, summaries: [], checkpoints: [], longMemories: ready, blockedLongMemories };
         }
-        return { latestFloor, summaries: assistants.filter(entry => !isUsableMemory(this.store.getSummaryForEntry(entry))),
+        return { latestFloor, summaries: assistants.filter(entry => this.summaryNeedsUpdate(entry)),
             checkpoints: missingRanges(store.checkpoints, checkpointInterval), longMemories };
     }
 
@@ -549,8 +571,10 @@ export class MemorySummarizer {
                         onProgress({ ...result });
                         // Missing dependencies are left pending; unrelated ranges can proceed.
                         if (phase === 'Checkpoint') {
+                            const pendingFloors = new Set(getAssistantMessages(this.getChat()).filter(item => item.floor >= entry.startFloor && item.floor <= entry.endFloor
+                                && this.summaryNeedsUpdate(item)).map(item => item.floor));
                             const available = this.store.currentSummaries(this.getChat()).filter(item => isUsableMemory(item)
-                                && item.floor >= entry.startFloor && item.floor <= entry.endFloor);
+                                && item.floor >= entry.startFloor && item.floor <= entry.endFloor && !pendingFloors.has(item.floor));
                             if (available.length !== entry.endFloor - entry.startFloor + 1) {
                                 result.skipped++; result.processed++; onProgress({ ...result }); continue;
                             }
@@ -567,7 +591,7 @@ export class MemorySummarizer {
                             let record;
                             if (phase === 'Summary') {
                                 const existing = this.store.getSummaryForEntry(entry);
-                                if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
+                                if (!this.summaryNeedsUpdate(entry, existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
                                 record = await this.summarizeMessage(entry.messageId, { overwrite: Boolean(existing), deferAggregates: true, signal, expectedFingerprint: entry.fingerprint });
                             } else {
                                 const items = phase === 'Checkpoint' ? this.store.current().checkpoints : this.store.current().longMemories;
@@ -627,7 +651,7 @@ export class MemorySummarizer {
             for (let floor = startFloor; floor <= endFloor; floor += 1) {
                 const entry = byFloor.get(floor);
                 const summary = entry ? this.store.getSummaryForEntry(entry) : null;
-                if (!summary || !isUsableMemory(summary)) missingFloors.push(floor);
+                if (!summary || this.summaryNeedsUpdate(entry, summary)) missingFloors.push(floor);
             }
             if (missingFloors.length) blocked.push({ ...range, missingFloors });
             else candidates.push(range);
@@ -765,8 +789,11 @@ export class MemorySummarizer {
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
         const opening = startFloor === 1 ? getOpeningSource(this.getChat()) : null;
+        const sourceChat = this.getChat(), sourceStore = this.store.current();
+        const pendingUserFloors = new Set(getAssistantMessages(sourceChat).filter(entry => entry.floor >= startFloor && entry.floor <= endFloor
+            && this.summaryNeedsUpdate(entry, this.store.getSummaryForEntry(entry, sourceStore), sourceChat)).map(entry => entry.floor));
         const summaries = this.store.currentSummaries(this.getChat())
-            .filter(item => item.floor >= startFloor && item.floor <= endFloor && isUsableMemory(item))
+            .filter(item => item.floor >= startFloor && item.floor <= endFloor && isUsableMemory(item) && !pendingUserFloors.has(item.floor))
             .sort((a, b) => a.floor - b.floor);
         const missing = [];
         for (let floor = startFloor; floor <= endFloor; floor += 1) {
@@ -795,7 +822,7 @@ export class MemorySummarizer {
         const storyMetadata = storyMetadataRange(opening ? [{ floor: 0, ...extractStoryMetadata(opening.message.mes) }, ...summaries] : summaries);
         const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.generationStore(), endFloor) : null;
         const sourceVersions = Object.fromEntries(summaries.map(item => [item.messageId, summaryVersion(item)]));
-        const chatVersion = JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]));
+        const chatVersion = this.summarySourceVersion();
         const targetVersions = () => JSON.stringify(this.store.current().checkpoints.filter(item => item.startFloor === startFloor && item.endFloor === endFloor).map(item => [item.id, aggregateVersion(item)]));
         const expectedTargets = targetVersions();
         const assertSources = () => {
@@ -806,7 +833,7 @@ export class MemorySummarizer {
             if (JSON.stringify(this.store.current().keepRegistry) !== keepVersion) throw Object.assign(new Error('KEEP 已变化，未提交过期阶段结果'), { code: 'SOURCE_CHANGED' });
             if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.generationStore(), endFloor)) throw Object.assign(new Error('聚合期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
             if (Object.entries(checkpointVersions).some(([id, version]) => aggregateVersion([...this.store.current().checkpoints, ...this.store.current().longMemories].find(cp => cp.id === id)) !== version)
-                || chatVersion !== JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]))
+                || chatVersion !== this.summarySourceVersion()
                 || Object.entries(sourceVersions).some(([id, version]) => !isUsableMemory(this.store.getSummary(id)) || summaryVersion(this.store.getSummary(id)) !== version)) {
                 throw Object.assign(new Error('聚合期间来源已改变，未提交过期 Checkpoint'), { code: 'SOURCE_CHANGED' });
             }
@@ -938,7 +965,7 @@ export class MemorySummarizer {
         const sourceVersions = Object.fromEntries(sourceSummaries.map(item => [item.messageId, summaryVersion(item)]));
         const trackedStateVersion = settings.activeStateEnabled ? activeStateVersion(this.generationStore(), endFloor) : null;
         const checkpointVersions = sorted.map(item => JSON.stringify(item));
-        const chatVersion = JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]));
+        const chatVersion = this.summarySourceVersion();
         const targetVersions = () => JSON.stringify(this.store.current().longMemories.filter(item => item.startFloor === startFloor && item.endFloor === endFloor).map(item => [item.id, aggregateVersion(item)]));
         const expectedTargets = targetVersions();
         const assertSources = () => {
@@ -946,7 +973,7 @@ export class MemorySummarizer {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Long Memory');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.generationStore(), endFloor)) throw Object.assign(new Error('整理期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
-            if (chatVersion !== JSON.stringify(getAssistantMessages(this.getChat()).map(item => [item.messageId, item.fingerprint]))
+            if (chatVersion !== this.summarySourceVersion()
                 || Object.entries(sourceVersions).some(([id, version]) => !isUsableMemory(this.store.getSummary(id)) || summaryVersion(this.store.getSummary(id)) !== version)
                 || sorted.some((item, index) => { const current = this.store.current().checkpoints.find(cp => cp.id === item.id); return !isUsableMemory(current) || JSON.stringify(current) !== checkpointVersions[index]; })) {
                 throw Object.assign(new Error('聚合期间来源已改变，未提交过期 Long Memory'), { code: 'SOURCE_CHANGED' });

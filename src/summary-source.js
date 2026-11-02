@@ -1,3 +1,5 @@
+import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.14';
+
 export const SUMMARY_FILTER_MODES = Object.freeze({
     DEFAULT: 'default',
     CUSTOM: 'custom',
@@ -43,4 +45,26 @@ export function extractSummarySource(messageText, filterSettings = {}) {
         if (blocks.length) return { text: blocks.join('\n'), source: mode === SUMMARY_FILTER_MODES.CUSTOM ? `custom:${tag}` : tag.toLowerCase() };
     }
     return { text: full, source: 'full' };
+}
+
+// Only the user input belonging to this assistant turn is new source material.
+// System/tool messages are skipped; an earlier assistant is a hard boundary.
+export function summaryUserSource(chat, entry) {
+    const messages = [];
+    if (!Array.isArray(chat) || !Number.isInteger(entry?.messageIndex)) return { messages, fingerprint: '' };
+    for (let index = entry.messageIndex - 1; index >= 0; index--) {
+        const message = chat[index];
+        if (!message || message.is_system || Array.isArray(message.extra?.tool_invocations)
+            || message.extra?.type === 'narrator' || message.extra?.isSmallSys) continue;
+        if (isNormalAssistant(message)) break;
+        if (message.is_user === true && String(message.mes ?? '').trim()) messages.unshift({
+            speaker: String(message.name ?? 'user'), text: String(message.mes),
+        });
+    }
+    return { messages, fingerprint: messages.length ? fnv1a(JSON.stringify(messages)) : '' };
+}
+
+export function formatSummaryUserSource(source) {
+    // JSON keeps source text (including marker-like strings) inside data values.
+    return source.messages.length ? `\n\n[CURRENT_USER_INPUT]\n${JSON.stringify(source.messages)}` : '';
 }

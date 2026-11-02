@@ -1,5 +1,6 @@
-import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.13';
-import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.13';
+import { summaryUserSource } from './summary-source.js?v=1.27.14';
+import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.14';
+import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.14';
 
 export const RECENT_RAW_FLOORS = 5;
 
@@ -134,7 +135,12 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
         const assistantKey = identity(entry.message);
         // A partially loaded/reordered chat must not borrow another floor's
         // coverage. Unknown or ambiguous identities keep their original turns.
-        const sourceUnchanged = !rolling || Object.values(summaries).some(row => row.floor === entry.floor
+        const userFingerprint = rolling ? summaryUserSource(chat, entry).fingerprint : '';
+        const direct = summaries[entry.messageId];
+        const changedUser = direct && Object.hasOwn(direct, 'userSourceFingerprint') && direct.userSourceFingerprint !== userFingerprint;
+        const sourceUnchanged = !rolling || !changedUser && Object.values(summaries).some(row => row.floor === entry.floor
+            && row.status !== 'failed' && row.frozen !== false
+            && (!Object.hasOwn(row, 'userSourceFingerprint') || row.userSourceFingerprint === userFingerprint)
             && (row.messageId === entry.messageId || row.sourceMessageKey === entry.sourceMessageKey || row.sourceContentFingerprint === entry.contentFingerprint)
             && (!row.sourceContentFingerprint || row.sourceContentFingerprint === entry.contentFingerprint)
             && (row.sourceContentFingerprint || !row.sourceFingerprint || row.sourceFingerprint === entry.fingerprint));
