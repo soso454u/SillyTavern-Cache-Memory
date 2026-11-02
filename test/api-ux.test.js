@@ -169,10 +169,11 @@ test('global prompt modes retain custom text and prepend exactly once to all thr
     const chat = [{ name: '合成角色', mes: '合成角色找到古代书信', gen_started: '1' }];
     const summarizer = new MemorySummarizer({ store, getSettings: () => f.settings, getChat: () => chat, apiClient: { complete: async request => {
         prompts.push(request.systemPrompt);
-        return { content: prompts.length === 1 ? '[SUMMARY]\n[Event]\n找到古代书信' : prompts.length === 2 ? '[CHECKPOINT]\n[Story So Far]\n找到古代书信' : '[LONG_MEMORY]\n- 找到古代书信' };
+        return { content: prompts.length === 1 ? '[SUMMARY]\n[Event]\n找到古代书信' : prompts.length === 2 ? '[CHECKPOINT]\n[Story So Far]\n找到古代书信' : '[STORY_ARC]\n合成角色发现古代书信，并开始调查其来历。\n[LONG_MEMORY]\n- 找到古代书信' };
     } } });
     await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
     assert.equal(prompts.length, 3);
+    assert.equal(store.current().longMemories[0].status, 'frozen');
     assert.ok(prompts.every(prompt => prompt.startsWith('GLOBAL_SYNTHETIC_SENTINEL\n\n') && prompt.match(/GLOBAL_SYNTHETIC_SENTINEL/g).length === 1));
     assert.doesNotMatch(JSON.stringify(store.current()), /GLOBAL_SYNTHETIC_SENTINEL/);
     const html = configTemplate();

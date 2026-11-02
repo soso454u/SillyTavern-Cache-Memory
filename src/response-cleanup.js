@@ -1,5 +1,5 @@
-import { parseStructuredSummary } from './summary-format.js?v=1.27.11';
-import { readSection } from './continuity.js?v=1.27.11';
+import { parseStructuredSummary, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.12';
+import { readSection } from './continuity.js?v=1.27.12';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
 const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
@@ -54,11 +54,24 @@ export function cleanGeneratedResponse(value, source = '') {
     return text.replace(/^```(?:text|markdown|md|json)?\s*\n([\s\S]*?)\n```\s*$/i, '$1').trim();
 }
 
+// Tolerate presentation-only deviations in known labels, not arbitrary prose.
+function normalizeMemoryMarkers(text) {
+    const names = [...SUMMARY_SECTION_NAMES, 'Changes', 'SUMMARY', 'CHECKPOINT', ...CHECKPOINT_FIELDS,
+        'KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STORY_ARC', 'LONG_MEMORY', 'UPDATED_FACTS', 'RETIRED_FACTS'];
+    const canonical = new Map(names.map(name => [name.toLowerCase(), name]));
+    return text.split('\n').map(line => {
+        const match = line.match(/^\s*(?:#{1,6}\s+)?(?:\*\*|__)?[\[【［]([^\]】］]+)[\]】］](?:\*\*|__)?[ \t]*[:：]?[ \t]*(.*)$/);
+        const name = match && canonical.get(match[1].trim().toLowerCase());
+        return name ? `[${name}]${match[2] ? '\n' + match[2] : ''}` : line;
+    }).join('\n');
+}
+
 export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } = {}) {
-    const text = cleanGeneratedResponse(value, source);
+    let text = cleanGeneratedResponse(normalizeMemoryMarkers(String(value ?? '')), source);
     const fail = () => { throw Object.assign(new Error(`${kind} 响应缺少有效剧情字段，原记忆保留`), { code: 'INVALID_MEMORY_RESPONSE' }); };
     if (!text) throw Object.assign(new Error(`${kind} 输出为空或仅含拒绝/思考内容，原记忆保留`), { code: 'INVALID_MEMORY_RESPONSE' });
     if (kind === 'Summary') {
+        if (!/^\s*\[SUMMARY\]\s*$/im.test(text) && hasMemoryValue(readSection(text, 'Event'))) text = '[SUMMARY]\n' + text;
         const parsed = parseStructuredSummary(text);
         if (parsed) {
             if (!hasMemoryValue(parsed.event)) return fail();

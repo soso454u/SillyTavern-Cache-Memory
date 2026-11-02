@@ -19,13 +19,16 @@ test('three retries mean four attempts; delay and reported retry counts are exac
     assert.equal(attempts, 4);
 });
 
-test('transient HTTP and network errors retry, cancellation/auth/source/save/format errors do not', () => {
+test('transient HTTP and network errors retry, cancellation/auth/source/save errors do not', () => {
     for (const status of [408, 429, 500, 502, 503, 504]) assert.equal(isRetryableError({ status }), true);
     for (const status of [400, 401, 403, 404, 422]) assert.equal(isRetryableError({ status, message: 'HTTP 504 in quoted HTML' }), false);
     for (const code of ['REQUEST_ABORTED', 'CHAT_CHANGED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED', 'ST_PROXY_ROUTE_MISSING'])
         assert.equal(isRetryableError({ code, message: '504' }), false);
     assert.equal(isRetryableError({ diagnostics: { upstream: 'HTTP 503', proxy: 'HTTP 200' } }), true);
     assert.equal(isRetryableError(new TypeError('Failed to fetch')), true);
+    assert.equal(isRetryableError({ code: 'INVALID_MEMORY_RESPONSE' }), true);
+    assert.equal(isRetryableError({ code: 'EMPTY_RESPONSE', status: 200 }), true);
+    assert.equal(isRetryableError({ code: 'OUTPUT_TRUNCATED', status: 200 }), false);
     assert.equal(isRetryableError(new Error('缺少 Event 字段')), false);
 });
 

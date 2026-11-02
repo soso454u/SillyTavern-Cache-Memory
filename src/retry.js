@@ -6,6 +6,7 @@ export function isRetryableError(error) {
     const status = Number(error?.status) || Number(String(error?.diagnostics?.upstream ?? '').match(/HTTP (\d+)/)?.[1])
         || Number(String(error?.diagnostics?.proxy ?? '').match(/HTTP (\d+)/)?.[1]);
     if (status && status !== 200) return [408, 429, 500, 502, 503, 504].includes(status);
+    if (['INVALID_MEMORY_RESPONSE', 'EMPTY_RESPONSE'].includes(error?.code)) return true;
     return ['REQUEST_TIMEOUT', 'CONNECTION_CLOSED', 'ECONNRESET', 'ETIMEDOUT'].includes(error?.code)
         || error?.category === 'network_error'
         || /\b(?:408|429|500|502|503|504)\b|gateway[ -]time.?out|timed out|请求超时|rate.?limit|too many requests|failed to fetch|fetch failed|load failed|network|socket|网络|断网/i.test(error?.message ?? '');

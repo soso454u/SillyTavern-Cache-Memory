@@ -62,7 +62,7 @@ function fixture() {
     const entry = getAssistantMessages(chat)[0];
     const settings = normalizeSettings();
     const requests = [];
-    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => settings, apiClient: { complete: async request => { requests.push(request); return { content: summary }; } } });
+    const summarizer = new MemorySummarizer({ store, retryDelay: async () => {}, getChat: () => chat, getSettings: () => settings, apiClient: { complete: async request => { requests.push(request); return { content: summary }; } } });
     return { store, chat, entry, settings, summarizer, requests, switchChat: id => { chatId = id; } };
 }
 

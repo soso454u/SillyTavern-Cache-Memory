@@ -713,7 +713,11 @@ export class SummaryApiClient {
         const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text
             ?? data?.content?.[0]?.text ?? data?.response ?? '';
         if (!String(content).trim()) {
-            const error = new Error('API 返回成功，但没有可用文本');
+            const truncated = /^(?:length|max_tokens|max_completion_tokens)$/i.test(data?.choices?.[0]?.finish_reason ?? '');
+            const error = new Error(truncated ? '模型输出达到 token 上限且没有可用正文，请提高最大输出长度后重试' : 'API 返回成功，但没有可用文本');
+            error.code = truncated ? 'OUTPUT_TRUNCATED' : 'EMPTY_RESPONSE';
+            error.category = 'invalid_response';
+            error.status = response.status;
             error.diagnostics = diagnostics;
             throw error;
         }

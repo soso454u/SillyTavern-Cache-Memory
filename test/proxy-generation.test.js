@@ -67,7 +67,7 @@ test('manual summary, automatic summary, checkpoint and long memory all use the 
         if (url.endsWith('/status')) return new Response('{"data":[{"id":"ark-test-model"}]}');
         const system = JSON.parse(options.body).messages?.[0]?.content ?? '';
         if (system.includes('[CHECKPOINT]')) return new Response(JSON.stringify({ choices: [{ message: { content: '[CHECKPOINT]\n[Current State]\n状态已冻结' } }] }));
-        if (system.includes('[LONG_MEMORY]')) return new Response(JSON.stringify({ choices: [{ message: { content: '[LONG_MEMORY]\n- 【人物｜状态】长期事实。' } }] }));
+        if (system.includes('[LONG_MEMORY]')) return new Response(JSON.stringify({ choices: [{ message: { content: '[STORY_ARC]\n合成人物建立约定后完成会面。\n[LONG_MEMORY]\n- 【人物｜状态】长期事实。' } }] }));
         return new Response(JSON.stringify({ choices: [{ message: { content: '[SUMMARY]\n[Event]\n新增事实\n[State]\n状态\n[Open]\n无\n[KEEP]\n无' } }] }));
     };
     await client.listModels();
@@ -82,6 +82,7 @@ test('manual summary, automatic summary, checkpoint and long memory all use the 
     assert.equal(Object.keys(store.current().summaries).length, 2);
     assert.equal(store.current().checkpoints.length, 1);
     assert.equal(store.current().longMemories.length, 1);
+    assert.equal(store.current().longMemories[0].status, 'frozen');
     assert.deepEqual(requests.map(item => item.url), [
         '/api/backends/chat-completions/status',
         '/api/backends/chat-completions/generate',
@@ -310,7 +311,7 @@ test('Summary, Checkpoint and Long Memory all consume SSE through the ST backend
         requests.push({ url, options });
         const prompt = JSON.parse(options.body).messages[0].content;
         const content = prompt.includes('[CHECKPOINT]') ? '[CHECKPOINT]\n[Current State]\n状态'
-            : prompt.includes('[LONG_MEMORY]') ? '[LONG_MEMORY]\n- 【人物｜状态】事实'
+            : prompt.includes('[LONG_MEMORY]') ? '[STORY_ARC]\n合成人物完成信件交接并达成约定。\n[LONG_MEMORY]\n- 【人物｜状态】事实'
                 : '[SUMMARY]\n[Title]\n标题\n[Event]\n事件\n[KEEP]\n无';
         return sseResponse([
             `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'think' } }] })}\n\n`,
@@ -326,6 +327,7 @@ test('Summary, Checkpoint and Long Memory all consume SSE through the ST backend
     assert.equal(store.current().summaries[getAssistantMessages(chat)[0].messageId].status, 'frozen');
     assert.equal(store.current().checkpoints.length, 1);
     assert.equal(store.current().longMemories.length, 1);
+    assert.equal(store.current().longMemories[0].status, 'frozen');
     assert.equal(requests.length, 3);
     assert.ok(requests.every(item => item.url === '/api/backends/chat-completions/generate'
         && JSON.parse(item.options.body).stream === true
@@ -354,4 +356,25 @@ test('streaming and non-streaming connection tests use the configured Summary bu
         && body.thinking.type === 'disabled'
         && JSON.parse(body.custom_include_body).thinking.type === 'disabled'
         && body.messages[0].content === 'Reply with exactly OK.' && body.messages[1].content === 'OK'));
+});
+
+for (const truncated of [false, true]) test(`empty successful API output retries unless the output budget was exhausted (truncated=${truncated})`, async t => {
+    const { client, root, settings, requests } = fixture(t), waits = [];
+    root.fetch = async (url, options) => {
+        requests.push({ url, options });
+        return new Response(JSON.stringify({ choices: [{ message: { content: requests.length === 1 ? '' : '[SUMMARY]\n[Event]\n合成信使送达信件。' },
+            finish_reason: truncated ? 'length' : 'stop' }] }));
+    };
+    const metadata = {}, chat = [{ mes: '合成信使送达信件。', gen_started: 'empty-retry' }];
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'empty-chat', saveMetadata() {} });
+    const summarizer = new MemorySummarizer({ store, apiClient: client, getSettings: () => settings, getChat: () => chat,
+        retryDelay: async ms => waits.push(ms) });
+    const pending = summarizer.summarizeMessage(getAssistantMessages(chat)[0].messageId, { deferAggregates: true });
+    if (truncated) {
+        await assert.rejects(pending, { code: 'OUTPUT_TRUNCATED' });
+        assert.equal(requests.length, 1); assert.deepEqual(waits, []);
+    } else {
+        assert.equal((await pending).status, 'frozen');
+        assert.equal(requests.length, 2); assert.deepEqual(waits, [2000]);
+    }
 });

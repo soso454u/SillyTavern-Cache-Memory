@@ -1,7 +1,7 @@
-import { getAssistantMessages } from './utils.js?v=1.27.11';
+import { getAssistantMessages } from './utils.js?v=1.27.12';
 
-import { waitForRetry } from './retry.js?v=1.27.11';
-export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.11';
+import { waitForRetry } from './retry.js?v=1.27.12';
+export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.12';
 
 function aborted() {
     return Object.assign(new Error('历史补齐已取消'), { code: 'REQUEST_ABORTED' });

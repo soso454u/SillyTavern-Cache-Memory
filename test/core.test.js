@@ -239,7 +239,7 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
             if (userContent.startsWith('body')) {
                 return { content: `<title>T${calls}</title><characters>C</characters><event>${userContent}</event>`, status: 200 };
             }
-            return { content: userContent.startsWith('[CHECKPOINT') ? `[LONG_MEMORY]\naggregate-${calls}` : `[CHECKPOINT]\n[Events]\naggregate-${calls}`, status: 200 };
+            return { content: systemPrompt.includes('[LONG_MEMORY]') ? `[STORY_ARC]\n合成事件形成完整因果链。\n[LONG_MEMORY]\naggregate-${calls}` : `[CHECKPOINT]\n[Events]\naggregate-${calls}`, status: 200 };
         },
     };
     const summarizer = new MemorySummarizer({
@@ -253,6 +253,7 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
     assert.equal(Object.keys(memory.summaries).length, 4);
     assert.equal(memory.checkpoints.length, 2);
     assert.equal(memory.longMemories.length, 1);
+    assert.equal(memory.longMemories[0].status, 'frozen');
     assert.equal(budgets.filter(value => value === 1024).length, 4);
     assert.equal(budgets.filter(value => value === 3072).length, 2);
     assert.equal(budgets.filter(value => value === 4096).length, 1);

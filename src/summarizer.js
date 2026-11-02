@@ -1,17 +1,17 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.11';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.11';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.11';
-import { generationPrompt } from './generation-prompts.js?v=1.27.11';
-import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.27.11';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.11';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.11';
-import { extractSummarySource } from './summary-source.js?v=1.27.11';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.11';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.11';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.11';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.11';
-import { retryOperation, waitForRetry } from './retry.js?v=1.27.11';
-import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.11';
+import { selectedTableRecords } from './character-tables.js?v=1.27.12';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.12';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.12';
+import { generationPrompt } from './generation-prompts.js?v=1.27.12';
+import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.27.12';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.12';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.12';
+import { extractSummarySource } from './summary-source.js?v=1.27.12';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.12';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.12';
+import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.12';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.12';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.12';
+import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.12';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -102,10 +102,15 @@ export class MemorySummarizer {
 
     invalidateContext() { this.contextRevision++; this.unsavedResponses.clear(); }
 
-    async completeWithRetry(request, assertActive, key, { retryDelay = this.retryDelay, onRetry = () => {} } = {}) {
+    async completeWithRetry(request, assertActive, key, { retryDelay = this.retryDelay, onRetry = () => {}, validate = result => result } = {}) {
         assertActive();
         if (this.unsavedResponses.has(key)) return this.unsavedResponses.get(key);
-        const result = await retryOperation(() => this.apiClient.complete(request), { signal: request.signal, assertActive, delay: retryDelay,
+        // Cache only validated responses. Network and content failures share one budget.
+        const result = await retryOperation(async () => {
+            const response = await this.apiClient.complete(request);
+            assertActive();
+            return validate(response);
+        }, { signal: request.signal, assertActive, delay: retryDelay,
             onRetry: info => {
                 this.onStatus('busy', `生成请求失败，${info.waitMs / 1000} 秒后自动重试 ${info.attempt}/${info.maxRetries}：${info.error.message}`);
                 onRetry(info);
@@ -164,7 +169,7 @@ export class MemorySummarizer {
         const assistants = this.store.syncMessages(this.getChat());
         const latest = assistants.at(-1);
         if (!latest || this.isSummarizing(latest.messageId)) return null;
-        return this.summarizeEntry(latest);
+        return this.summarizeAutomaticEntry(latest);
     }
 
     async summarizeMessage(messageId, options = {}) {
@@ -183,7 +188,7 @@ export class MemorySummarizer {
             if (fingerprint && fingerprint !== entry.fingerprint) {
                 throw Object.assign(new Error('原文已编辑或切换备选回复，请重新选择楼层'), { code: 'SOURCE_CHANGED' });
             }
-            return this.summarizeEntry(entry, options);
+            return options.recoverPending ? this.summarizeAutomaticEntry(entry, options) : this.summarizeEntry(entry, options);
         }).finally(() => {
             this.pendingSummaries.delete(key);
             this.onStatus('settled', '');
@@ -191,6 +196,52 @@ export class MemorySummarizer {
         this.pendingSummaries.set(key, pending);
         this.onStatus('busy', '摘要已排队');
         return pending;
+    }
+
+    async summarizeAutomaticEntry(entry, options = {}) {
+        const settings = this.getSettings();
+        if (!settings.enabled || !settings.autoSummarize || !settings.independentApi) return null;
+        const chatId = this.store.current().chatId, revision = this.contextRevision;
+        const assertActive = () => {
+            if (chatId !== this.store.current().chatId || revision !== this.contextRevision) throw chatChangedError('自动补齐');
+            if (options.signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
+            if (this.getPersistenceState().state === 'conflict') throw Object.assign(new Error('请先解决跨设备冲突'), { code: 'SAVE_UNCONFIRMED' });
+        };
+        assertActive();
+        // Repair holes inside the recorded history, without starting a full
+        // historical backfill when the extension is first installed mid-chat.
+        const floors = Object.values(this.store.current().summaries).map(item => item.floor).filter(Number.isFinite);
+        const firstFloor = floors.length ? Math.min(...floors) : entry.floor;
+        const pending = getAssistantMessages(this.getChat()).filter(item => item.floor >= firstFloor && item.floor < entry.floor
+            && !isUsableMemory(this.store.getSummaryForEntry(item)));
+        const errors = [];
+        let latest = null;
+        return this.store.withAggregateBatch(async () => {
+            this.aggregateDeferrals++;
+            try {
+                // Keep the newest floor moving even if an older floor keeps failing.
+                for (const current of [entry, ...pending]) {
+                    assertActive();
+                    try {
+                        const record = await this.summarizeEntry(current, { ...options, overwrite: false, deferAggregates: true });
+                        if (current === entry) latest = record;
+                    } catch (error) {
+                        assertActive();
+                        if (!isRetryableError(error)) throw error;
+                        errors.push(`第 ${current.floor} 层：${error.message}`);
+                    }
+                }
+            } finally { this.aggregateDeferrals--; }
+            assertActive();
+            try { await this.generateDueAggregates({ signal: options.signal }); }
+            catch (error) {
+                assertActive();
+                if (!isRetryableError(error)) throw error;
+                errors.push(error.message);
+            }
+            if (errors.length) this.onStatus('warning', `本轮已继续处理；仍有待重试记忆，下次自动更新时继续：${errors.join('；')}`);
+            return latest;
+        });
     }
 
     async summarizeEntry(entry, { overwrite = false, deferAggregates = false, signal, retryDelay, onRetry } = {}) {
@@ -247,11 +298,11 @@ export class MemorySummarizer {
                 signal,
             };
             responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);
-            const result = await this.completeWithRetry(request, assertContext, responseKey, { retryDelay, onRetry });
-            if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
-            const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: summarySource.text, prompt: settings.prompts.summary });
-            const parsed = parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
-            if (!String(parsed.event || parsed.raw || '').trim()) throw new Error('摘要输出为空，原记忆保留');
+            const parsed = await this.completeWithRetry(request, assertContext, responseKey, { retryDelay, onRetry, validate: result => {
+                if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
+                const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: summarySource.text, prompt: settings.prompts.summary });
+                return parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
+            } });
             parsed.storyTime = sourceMetadata.storyTime;
             parsed.location = sourceMetadata.location;
             if (parsed.format === 'structured') parsed.raw = buildStructuredSummary(parsed);
@@ -411,7 +462,7 @@ export class MemorySummarizer {
             assertActive();
             const state = await this.flushMemory(chatId);
             assertActive();
-            if (state?.state !== 'confirmed') throw new Error(`记忆尚未确认保存，补全已停止：${state?.detail || '状态未知'}`);
+            if (state?.state !== 'confirmed') throw Object.assign(new Error(`记忆尚未确认保存，补全已停止：${state?.detail || '状态未知'}`), { code: 'SAVE_UNCONFIRMED' });
         };
         this.aggregateDeferrals++;
         try {
@@ -423,26 +474,49 @@ export class MemorySummarizer {
                         result.phase = phase;
                         result.currentRange = { startFloor: entry.floor ?? entry.startFloor, endFloor: entry.floor ?? entry.endFloor };
                         onProgress({ ...result });
-                        let record;
-                        if (phase === 'Summary') {
-                            const existing = this.store.getSummaryForEntry(entry);
-                            if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
-                            record = await this.summarizeMessage(entry.messageId, { overwrite: Boolean(existing), deferAggregates: true, signal, expectedFingerprint: entry.fingerprint });
-                        } else {
-                            const items = phase === 'Checkpoint' ? this.store.current().checkpoints : this.store.current().longMemories;
-                            const existing = items.find(item => item.startFloor === entry.startFloor && item.endFloor === entry.endFloor);
-                            if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
-                            record = await this.enqueueForCurrentChat(() => {
-                                assertActive();
-                                if (phase === 'Checkpoint') return this.generateCheckpoint(entry.startFloor, entry.endFloor, { overwrite: Boolean(existing), signal });
-                                const sources = this.store.current().checkpoints.filter(item => item.startFloor >= entry.startFloor && item.endFloor <= entry.endFloor && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor);
-                                if (sources[0]?.startFloor !== entry.startFloor || sources.at(-1)?.endFloor !== entry.endFloor) throw new Error('Long Memory 的阶段记忆尚未补齐');
-                                return this.generateLongMemory(sources, { overwrite: Boolean(existing), signal });
-                            });
+                        // Missing dependencies are left pending; unrelated ranges can proceed.
+                        if (phase === 'Checkpoint') {
+                            const available = this.store.currentSummaries(this.getChat()).filter(item => isUsableMemory(item)
+                                && item.floor >= entry.startFloor && item.floor <= entry.endFloor);
+                            if (available.length !== entry.endFloor - entry.startFloor + 1) {
+                                result.skipped++; result.processed++; onProgress({ ...result }); continue;
+                            }
+                        } else if (phase === 'Long Memory') {
+                            const sources = this.store.current().checkpoints.filter(item => isUsableMemory(item)
+                                && item.startFloor >= entry.startFloor && item.endFloor <= entry.endFloor).sort((a, b) => a.startFloor - b.startFloor);
+                            let next = entry.startFloor;
+                            for (const source of sources) { if (source.startFloor !== next) break; next = source.endFloor + 1; }
+                            if (next !== entry.endFloor + 1) {
+                                result.skipped++; result.processed++; onProgress({ ...result }); continue;
+                            }
                         }
-                        if (!isUsableMemory(record)) throw new Error(`${phase} 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层未能生成`);
-                        await save();
-                        result.created++; result.processed++;
+                        try {
+                            let record;
+                            if (phase === 'Summary') {
+                                const existing = this.store.getSummaryForEntry(entry);
+                                if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
+                                record = await this.summarizeMessage(entry.messageId, { overwrite: Boolean(existing), deferAggregates: true, signal, expectedFingerprint: entry.fingerprint });
+                            } else {
+                                const items = phase === 'Checkpoint' ? this.store.current().checkpoints : this.store.current().longMemories;
+                                const existing = items.find(item => item.startFloor === entry.startFloor && item.endFloor === entry.endFloor);
+                                if (isUsableMemory(existing)) { result.skipped++; result.processed++; onProgress({ ...result }); continue; }
+                                record = await this.enqueueForCurrentChat(() => {
+                                    assertActive();
+                                    if (phase === 'Checkpoint') return this.generateCheckpoint(entry.startFloor, entry.endFloor, { overwrite: Boolean(existing), signal });
+                                    const sources = this.store.current().checkpoints.filter(item => item.startFloor >= entry.startFloor && item.endFloor <= entry.endFloor && isUsableMemory(item)).sort((a, b) => a.startFloor - b.startFloor);
+                                    if (sources[0]?.startFloor !== entry.startFloor || sources.at(-1)?.endFloor !== entry.endFloor) throw new Error('Long Memory 的阶段记忆尚未补齐');
+                                    return this.generateLongMemory(sources, { overwrite: Boolean(existing), signal });
+                                });
+                            }
+                            if (!isUsableMemory(record)) throw new Error(`${phase} 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层未能生成`);
+                            await save();
+                            result.created++; result.processed++;
+                        } catch (error) {
+                            assertActive();
+                            if (!isRetryableError(error)) throw error;
+                            result.failed++; result.processed++;
+                            result.errors.push(`${phase} 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层：${error.message}`);
+                        }
                         onProgress({ ...result });
                     }
                 }
@@ -674,12 +748,11 @@ export class MemorySummarizer {
         try {
             const request = { systemPrompt, userContent, maxTokens: settings.checkpointMaxTokens, signal };
             responseKey = JSON.stringify(['checkpoint', chatId, revision, expectedTargets, request]);
-            const result = await this.completeWithRetry(request, assertSources, responseKey);
-            if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
-            if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
+            const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { validate: result => {
+                if (result.finishReason === 'length') throw new Error('Checkpoint 输出达到 token 上限，请提高最大输出长度后重试');
+                return prepareMemoryResponse(result.content, 'Checkpoint', { source: userContent, prompt: settings.prompts.checkpoint });
+            } });
             assertSources();
-            if (result.finishReason === 'length') throw new Error('Checkpoint 输出达到 token 上限，请提高最大输出长度后重试');
-            const cleaned = prepareMemoryResponse(result.content, 'Checkpoint', { source: userContent, prompt: settings.prompts.checkpoint });
             const record = {
                 id,
                 startFloor,
@@ -812,10 +885,11 @@ export class MemorySummarizer {
         try {
             const request = { systemPrompt, userContent, maxTokens: settings.longMemoryMaxTokens, signal };
             responseKey = JSON.stringify(['long', chatId, revision, expectedTargets, request]);
-            const result = await this.completeWithRetry(request, assertSources, responseKey);
+            const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { validate: result => {
+                if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
+                return prepareMemoryResponse(result.content, 'Long Memory', { source: userContent, prompt: settings.prompts.longMemory });
+            } });
             assertSources();
-            if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
-            const cleaned = prepareMemoryResponse(result.content, 'Long Memory', { source: userContent, prompt: settings.prompts.longMemory });
             const record = {
                 id,
                 startFloor,

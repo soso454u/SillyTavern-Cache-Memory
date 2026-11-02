@@ -18,7 +18,7 @@ function fixture(ids) {
     for (let n = 1; n <= 2; n++) store.addLongMemory({ id: `long-00${n}`, startFloor: n * 50 - 49, endFloor: n * 50,
         memoryKind: 'facts', content: old, manualEdited: true, frozen: true, status: 'frozen', storyStartTime: '2024/10/22 10:55', storyEndTime: '2024/10/25 13:40',
         ...(n === 2 && ids ? { checkpointIds: ids } : {}) });
-    const summarizer = new MemorySummarizer({ store, getChat: () => [], getSettings: () => settings, apiClient: { complete: async request => {
+    const summarizer = new MemorySummarizer({ store, retryDelay: async () => {}, getChat: () => [], getSettings: () => settings, apiClient: { complete: async request => {
         calls.push(request); return { content: story };
     } } });
     const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { store, summarizer, renderManager() {}, renderMessageMemories() {} });
@@ -71,11 +71,11 @@ test('explicit regeneration replaces exactly 51–100 using all current CPs even
     }
 });
 
-test('a fact-only response cannot replace the manual Long or silently retry under a narrative template', async () => {
+test('a fact-only response retries within budget and cannot replace the manual Long', async () => {
     const f = fixture(), before = structuredClone(f.store.current());
     f.summarizer.apiClient.complete = async request => { f.calls.push(request); return { content: old }; };
     await assert.rejects(f.ui.regenerate('long', 'long-002'), /STORY_ARC.*原记忆保留/);
-    assert.equal(f.calls.length, 1); assert.deepEqual(f.store.current(), before); assert.equal(f.ui.regeneratingLongId, null);
+    assert.equal(f.calls.length, 4); assert.deepEqual(f.store.current(), before); assert.equal(f.ui.regeneratingLongId, null);
 });
 
 test('source gaps or overlapping CPs reject regeneration before requesting a model or shrinking the target', async () => {
