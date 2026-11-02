@@ -44,7 +44,7 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
     const context = {chatId:'synthetic', characterId:0, characters:[{name:'A', avatar:'synthetic.png'}], chatMetadata:metadata, chat,
         getRequestHeaders: () => ({'Content-Type':'application/json'}), saveMetadata: async () => {writes++;remote=clone(metadata.cache_memory);} };
     class UI {constructor(options){this.callbacks=options;}setStatus(){}cancelMissingCheckpointBackfill(){}mountSettings(){return true;}bindChatActions(){}renderMemorySaveState(){}refreshSummaryMode(){}queueManagerRender(){}queueMessageRender(){}destroy(){}}
-    class EmptyClient {abortAll(){}install(){}probe(){return Promise.resolve();}uninstall(){}invalidateContext(){}}
+    class EmptyClient {async completeBeforeInjection(){return {remaining:0};}abortAll(){}install(){}probe(){return Promise.resolve();}uninstall(){}invalidateContext(){}}
     class Server extends EmptyClient {available=false;}
     class Publisher {publish(value){published.push(value);return {};}dispose(){}}
     const bindings = {chat, chat_metadata:metadata, eventSource:{on:(name, fn)=>handlers.set(name,fn), off:name=>handlers.delete(name)}, event_types:{CHAT_CHANGED:'changed', CHAT_LOADED:'loaded'}, extension_prompt_roles:{}, extension_prompt_types:{}, getCurrentChatId:()=> 'synthetic', isGenerating:()=>false, saveSettingsDebounced:()=>{}, setExtensionPrompt:()=>{}, extension_settings:{[defaults.MODULE_ID]:settings}, getContext:()=>context, promptManager:null,
@@ -72,14 +72,14 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
             assert.equal(context.chatId, 'synthetic');
         }
         const originalChat = clone(chat), prompt = clone(chat);
-        globalThis.cacheMemoryHistoryInterceptor(prompt, 10000, () => {}, 'normal');
+        await globalThis.cacheMemoryHistoryInterceptor(prompt, 10000, () => {}, 'normal');
         assert.equal(prompt.filter(row=>!row.is_user).length, injectionMode === 'rolling' ? 3 : historyHandoff ? 5 : lastUserOnly ? 10 : 11);
         assert.equal(prompt.filter(row=>row.is_user).length, lastUserOnly ? 1 : injectionMode === 'rolling' ? 4 : historyHandoff ? 6 : 11);
         assert.deepEqual(chat, originalChat);
         const snapshotBefore = clone(runtime.store.current().injectionSnapshot);
         runtime.updateSettings({lastUserOnly:!lastUserOnly});
         const toggled = clone(chat);
-        globalThis.cacheMemoryHistoryInterceptor(toggled,10000,()=>{},'normal');
+        await globalThis.cacheMemoryHistoryInterceptor(toggled,10000,()=>{},'normal');
         assert.equal(toggled.filter(row=>row.is_user).length,!lastUserOnly ? 1 : injectionMode === 'rolling' ? 4 : historyHandoff ? 6 : 11);
         assert.deepEqual(runtime.store.current().injectionSnapshot,snapshotBefore);
         runtime.updateSettings({lastUserOnly});

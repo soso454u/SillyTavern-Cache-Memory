@@ -1,17 +1,17 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.12';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.12';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.12';
-import { generationPrompt } from './generation-prompts.js?v=1.27.12';
-import { getAssistantMessages, replacePromptVariables } from './utils.js?v=1.27.12';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.12';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.12';
-import { extractSummarySource } from './summary-source.js?v=1.27.12';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.12';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.12';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.12';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.12';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.12';
-import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.12';
+import { selectedTableRecords } from './character-tables.js?v=1.27.13';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.13';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.13';
+import { generationPrompt } from './generation-prompts.js?v=1.27.13';
+import { getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.13';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.13';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.13';
+import { extractSummarySource } from './summary-source.js?v=1.27.13';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.13';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.13';
+import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.13';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.13';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.13';
+import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.13';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -98,9 +98,82 @@ export class MemorySummarizer {
         this.unsavedResponses = new Map();
         this.aggregateDeferrals = 0;
         this.contextRevision = 0;
+        this.injectionRecovery = null;
     }
 
-    invalidateContext() { this.contextRevision++; this.unsavedResponses.clear(); }
+    invalidateContext() {
+        this.contextRevision++;
+        this.unsavedResponses.clear();
+        this.cancelInjectionRecovery();
+    }
+
+    cancelInjectionRecovery() { this.injectionRecovery?.controller.abort(); }
+
+    completeBeforeInjection({ signal } = {}) {
+        const chatId = this.store.current().chatId, revision = this.contextRevision;
+        const current = this.injectionRecovery;
+        if (current?.chatId === chatId && current.revision === revision) return current.promise;
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        if (signal?.aborted) cancel();
+        signal?.addEventListener('abort', cancel, { once: true });
+        const sources = () => {
+            const chat = this.getChat();
+            return JSON.stringify([chat.map(message => [message.is_user === true, message.is_system === true, messageFingerprint(message)]),
+                getAssistantMessages(chat).map(({ messageId, floor, fingerprint }) => [messageId, floor, fingerprint])]);
+        };
+        const expectedSources = sources();
+        const assertActive = () => {
+            if (chatId !== this.store.current().chatId || revision !== this.contextRevision) throw chatChangedError('注入前补全');
+            if (controller.signal.aborted) throw Object.assign(new Error('注入前补全已取消'), { code: 'REQUEST_ABORTED' });
+            if (sources() !== expectedSources) throw Object.assign(new Error('补全期间聊天正文已变化，已取消旧注入'), { code: 'SOURCE_CHANGED' });
+        };
+        const remaining = () => {
+            const plan = this.getMissingMemoryPlan();
+            return plan.summaries.length + plan.checkpoints.length + plan.longMemories.length;
+        };
+        const recovery = { chatId, revision, controller };
+        recovery.promise = Promise.resolve().then(async () => {
+            assertActive();
+            const settings = this.getSettings();
+            if (!settings.enabled || !settings.independentApi || settings.injectionMode === 'none') return { skipped: true, remaining: 0 };
+            // Existing queued summaries settle first; never enqueue a whole fill
+            // operation, whose individual records use this same queue.
+            await new Promise((resolve, reject) => {
+                const stop = () => reject(Object.assign(new Error('注入前补全已取消'), { code: 'REQUEST_ABORTED' }));
+                controller.signal.addEventListener('abort', stop, { once: true });
+                if (controller.signal.aborted) stop();
+                this.queue.then(() => { controller.signal.removeEventListener('abort', stop); resolve(); },
+                    error => { controller.signal.removeEventListener('abort', stop); reject(error); });
+            });
+            assertActive();
+            const latestSettings = this.getSettings();
+            if (!latestSettings.enabled || !latestSettings.independentApi || latestSettings.injectionMode === 'none') return { skipped: true, remaining: 0 };
+            if (this.getPersistenceState().state === 'conflict') throw Object.assign(new Error('记忆存在跨设备冲突，未自动补全'), { code: 'SAVE_UNCONFIRMED' });
+            if (!remaining()) return { skipped: true, remaining: 0 };
+            if (this.aggregateDeferrals) {
+                this.onStatus('warning', '已有记忆补全任务正在进行，本次沿用可用记忆。');
+                return { skipped: true, busy: true, remaining: remaining() };
+            }
+            this.onStatus('busy', '正在注入前自动补全缺失记忆…');
+            const result = await this.fillMissingMemories({ signal: controller.signal,
+                onProgress: progress => {
+                    assertActive();
+                    this.onStatus('busy', `注入前自动补全 · ${progress.phase} · ${progress.processed}/${progress.total}`);
+                } });
+            assertActive();
+            const pending = remaining();
+            this.onStatus(pending || result.failed ? 'warning' : 'success', pending || result.failed
+                ? `注入前补全仍有 ${pending} 项待处理，下次注入继续重试${result.errors?.length ? '：' + result.errors.at(-1) : ''}`
+                : `注入前自动补全完成，新增 ${result.created} 条记忆，已确认保存。`);
+            return { ...result, remaining: pending };
+        }).finally(() => {
+            signal?.removeEventListener('abort', cancel);
+            if (this.injectionRecovery === recovery) this.injectionRecovery = null;
+        });
+        this.injectionRecovery = recovery;
+        return recovery.promise;
+    }
 
     async completeWithRetry(request, assertActive, key, { retryDelay = this.retryDelay, onRetry = () => {}, validate = result => result } = {}) {
         assertActive();

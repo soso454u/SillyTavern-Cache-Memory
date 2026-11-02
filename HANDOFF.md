@@ -1,3 +1,17 @@
+# 接续说明（2026-11-02，v1.27.13）
+
+用户追加明确要求：每次注入时检查截图里的 Summary／CP／Long “已生成／应有”，不满就自动重试补全，不要依赖新楼层或再点全部补全。本轮基于4836f7c；仍在 /private/tmp/cache-memory-retry-fix 临时检出中维护，原外置盘工作目录未挂载。
+
+MemorySummarizer.completeBeforeInjection 对当前聊天及 contextRevision 只保留一个运行期 Promise，并发入口共用；等待既有摘要队列后重新扫描完整 getMissingMemoryPlan，缺口走现有 fillMissingMemories，每条保存确认后返回。不要把完整 fill 入 summarizer 队列，它的各条记录会再次入队而造成死锁。已有手动补齐任务 aggregateDeferrals>0 时不竞争开批次；齐全时无模型、无存储修改。用户本次要求覆盖关闭 autoSummarize 后的实际注入，仍检查补全；enabled／independentApi 关闭或 injectionMode=none 则跳过。失败留下待处理项，下一次注入重试；没有定时器或无限循环。
+
+index 的 generate_interceptor 改 async，正常／Swipe／regenerate／continue 发主请求前 await 补全，再发布 rolling 投影并筛选该次临时 coreChat。核对官方 SillyTavern release/public/scripts/extensions.js 的 runGenerationInterceptors 已 await 各拦截器，abort(true) 支持立即终止；events.js 提供 GENERATION_STOPPED，绑定取消该轮预补全。停止生成、卸载、聊天切换和 source 变化取消过期请求；队列等待可被立即中断。来源保护包含开场、user／assistant 全文指纹与楼层，逐条进度也校验；不改存储聊天或其顺序。仍有非取消类失败时沿用已确认可用记忆，未覆盖原文按原覆盖检查保留。
+
+只在实际生成拦截和用户点击“重新注入”入口做模型补全，不放在同步 updateInjection、store.onChange、服务器读回或界面渲染回调，否则补全保存会递归触发新付费任务。手动按钮新增 prepareInjection 回调，等待后再重新注入，未补齐显示 warning。清理、编辑等内部快照更新仍保持原行为。quiet 后台生成不触发预补全。Strict Cache 原边界和模型提示词／预算／重试间隔未改，版本和客户端URL统一1.27.13。
+
+验证：npm run check、npm test共647项、git diff --check全通过。新增17项包括154层152/154+29/30+2/3补到齐全；完整记忆反复注入零请求；并发共享；不增加楼层也能下一轮恢复；关闭autoSummarize但仍按用户要求注入补全；等待旧摘要不重复；队列取消／正文、开场、用户输入变化；冲突和活跃历史批次不竞争；手动按钮等待及准确warning。完整index运行期测试使用真实Store、Summarizer、Persistence及合成ST环境，验证先保存Summary→CP→Long再发布并过滤当前prompt、原chat不变、原生停止取消、持续错误保留缺口原文、quiet零请求、等候中用户输入变化不发过期主请求。原设备同步测试等待async拦截器并保留只读断言。未连接真实模型或操作在线私人聊天；不代表原生酒馆实机运行验证。
+
+以下历史说明服从当前版本及最新用户要求。
+
 # 接续说明（2026-11-02，v1.27.12）
 
 本轮用户要求修复截图中的“Summary 响应缺少有效剧情字段”及自动更新停滞，并提交上传 GitHub。基于 main 39420c4，在 /private/tmp/cache-memory-retry-fix 检出处理；原 /Volumes/Soivt39 工作目录当前未挂载，未修改用户私人聊天。

@@ -12,21 +12,21 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.12';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.12';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.12';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.12';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.12';
-import { getAssistantMessages } from './src/utils.js?v=1.27.12';
-import { MemoryStore } from './src/memory-store.js?v=1.27.12';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.12';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.12';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.12';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.12';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.12';
-import { chatFileIdentity } from './src/chat-file.js?v=1.27.12';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.12';
-import { memoryContentDigest } from './src/memory-store.js?v=1.27.12';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.13';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.13';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.13';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.13';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.13';
+import { getAssistantMessages } from './src/utils.js?v=1.27.13';
+import { MemoryStore } from './src/memory-store.js?v=1.27.13';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.13';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.13';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.13';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.13';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.13';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.13';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.13';
+import { memoryContentDigest } from './src/memory-store.js?v=1.27.13';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -274,13 +274,31 @@ function cacheDebugSnapshot(messages) {
     ui?.setCacheDebug(snapshot);
 }
 
-// ST supplies a regex-processed temporary coreChat via generate_interceptor.
-// Register only while active; never change the stored chat or regex settings.
-function historyInterceptor(coreChat, _contextSize, _abort, type) {
-    if (!settings?.enabled || (settings.injectionMode !== 'rolling' && !settings.historyHandoff && !settings.lastUserOnly) || memoryChatId() !== activeChatId) return;
-    // Publish before filtering as well: the newest summary may still be pending,
-    // and a continued/edited reply may have invalidated an earlier projection.
-    if (settings.injectionMode === 'rolling' && [undefined, 'normal', 'swipe', 'regenerate', 'continue'].includes(type)) updateInjection('before generation', promptHistoryFloor(coreChat, chat, store.current().summaries));
+async function prepareInjection() {
+    return summarizer.completeBeforeInjection({ signal: runtimeController.signal });
+}
+
+// ST awaits this interceptor before assembling the main prompt. Repair only
+// at this boundary, never from publication/save callbacks that repair triggers.
+async function historyInterceptor(coreChat, _contextSize, abort, type) {
+    if (!settings?.enabled || memoryChatId() !== activeChatId) return;
+    if (![undefined, 'normal', 'swipe', 'regenerate', 'continue'].includes(type)) return;
+    const chatId = memoryChatId(), revision = summarizer.contextRevision;
+    try { await prepareInjection(); }
+    catch (error) {
+        if (['CHAT_CHANGED', 'SOURCE_CHANGED', 'REQUEST_ABORTED'].includes(error.code)
+            || runtimeController.signal.aborted || memoryChatId() !== chatId || summarizer.contextRevision !== revision) {
+            abort?.(true); return;
+        }
+        ui?.setStatus('warning', `注入前自动补全未完成，沿用可用记忆：${error.message}`);
+        console.warn(LOG_PREFIX, error.message);
+    }
+    if (runtimeController.signal.aborted || memoryChatId() !== chatId || memoryChatId() !== activeChatId || summarizer.contextRevision !== revision) {
+        abort?.(true); return;
+    }
+    // Rebuild the rolling projection only after generated records are saved.
+    if (settings.injectionMode === 'rolling') updateInjection('before generation', promptHistoryFloor(coreChat, chat, store.current().summaries));
+    if (settings.injectionMode !== 'rolling' && !settings.historyHandoff && !settings.lastUserOnly) return;
     const current = store.current();
     if (current.chatId !== activeChatId) return;
     const result = filterCoveredHistory(coreChat, chat, current.injectionSnapshot, publishedMemoryValue, {
@@ -314,6 +332,7 @@ function reconcileMessageSummary(messageIndex) {
 }
 
 function bindEvents() {
+    bindEvent(event_types.GENERATION_STOPPED, () => summarizer.cancelInjectionRecovery());
     if (event_types.CHAT_COMPLETION_SETTINGS_READY) {
         bindEvent(event_types.CHAT_COMPLETION_SETTINGS_READY, data => cacheDebugSnapshot(data?.messages));
     } else {
@@ -399,6 +418,7 @@ function initialize() {
                 openAfterCreate: options.openAfterCreate, canSwitch: () => !isGenerating() });
         },
         updateInjection,
+        prepareInjection,
         persistence,
         apiCacheAdapter,
     });
