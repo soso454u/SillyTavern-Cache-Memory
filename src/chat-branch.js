@@ -1,10 +1,10 @@
-import { normalizeStore } from './memory-store.js?v=1.27.15';
-import { chatFileIdentity } from './chat-file.js?v=1.27.15';
-import { chatFloorOffset, chatInheritedThrough, getAssistantMessages } from './utils.js?v=1.27.15';
-import { currentInjectionBlocks } from './injection.js?v=1.27.15';
-import { refreshSnapshot } from './cache-control.js?v=1.27.15';
-import { getOpeningSource } from './opening-source.js?v=1.27.15';
-import { isUsableMemory } from './continuity.js?v=1.27.15';
+import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.16';
+import { chatFileIdentity } from './chat-file.js?v=1.27.16';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages } from './utils.js?v=1.27.16';
+import { currentInjectionBlocks } from './injection.js?v=1.27.16';
+import { refreshSnapshot } from './cache-control.js?v=1.27.16';
+import { getOpeningSource } from './opening-source.js?v=1.27.16';
+import { isUsableMemory } from './continuity.js?v=1.27.16';
 
 const clone = value => structuredClone(value);
 function uniqueId() {
@@ -48,16 +48,28 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
         const opening = getOpeningSource(chat)?.message;
         // A generated first reply is a normal floor, not an extra greeting.
         if (sliceStart > 0 && opening && !entries.some(row => row.message === opening)) selected.unshift(opening);
-    } else if (mode === 'through') {
+    } else if (mode === 'through' || mode === 'cutoff') {
         endFloor ??= latest;
         if (!Number.isSafeInteger(endFloor) || !entries.some(row => row.floor === endFloor)) throw new Error(`请选择第 ${entries[0].floor}–${latest} 层中仍有正文的楼层`);
         end = endFloor;
         selected = chat.slice(0, entries.find(row => row.floor === end).messageIndex + 1);
-    } else throw new Error('请选择最近 N 层或截至第 N 层');
+    } else throw new Error('请选择有效的平行线保留方式');
     selected = clone(selected);
     const offset = mode === 'recent' ? start - 1 : chatFloorOffset(chat);
-    const memory = normalizeStore(clone(original), original.chatId);
-    const inheritedThrough = Math.max(offset, chatInheritedThrough(chat), end < latest ? latest : 0);
+    const parentInheritedThrough = chatInheritedThrough(chat);
+    const trimMemory = mode === 'cutoff' && end < Math.max(latest, parentInheritedThrough);
+    // A cutoff rebuilds KEEP from retained sources. Current overrides and
+    // lifecycle decisions may have been made after the chosen floor.
+    const sourceMemory = trimMemory ? {
+        ...createEmptyStore(original.chatId), version: 2, summaryMode: original.summaryMode,
+        summaries: Object.fromEntries(Object.entries(original.summaries).filter(([, row]) => row.floor <= end)),
+        checkpoints: original.checkpoints.filter(row => row.endFloor <= end),
+        longMemories: original.longMemories.filter(row => row.endFloor <= end),
+    } : original;
+    const memory = normalizeStore(clone(sourceMemory), original.chatId);
+    const inheritedThrough = mode === 'cutoff'
+        ? Math.max(offset, Math.min(parentInheritedThrough, end))
+        : Math.max(offset, parentInheritedThrough, end < latest ? latest : 0);
     if (offset > 0) {
         if (!settings.enabled || settings.injectionMode !== 'rolling') throw new Error('只保留近期正文时，请先启用“最近正文＋每层更新记忆”，以保留更早剧情');
         const blocks = currentInjectionBlocks(memory, { ...settings, injectionFloor: offset + 1, recentRawFloors: 1 }, 'rolling')
@@ -100,7 +112,7 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
     delete memory.injectionSnapshot;
     refreshSnapshot(memory, { ...settings, injectionFloor: end, inheritedThrough }, 'manual reinject');
     const stable = ['note_prompt', 'note_interval', 'note_position', 'note_depth', 'note_role', 'persona'];
-    const metadata = end === latest ? clone(rows[0].chat_metadata)
+    const metadata = end === latest && !trimMemory ? clone(rows[0].chat_metadata)
         : Object.fromEntries(stable.filter(key => Object.hasOwn(rows[0].chat_metadata, key)).map(key => [key, clone(rows[0].chat_metadata[key])]));
     delete metadata.main_chat;
     delete metadata.bookmark_link;

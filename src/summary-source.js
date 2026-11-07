@@ -1,4 +1,4 @@
-import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.15';
+import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.16';
 
 export const SUMMARY_FILTER_MODES = Object.freeze({
     DEFAULT: 'default',

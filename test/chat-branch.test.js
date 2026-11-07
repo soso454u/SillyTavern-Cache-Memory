@@ -120,6 +120,38 @@ test('a reopened prefix branch injects its inherited tail and continues aggregat
     assert.deepEqual(getAssistantMessages(chat).slice(-3).map(row => row.floor), [13, 14, 15]);
 });
 
+test('cutoff keeps only complete memories through the chosen floor and rebuilds historical KEEP', () => {
+    const f = fixture(), source = f.rows[0].chat_metadata.cache_memory;
+    Object.values(source.summaries)[1].keep = '早期约定';
+    source.keepRegistry['KEEP-0002'] = { sourceFloor: 2, text: '早期约定', status: 'resolved', reason: '后来才完成' };
+    const before = structuredClone(f.rows);
+    const branch = f.build({ mode: 'cutoff', endFloor: 7 });
+    const chat = branch.rows.slice(1), memory = branch.rows[0].chat_metadata.cache_memory;
+    assert.equal(chat.at(-1).mes, '正文7');
+    assert.deepEqual(Object.values(memory.summaries).map(row => row.floor), [1, 2, 3, 4, 5, 6, 7]);
+    assert.deepEqual(memory.checkpoints.map(row => row.id), ['cp1']);
+    assert.deepEqual(memory.longMemories, []);
+    assert.equal(Object.values(memory.keepRegistry).find(row => row.text === '早期约定').status, 'active');
+    assert.deepEqual(memory.stateOverrides, {});
+    assert.doesNotMatch(JSON.stringify(branch.rows), /未来才获得|未来剧情|旧线未来快照|未来状态|后来才完成/);
+    chat.push({ mes: '截断后的新回复', gen_started: 'cutoff-next' });
+    assert.equal(getAssistantMessages(chat).at(-1).floor, 8);
+    assert.deepEqual(f.rows, before);
+});
+
+test('cutoff of a branch with inherited future memory caps the timeline at the selected raw floor', () => {
+    const f = fixture();
+    const parent = f.build({ mode: 'through', endFloor: 7 });
+    const branch = prepareChatBranch(parent.rows, { mode: 'cutoff', endFloor: 7 }, f.settings);
+    const chat = branch.rows.slice(1), memory = branch.rows[0].chat_metadata.cache_memory;
+    assert.deepEqual(getAssistantMessages(chat).map(row => row.floor), [1, 2, 3, 4, 5, 6, 7]);
+    assert.equal(chatInheritedThrough(chat), 7);
+    assert.equal(Object.keys(memory.summaries).length, 7);
+    assert.doesNotMatch(memory.injectionSnapshot.value, /剧情12|未来剧情/);
+    chat.push({ mes: '截断后的新回复', gen_started: 'cutoff-after-inheritance' });
+    assert.equal(getAssistantMessages(chat).at(-1).floor, 8);
+});
+
 test('recent truncation refuses a gap in earlier story coverage and accepts a larger raw window', () => {
     const f = fixture();
     const source = f.rows[0].chat_metadata.cache_memory;
@@ -196,15 +228,17 @@ test('branch dialog defaults to retaining the prefix and creating without switch
             assert.equal(spec.fields.find(field => field.key === 'switch').value, 'stay');
             const mode = spec.fields.find(field => field.key === 'mode');
             assert.equal(mode.value, 'through');
-            assert.deepEqual(mode.options.map(([key]) => key), ['through', 'recent']);
-            assert.equal(spec.fields.find(field => field.key === 'endFloor').value, 12);
-            return { name: '测试分支', mode: mode.value, endFloor: '7', switch: 'stay' };
+            assert.deepEqual(mode.options.map(([key]) => key), ['through', 'recent', 'cutoff']);
+            const endFloor = spec.fields.find(field => field.key === 'endFloor');
+            assert.equal(endFloor.value, 12);
+            assert.deepEqual(endFloor.visibleWhen.value, ['through', 'cutoff']);
+            return { name: '测试分支', mode: 'cutoff', endFloor: '7', switch: 'stay' };
         },
         createChatBranch: async (_rows, value) => { options = value; return { filename: '新聊天', switched: false }; },
         setManagerActionStatus() {},
     });
     await ui.performManagerClick({ target: { closest: selector => selector === '[data-create-branch]' ? {} : null } });
-    assert.equal(options.openAfterCreate, false); assert.equal(options.mode, 'through'); assert.equal(options.endFloor, 7);
+    assert.equal(options.openAfterCreate, false); assert.equal(options.mode, 'cutoff'); assert.equal(options.endFloor, 7);
 });
 
 test('capture refuses a partial transcript instead of exporting an incomplete backup', () => {

@@ -1,7 +1,7 @@
-import { fnv1a } from './utils.js?v=1.27.15';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.15';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.27.15';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.15';
+import { fnv1a } from './utils.js?v=1.27.16';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.27.16';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.16';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 

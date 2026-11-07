@@ -1,21 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.15';
-import { applyUITheme } from './ui-theme.js?v=1.27.15';
-import { stageStartLabel } from './opening-source.js?v=1.27.15';
-import { generationPrompt } from './generation-prompts.js?v=1.27.15';
-import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.15';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.15';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.15';
-import { HistoryBackfill } from './history-backfill.js?v=1.27.15';
-import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.15';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.15';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.15';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.15';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.15';
-import { parseFloorSummary } from './summarizer.js?v=1.27.15';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.15';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
+import { applyUITheme } from './ui-theme.js?v=1.27.16';
+import { stageStartLabel } from './opening-source.js?v=1.27.16';
+import { generationPrompt } from './generation-prompts.js?v=1.27.16';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.16';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.16';
+import { HistoryBackfill } from './history-backfill.js?v=1.27.16';
+import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.16';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.16';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.16';
+import { parseFloorSummary } from './summarizer.js?v=1.27.16';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.16';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.15';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.15';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.16';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.16';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -605,7 +605,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.15', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.16', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -1595,7 +1595,9 @@ export class CacheMemoryUI {
             const syncFields = () => {
                 for (const field of fields.filter(field => field.visibleWhen)) {
                     const input = form.elements.namedItem(field.key);
-                    const visible = form.elements.namedItem(field.visibleWhen.key)?.value === field.visibleWhen.value;
+                    const { key, value } = field.visibleWhen;
+                    const selected = form.elements.namedItem(key)?.value;
+                    const visible = Array.isArray(value) ? value.includes(selected) : selected === value;
                     input.closest('label').hidden = !visible;
                     input.disabled = !visible;
                 }
@@ -3184,12 +3186,16 @@ export class CacheMemoryUI {
             const rows = this.captureChat(), entries = getAssistantMessages(rows.slice(1)), latest = entries.at(-1)?.floor;
             if (!latest) throw new Error('当前聊天没有可选择的正常 char 楼层');
             const values = await this.showPluginDialog({ title: '创建平行线聊天',
-                message: `按正常 char 回复计层，当前原文为第 ${entries[0].floor}–${latest} 层。两种方式都继承原聊天从开头到最新一层的全部已保存记忆。所选楼层只决定保留哪些正文。创建后默认留在原聊天。`,
+                message: `按正常 char 回复计层，当前原文为第 ${entries[0].floor}–${latest} 层。可以保留全部已保存记忆，也可以把正文和记忆一起截到指定楼层。创建后默认留在原聊天。`,
                 confirmLabel: '创建独立聊天', fields: [
                     { key: 'name', label: '新聊天名称', value: '平行线' },
-                    { key: 'mode', label: '选择方式', value: 'through', options: [['through', '从开头保留到第 N 层'], ['recent', '只带最近 N 层正文']] },
+                    { key: 'mode', label: '选择方式', value: 'through', options: [
+                        ['through', '从开头保留到第 N 层＋全部记忆'],
+                        ['recent', '只带最近 N 层正文＋全部记忆'],
+                        ['cutoff', '正文和记忆都保留到第 N 层'],
+                    ] },
                     { key: 'count', label: `保留多少层正文（1–${entries.length}）`, value: Math.min(3, entries.length), type: 'number', min: 1, max: entries.length, visibleWhen: { key: 'mode', value: 'recent' } },
-                    { key: 'endFloor', label: `截至第几层（${entries[0].floor}–${latest}）`, value: latest, type: 'number', min: entries[0].floor, max: latest, visibleWhen: { key: 'mode', value: 'through' } },
+                    { key: 'endFloor', label: `截至第几层（${entries[0].floor}–${latest}）`, value: latest, type: 'number', min: entries[0].floor, max: latest, visibleWhen: { key: 'mode', value: ['through', 'cutoff'] } },
                     { key: 'switch', label: '创建后的操作', value: 'stay', options: [['stay', '只创建，暂不切换'], ['open', '创建后立即切换']] },
                 ] });
             if (!values) return;

@@ -1,6 +1,6 @@
-import { summaryUserSource } from './summary-source.js?v=1.27.15';
-import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.15';
-import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.15';
+import { summaryUserSource } from './summary-source.js?v=1.27.16';
+import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.16';
+import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.16';
 
 export const RECENT_RAW_FLOORS = 5;
 
