@@ -7,7 +7,7 @@ import { MemoryStore, createEmptyStore, memoryContentDigest } from '../src/memor
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from '../src/persistence.js';
 import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from '../src/chat-branch.js';
 import { chatFileIdentity } from '../src/chat-file.js';
-import { getAssistantMessages } from '../src/utils.js';
+import { chatInheritedThrough, getAssistantMessages } from '../src/utils.js';
 import { filterCoveredHistory, promptHistoryFloor } from '../src/history-handoff.js';
 import { getOpeningSource } from '../src/opening-source.js';
 
@@ -48,7 +48,7 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
     class Server extends EmptyClient {available=false;}
     class Publisher {publish(value){published.push(value);return {};}dispose(){}}
     const bindings = {chat, chat_metadata:metadata, eventSource:{on:(name, fn)=>handlers.set(name,fn), off:name=>handlers.delete(name)}, event_types:{CHAT_CHANGED:'changed', CHAT_LOADED:'loaded'}, extension_prompt_roles:{}, extension_prompt_types:{}, getCurrentChatId:()=> 'synthetic', isGenerating:()=>false, saveSettingsDebounced:()=>{}, setExtensionPrompt:()=>{}, extension_settings:{[defaults.MODULE_ID]:settings}, getContext:()=>context, promptManager:null,
-        SummaryApiClient:EmptyClient, ApiCacheAdapterBridge:EmptyClient, CacheMemoryInjectionPublisher:Publisher, MemoryStore, MemorySummarizer:EmptyClient, CacheMemoryUI:UI, MemoryPersistenceCoordinator, readSillyTavernRemoteStore, chatFileIdentity, captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch, memoryContentDigest, MemoryServerClient:Server, getAssistantMessages, window, document,
+        SummaryApiClient:EmptyClient, ApiCacheAdapterBridge:EmptyClient, CacheMemoryInjectionPublisher:Publisher, MemoryStore, MemorySummarizer:EmptyClient, CacheMemoryUI:UI, MemoryPersistenceCoordinator, readSillyTavernRemoteStore, chatFileIdentity, captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch, memoryContentDigest, MemoryServerClient:Server, chatInheritedThrough, getAssistantMessages, window, document,
         requestAnimationFrame:fn=>setTimeout(fn,0), cancelAnimationFrame:clearTimeout,
         API_KEY_STORAGE_KEY:defaults.API_KEY_STORAGE_KEY, INJECTION_KEY:defaults.INJECTION_KEY, MODULE_ID:defaults.MODULE_ID, normalizeLoadedSettings:defaults.normalizeLoadedSettings, normalizeSettings:defaults.normalizeSettings,
         CacheDiagnostics:cache.CacheDiagnostics, refreshSnapshot:cache.refreshSnapshot, shouldRefreshInjection:cache.shouldRefreshInjection, filterCoveredHistory, promptHistoryFloor};

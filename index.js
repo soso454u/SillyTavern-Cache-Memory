@@ -12,21 +12,21 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.14';
-import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.14';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.14';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.14';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.14';
-import { getAssistantMessages } from './src/utils.js?v=1.27.14';
-import { MemoryStore } from './src/memory-store.js?v=1.27.14';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.14';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.14';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.14';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.14';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.14';
-import { chatFileIdentity } from './src/chat-file.js?v=1.27.14';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.14';
-import { memoryContentDigest } from './src/memory-store.js?v=1.27.14';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.15';
+import { ApiCacheAdapterBridge } from './src/api-cache-adapter.js?v=1.27.15';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.15';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.15';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.15';
+import { chatInheritedThrough, getAssistantMessages } from './src/utils.js?v=1.27.15';
+import { MemoryStore } from './src/memory-store.js?v=1.27.15';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.15';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.15';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.15';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.15';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.15';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.15';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.15';
+import { memoryContentDigest } from './src/memory-store.js?v=1.27.15';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -202,7 +202,7 @@ function updateInjection(reason = 'manual edit', injectionFloor = promptHistoryF
     if (!settings || !shouldRefreshInjection(settings, reason)) return;
     const current = store.current();
     const sourceStore = store.effectiveStore(chat);
-    const result = refreshSnapshot(current, { ...settings, injectionFloor }, reason, sourceStore);
+    const result = refreshSnapshot(current, { ...settings, injectionFloor, inheritedThrough: chatInheritedThrough(chat) }, reason, sourceStore);
     // Publish this format migration once through the existing confirmed save
     // queue; ordinary reloads still never upload an unchanged window snapshot.
     const migration = reason === 'chat changed' && result.migrated;

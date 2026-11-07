@@ -1,6 +1,6 @@
-import { fnv1a, getAssistantMessages } from './utils.js?v=1.27.14';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.14';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.14';
+import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages } from './utils.js?v=1.27.15';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.15';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.15';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -284,10 +284,22 @@ export class MemoryStore {
             const rows = byFloor.get(item.floor) ?? [];
             rows.push(item); byFloor.set(item.floor, rows);
         }
-        return getAssistantMessages(chat).flatMap(entry => {
+        const entries = getAssistantMessages(chat);
+        const records = entries.flatMap(entry => {
             const record = this.getSummaryForEntry(entry, store, byFloor);
             return isUsableMemory(record) ? [record] : [];
         });
+        // A branch intentionally omits raw replies for these inherited floors.
+        // Their saved summaries remain valid sources for new stage memories.
+        const inheritedThrough = Math.max(chatFloorOffset(chat), chatInheritedThrough(chat));
+        if (!inheritedThrough) return records;
+        const loadedFloors = new Set(entries.map(entry => entry.floor));
+        for (const floor of byFloor.keys()) {
+            if (floor < 1 || floor > inheritedThrough || loadedFloors.has(floor)) continue;
+            const record = summaryForEntry(store, { floor }, byFloor);
+            if (isUsableMemory(record)) records.push(record);
+        }
+        return records.sort((a, b) => a.floor - b.floor);
     }
 
     summarySourceIndex(chat) {

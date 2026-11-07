@@ -1,10 +1,10 @@
-import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.14';
-import { INJECTION_MODES } from './defaults.js?v=1.27.14';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.14';
-import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.14';
-import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.14';
-import { historyPublicationLimit } from './history-handoff.js?v=1.27.14';
-import { stageStartLabel } from './opening-source.js?v=1.27.14';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.15';
+import { INJECTION_MODES } from './defaults.js?v=1.27.15';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.15';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.15';
+import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.15';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.15';
+import { stageStartLabel } from './opening-source.js?v=1.27.15';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
@@ -130,7 +130,7 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         ...Object.values(store.summaries ?? {}).filter(isUsableMemory).map(row => row.floor),
         ...store.checkpoints.filter(isUsableMemory).map(row => row.endFloor),
         ...store.longMemories.filter(isUsableMemory).map(row => row.endFloor));
-    const limit = rolling ? Math.max(0, completed - settings.recentRawFloors)
+    const limit = rolling ? Math.max(0, settings.inheritedThrough ?? 0, completed - settings.recentRawFloors)
         : settings.historyHandoff ? historyPublicationLimit(store, isUsableMemory) : Infinity;
     const eligible = item => isUsableMemory(item) && item.endFloor <= limit;
     const latest = useCP ? store.checkpoints.filter(eligible)

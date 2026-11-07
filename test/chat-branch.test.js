@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from '../src/chat-branch.js';
 import { chatFileIdentity } from '../src/chat-file.js';
-import { getAssistantMessages, chatFloorOffset } from '../src/utils.js';
+import { getAssistantMessages, chatFloorOffset, chatInheritedThrough } from '../src/utils.js';
 import { createEmptyStore, normalizeStore, MemoryStore } from '../src/memory-store.js';
 import { normalizeSettings } from '../src/defaults.js';
 import { CacheMemoryUI, configTemplate } from '../src/ui.js';
 import { getOpeningSource } from '../src/opening-source.js';
 import { filterCoveredHistory, promptHistoryFloor } from '../src/history-handoff.js';
+import { MemorySummarizer } from '../src/summarizer.js';
+import { refreshSnapshot } from '../src/cache-control.js';
 
 function fixture(group = false, greeting = true) {
     const chat = greeting ? [{ name: '角色', is_user: false, mes: '合成开场' }] : [];
@@ -57,36 +59,65 @@ for (const greeting of [true, false]) test(`recent N keeps original floor number
     assert.notEqual(memory.chatId, f.memory.chatId);
     assert.notEqual(memory.injectionSnapshot.value, '旧线未来快照');
     assert.match(memory.injectionSnapshot.value, /剧情9/);
+    const short = f.build({ mode: 'recent', count: 1 });
+    assert.deepEqual(getAssistantMessages(short.rows.slice(1)).map(row => row.floor), [12]);
+    assert.match(short.rows[0].chat_metadata.cache_memory.injectionSnapshot.value, /剧情11/);
     chat.push({ is_user: false, mes: '分支第13层', gen_started: 'g13' });
     assert.equal(getAssistantMessages(chat).at(-1).floor, 13);
     assert.equal(promptHistoryFloor(structuredClone(chat), chat, memory.summaries), 13);
     assert.deepEqual(f.rows, before);
 });
 
-test('historical cut excludes later and spanning memories, mutable state and other extensions current metadata', () => {
+test('a prefix cut keeps all saved memory and uses the original floor numbers for its raw replies', () => {
     const f = fixture(), before = structuredClone(f.rows), branch = f.build({ mode: 'through', endFloor: 7 });
     const chat = branch.rows.slice(1), metadata = branch.rows[0].chat_metadata, memory = metadata.cache_memory;
-    assert.equal(getAssistantMessages(chat).at(-1).floor, 7);
+    assert.deepEqual(getAssistantMessages(chat).map(row => row.floor), [1, 2, 3, 4, 5, 6, 7]);
     assert.equal(chat.at(-1).mes, '正文7');
-    assert.equal(Object.keys(memory.summaries).length, 7);
-    assert.deepEqual(memory.checkpoints.map(row => row.id), ['cp1']);
-    assert.equal(memory.longMemories.length, 0);
-    assert.deepEqual(memory.keepRegistry, {});
-    assert.deepEqual(memory.stateOverrides, {});
+    assert.equal(chatInheritedThrough(chat), 12);
+    for (const section of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry', 'stateOverrides']) {
+        assert.deepEqual(memory[section], f.memory[section]);
+    }
     assert.equal(metadata.variables, undefined);
     assert.equal(metadata.other_extension, undefined);
     assert.equal(metadata.note_prompt, '作者注释');
-    assert.doesNotMatch(JSON.stringify(branch.rows), /未来才获得|未来剧情|旧线未来快照|未来状态|future extension/);
+    assert.notEqual(memory.injectionSnapshot.value, '旧线未来快照');
+    assert.match(memory.injectionSnapshot.value, /未来剧情直到10/);
+    assert.match(memory.injectionSnapshot.value, /剧情12/);
     assert.deepEqual(f.rows, before);
 });
 
-test('historical cut rebuilds early KEEP evidence rather than copying later resolved status', () => {
-    const f = fixture();
-    Object.values(f.rows[0].chat_metadata.cache_memory.summaries)[1].keep = '早期约定';
-    f.rows[0].chat_metadata.cache_memory.keepRegistry['KEEP-0002'] = { sourceFloor: 2, text: '早期约定', status: 'resolved' };
-    const branch = f.build({ mode: 'through', endFloor: 7 });
-    const keeps = Object.values(branch.rows[0].chat_metadata.cache_memory.keepRegistry);
-    assert.equal(keeps.find(row => row.text === '早期约定').status, 'active');
+test('a reopened prefix branch injects its inherited tail and continues aggregating after the source end', async () => {
+    const f = fixture(), branch = f.build({ endFloor: 7 });
+    const chat = JSON.parse(JSON.stringify(branch.rows.slice(1))), metadata = branch.rows[0].chat_metadata;
+    const store = new MemoryStore({ getChatId: () => metadata.cache_memory.chatId, getMetadata: () => metadata, saveMetadata() {} });
+    const refreshed = refreshSnapshot(store.current(), { ...f.settings, recentRawFloors: 10, injectionFloor: 7, inheritedThrough: chatInheritedThrough(chat) }, 'chat changed', store.effectiveStore(chat));
+    assert.match(refreshed.value, /剧情12/);
+    assert.equal(captureChatFile({ ...f.context, chatId: branch.filename, chat, chatMetadata: metadata }, store.current()).length, branch.rows.length);
+    for (let floor = 13; floor <= 15; floor++) {
+        chat.push({ mes: `新增正文${floor}`, gen_started: `branch-${floor}` });
+        const entry = getAssistantMessages(chat).at(-1);
+        assert.equal(entry.floor, floor);
+        store.addSummary({ messageId: entry.messageId, floor, event: `新增摘要${floor}`, status: 'frozen' }, { entry });
+    }
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => f.settings, apiClient: {
+        complete: async request => {
+            assert.match(request.userContent, /剧情11/);
+            assert.match(request.userContent, /剧情12/);
+            assert.match(request.userContent, /新增摘要15/);
+            return { content: '[CHECKPOINT]\n[Stage Story]\n合成阶段正文' };
+        },
+    } });
+    assert.equal(summarizer.getMissingCheckpointPlan().candidates.at(-1).startFloor, 11);
+    const cp = await summarizer.generateCheckpoint(11, 15);
+    assert.equal(cp.endFloor, 15);
+    assert.equal(store.current().summaries[getAssistantMessages(f.context.chat).at(-1).messageId].event, '剧情12');
+    const another = prepareChatBranch(captureChatFile({ ...f.context, chatId: branch.filename, chat, chatMetadata: metadata }, store.current()),
+        { mode: 'recent', count: 5 }, f.settings);
+    assert.deepEqual(getAssistantMessages(another.rows.slice(1)).map(row => row.floor), [6, 7, 13, 14, 15]);
+    assert.equal(Object.keys(another.rows[0].chat_metadata.cache_memory.summaries).length, 15);
+    const lastRetained = getAssistantMessages(chat).find(entry => entry.floor === 7);
+    chat.splice(lastRetained.messageIndex, 1);
+    assert.deepEqual(getAssistantMessages(chat).slice(-3).map(row => row.floor), [13, 14, 15]);
 });
 
 test('recent truncation refuses a gap in earlier story coverage and accepts a larger raw window', () => {
@@ -156,21 +187,24 @@ test('an existing destination, failed readback or changed current chat cannot ca
     }
 });
 
-test('branch dialog offers both modes and defaults to creating without switching', async () => {
+test('branch dialog defaults to retaining the prefix and creating without switching', async () => {
     const f = fixture(); let options;
     assert.match(configTemplate(), /data-export-chat/); assert.match(configTemplate(), /data-create-branch/);
     const ui = Object.assign(Object.create(CacheMemoryUI.prototype), {
         captureChat: () => f.rows,
         showPluginDialog: async spec => {
             assert.equal(spec.fields.find(field => field.key === 'switch').value, 'stay');
-            assert.equal(spec.fields.find(field => field.key === 'mode').options.length, 2);
-            return { name: '测试分支', mode: 'recent', count: '3', endFloor: '12', switch: 'stay' };
+            const mode = spec.fields.find(field => field.key === 'mode');
+            assert.equal(mode.value, 'through');
+            assert.deepEqual(mode.options.map(([key]) => key), ['through', 'recent']);
+            assert.equal(spec.fields.find(field => field.key === 'endFloor').value, 12);
+            return { name: '测试分支', mode: mode.value, endFloor: '7', switch: 'stay' };
         },
         createChatBranch: async (_rows, value) => { options = value; return { filename: '新聊天', switched: false }; },
         setManagerActionStatus() {},
     });
     await ui.performManagerClick({ target: { closest: selector => selector === '[data-create-branch]' ? {} : null } });
-    assert.equal(options.openAfterCreate, false); assert.equal(options.count, 3);
+    assert.equal(options.openAfterCreate, false); assert.equal(options.mode, 'through'); assert.equal(options.endFloor, 7);
 });
 
 test('capture refuses a partial transcript instead of exporting an incomplete backup', () => {

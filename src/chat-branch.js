@@ -1,10 +1,10 @@
-import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.14';
-import { chatFileIdentity } from './chat-file.js?v=1.27.14';
-import { chatFloorOffset, getAssistantMessages } from './utils.js?v=1.27.14';
-import { currentInjectionBlocks } from './injection.js?v=1.27.14';
-import { refreshSnapshot } from './cache-control.js?v=1.27.14';
-import { getOpeningSource } from './opening-source.js?v=1.27.14';
-import { isUsableMemory } from './continuity.js?v=1.27.14';
+import { normalizeStore } from './memory-store.js?v=1.27.15';
+import { chatFileIdentity } from './chat-file.js?v=1.27.15';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages } from './utils.js?v=1.27.15';
+import { currentInjectionBlocks } from './injection.js?v=1.27.15';
+import { refreshSnapshot } from './cache-control.js?v=1.27.15';
+import { getOpeningSource } from './opening-source.js?v=1.27.15';
+import { isUsableMemory } from './continuity.js?v=1.27.15';
 
 const clone = value => structuredClone(value);
 function uniqueId() {
@@ -21,7 +21,7 @@ const canonical = value => JSON.stringify(value, function (_key, child) {
 export function captureChatFile(context, memory) {
     const id = chatFileIdentity(context);
     if (!id || memory?.chatId !== id || !Array.isArray(context.chat) || !context.chat.length) throw new Error('请等待聊天与记忆加载完成');
-    const latest = getAssistantMessages(context.chat).at(-1)?.floor ?? 0;
+    const latest = Math.max(getAssistantMessages(context.chat).at(-1)?.floor ?? 0, chatInheritedThrough(context.chat));
     const recorded = Math.max(0, ...Object.values(memory.summaries).filter(isUsableMemory).map(row => row.floor),
         ...[...memory.checkpoints, ...memory.longMemories].filter(isUsableMemory).map(row => row.endFloor));
     if (recorded > latest) throw new Error('聊天正文尚未完整加载，或记忆包含已移除的后续楼层；请先核对再导出或创建分支');
@@ -33,7 +33,7 @@ export function chatFileDownload(rows, name) {
     return { filename: `${safeName(name || '聊天与记忆')}.jsonl`, content: rows.map(row => JSON.stringify(row)).join('\n') + '\n' };
 }
 
-export function prepareChatBranch(rows, { mode, count, endFloor, name = '平行线' }, settings,
+export function prepareChatBranch(rows, { mode = 'through', count, endFloor, name = '平行线' }, settings,
     { uuid = uniqueId, now = () => new Date() } = {}) {
     const original = rows[0].chat_metadata.cache_memory, chat = rows.slice(1), entries = getAssistantMessages(chat);
     if (!entries.length) throw new Error('当前聊天还没有可选择的正常 char 楼层');
@@ -49,18 +49,15 @@ export function prepareChatBranch(rows, { mode, count, endFloor, name = '平行�
         // A generated first reply is a normal floor, not an extra greeting.
         if (sliceStart > 0 && opening && !entries.some(row => row.message === opening)) selected.unshift(opening);
     } else if (mode === 'through') {
-        if (!Number.isSafeInteger(endFloor) || !entries.some(row => row.floor === endFloor)) throw new Error(`分叉楼层须在当前可见原文第 ${entries[0].floor}–${latest} 层内`);
+        endFloor ??= latest;
+        if (!Number.isSafeInteger(endFloor) || !entries.some(row => row.floor === endFloor)) throw new Error(`请选择第 ${entries[0].floor}–${latest} 层中仍有正文的楼层`);
         end = endFloor;
         selected = chat.slice(0, entries.find(row => row.floor === end).messageIndex + 1);
     } else throw new Error('请选择最近 N 层或截至第 N 层');
     selected = clone(selected);
     const offset = mode === 'recent' ? start - 1 : chatFloorOffset(chat);
-    const memory = end === latest ? normalizeStore(clone(original), original.chatId) : normalizeStore(clone({
-        ...createEmptyStore(original.chatId), version: 2, summaryMode: original.summaryMode,
-        summaries: Object.fromEntries(Object.entries(original.summaries).filter(([, row]) => row.floor <= end)),
-        checkpoints: original.checkpoints.filter(row => row.endFloor <= end),
-        longMemories: original.longMemories.filter(row => row.endFloor <= end),
-    }), original.chatId);
+    const memory = normalizeStore(clone(original), original.chatId);
+    const inheritedThrough = Math.max(offset, chatInheritedThrough(chat), end < latest ? latest : 0);
     if (offset > 0) {
         if (!settings.enabled || settings.injectionMode !== 'rolling') throw new Error('只保留近期正文时，请先启用“最近正文＋每层更新记忆”，以保留更早剧情');
         const blocks = currentInjectionBlocks(memory, { ...settings, injectionFloor: offset + 1, recentRawFloors: 1 }, 'rolling')
@@ -70,9 +67,30 @@ export function prepareChatBranch(rows, { mode, count, endFloor, name = '平行�
         if (next <= offset) throw new Error(`第 ${next} 层起尚无完整剧情记忆，请先补齐记忆或保留更多正文`);
     }
     const hasOpening = getOpeningSource(chat)?.message === chat[0] && !entries.some(row => row.message === chat[0]);
+    // Resolve the copied message indexes before enabling the new numbering.
+    // The copied raw entries correspond to the selected interval in order.
     selected[0].extra = { ...selected[0].extra, cache_memory_branch: { version: 1, floorOffset: offset, hasOpening } };
-    for (const entry of getAssistantMessages(selected)) for (const row of Object.values(memory.summaries)) {
-        if (row.floor === entry.floor) row.messageIndex = entry.messageIndex;
+    const selectedEntries = getAssistantMessages(selected);
+    const originalEntries = entries.filter(entry => entry.floor >= start && entry.floor <= end);
+    const selectedIndexes = new Map();
+    for (const [index, entry] of selectedEntries.entries()) {
+        const originalFloor = originalEntries[index].floor;
+        selectedIndexes.set(originalFloor, entry.messageIndex);
+        if (originalFloor <= inheritedThrough) {
+            entry.message.extra = { ...entry.message.extra, cache_memory_branch_floor: originalFloor };
+            for (const swipe of Array.isArray(entry.message.swipe_info) ? entry.message.swipe_info : []) {
+                if (swipe) swipe.extra = { ...swipe.extra, cache_memory_branch_floor: originalFloor };
+            }
+        }
+    }
+    for (const row of Object.values(memory.summaries)) {
+        if (selectedIndexes.has(row.floor)) row.messageIndex = selectedIndexes.get(row.floor);
+    }
+    if (inheritedThrough) selected[0].extra.cache_memory_branch.inheritedThrough = inheritedThrough;
+    if (Array.isArray(selected[0].swipe_info)) {
+        for (const swipe of selected[0].swipe_info) {
+            if (swipe) swipe.extra = { ...swipe.extra, cache_memory_branch: clone(selected[0].extra.cache_memory_branch) };
+        }
     }
     const stamp = now().toISOString().replace(/[:.]/g, '-');
     const filename = `${safeName(name) || '平行线'} - ${stamp}-${uuid().slice(0, 8)}`;
@@ -80,7 +98,7 @@ export function prepareChatBranch(rows, { mode, count, endFloor, name = '平行�
     memory.chatId = JSON.stringify([scope[0], scope[1], filename]);
     memory.sync = { revision: 0, writerId: '', writeId: '', savedAt: '' };
     delete memory.injectionSnapshot;
-    refreshSnapshot(memory, { ...settings, injectionFloor: end }, 'manual reinject');
+    refreshSnapshot(memory, { ...settings, injectionFloor: end, inheritedThrough }, 'manual reinject');
     const stable = ['note_prompt', 'note_interval', 'note_position', 'note_depth', 'note_role', 'persona'];
     const metadata = end === latest ? clone(rows[0].chat_metadata)
         : Object.fromEntries(stable.filter(key => Object.hasOwn(rows[0].chat_metadata, key)).map(key => [key, clone(rows[0].chat_metadata[key])]));

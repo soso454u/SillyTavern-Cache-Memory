@@ -1,21 +1,21 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.14';
-import { applyUITheme } from './ui-theme.js?v=1.27.14';
-import { stageStartLabel } from './opening-source.js?v=1.27.14';
-import { generationPrompt } from './generation-prompts.js?v=1.27.14';
-import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.14';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.14';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.14';
-import { HistoryBackfill } from './history-backfill.js?v=1.27.14';
-import { downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.14';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.14';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.14';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.14';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.14';
-import { parseFloorSummary } from './summarizer.js?v=1.27.14';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.14';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.15';
+import { applyUITheme } from './ui-theme.js?v=1.27.15';
+import { stageStartLabel } from './opening-source.js?v=1.27.15';
+import { generationPrompt } from './generation-prompts.js?v=1.27.15';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.15';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.15';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.15';
+import { HistoryBackfill } from './history-backfill.js?v=1.27.15';
+import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.15';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.15';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.15';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.15';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.15';
+import { parseFloorSummary } from './summarizer.js?v=1.27.15';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.15';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.14';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.14';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.15';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.15';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -605,7 +605,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.14', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.15', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2325,7 +2325,15 @@ export class CacheMemoryUI {
         controls.querySelector('[data-summary-query]').value = this.managerState.summaryQuery;
         root.append(controls);
         const store = this.store.current();
-        let items = getAssistantMessages(this.getChat()).map(entry => ({ entry, record: summaryForEntry(store, entry) })).reverse();
+        const chat = this.getChat(), entries = getAssistantMessages(chat);
+        let items = entries.map(entry => ({ entry, record: summaryForEntry(store, entry) }));
+        if (chatFloorOffset(chat) || chatInheritedThrough(chat)) {
+            const loadedFloors = new Set(entries.map(entry => entry.floor));
+            for (const record of this.store.currentSummaries(chat)) {
+                if (!loadedFloors.has(record.floor)) items.push({ entry: record, record, sourceAvailable: false });
+            }
+        }
+        items.sort((a, b) => b.entry.floor - a.entry.floor);
         items = items.filter(({ record }) => this.managerState.summaryStatus === 'all'
             || (this.managerState.summaryStatus === 'missing' && !record)
             || (this.managerState.summaryStatus === 'failed' && record?.status === 'failed')
@@ -2570,7 +2578,7 @@ export class CacheMemoryUI {
         body.append(sections);
     }
 
-    summaryCard({ entry, record }, limit = this.generationSettings().summaryMaxLength) {
+    summaryCard({ entry, record, sourceAvailable = true }, limit = this.generationSettings().summaryMaxLength) {
         const summaries = this.store.current().summaries;
         const summaryId = Object.keys(summaries).find(id => summaries[id] === record) ?? entry.messageId;
         const baseStatus = this.statusLabel(record);
@@ -2579,6 +2587,7 @@ export class CacheMemoryUI {
         const status = count ? `${baseStatus} · ${count}/${limit} 字${count > limit * 1.15 ? ' · 偏长' : ''}` : baseStatus;
         const card = this.foldCard({ key: summaryId, group: 'summaries', type: 'summary', id: summaryId,
             title: `第${entry.floor}层｜${record?.title ?? status}`, status, renderBody: body => {
+                if (!sourceAvailable) body.append(this.element('p', 'cache-memory-help', '继承的楼层摘要，正文未随分支保留。'));
                 if (!record) body.append(this.element('p', '', '该楼层尚未生成 Summary。'));
                 else if (record.status === 'failed') body.append(this.element('pre', '', formatSummaryFailure(record)));
                 else if (this.isEditing('summary', summaryId)) this.inlineEditor(body, this.summaryEditorFields(record));
@@ -2594,7 +2603,8 @@ export class CacheMemoryUI {
                 }
                 if (this.isEditing('summary', summaryId)) return;
                 const actions = this.element('div', 'cache-memory-actions');
-                actions.innerHTML = `<button type="button" class="menu_button" data-manager-action="regenerate">${record?.status === 'failed' ? '重试' : record ? '重新生成' : '生成本层记忆'}</button>${record && record.status !== 'failed' ? '<button type="button" class="menu_button" data-manager-action="edit">编辑</button>' : ''}${record ? '<button type="button" class="menu_button" data-manager-action="delete">删除</button>' : ''}`;
+                const regenerate = sourceAvailable ? `<button type="button" class="menu_button" data-manager-action="regenerate">${record?.status === 'failed' ? '重试' : record ? '重新生成' : '生成本层记忆'}</button>` : '';
+                actions.innerHTML = `${regenerate}${record && record.status !== 'failed' ? '<button type="button" class="menu_button" data-manager-action="edit">编辑</button>' : ''}${record ? '<button type="button" class="menu_button" data-manager-action="delete">删除</button>' : ''}`;
                 body.append(actions);
             } });
         card.dataset.messageId = entry.messageId;
@@ -3174,10 +3184,10 @@ export class CacheMemoryUI {
             const rows = this.captureChat(), entries = getAssistantMessages(rows.slice(1)), latest = entries.at(-1)?.floor;
             if (!latest) throw new Error('当前聊天没有可选择的正常 char 楼层');
             const values = await this.showPluginDialog({ title: '创建平行线聊天',
-                message: `按正常 char 回复计层，当前原文为第 ${entries[0].floor}–${latest} 层。最近模式保留早期记忆；历史分叉仅继承分叉点前记忆，不复制其他扩展的当前状态。创建后默认留在原聊天。`,
+                message: `按正常 char 回复计层，当前原文为第 ${entries[0].floor}–${latest} 层。两种方式都继承原聊天从开头到最新一层的全部已保存记忆。所选楼层只决定保留哪些正文。创建后默认留在原聊天。`,
                 confirmLabel: '创建独立聊天', fields: [
                     { key: 'name', label: '新聊天名称', value: '平行线' },
-                    { key: 'mode', label: '选择方式', value: 'recent', options: [['recent', '只带最近 N 层正文＋此前记忆'], ['through', '从开头保留到第 N 层并分叉']] },
+                    { key: 'mode', label: '选择方式', value: 'through', options: [['through', '从开头保留到第 N 层'], ['recent', '只带最近 N 层正文']] },
                     { key: 'count', label: `保留多少层正文（1–${entries.length}）`, value: Math.min(3, entries.length), type: 'number', min: 1, max: entries.length, visibleWhen: { key: 'mode', value: 'recent' } },
                     { key: 'endFloor', label: `截至第几层（${entries[0].floor}–${latest}）`, value: latest, type: 'number', min: entries[0].floor, max: latest, visibleWhen: { key: 'mode', value: 'through' } },
                     { key: 'switch', label: '创建后的操作', value: 'stay', options: [['stay', '只创建，暂不切换'], ['open', '创建后立即切换']] },

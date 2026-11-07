@@ -1,17 +1,17 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.14';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.14';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.14';
-import { generationPrompt } from './generation-prompts.js?v=1.27.14';
-import { getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.14';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.14';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.14';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource } from './summary-source.js?v=1.27.14';
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.14';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.14';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.14';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.14';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.14';
-import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.14';
+import { selectedTableRecords } from './character-tables.js?v=1.27.15';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.15';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.15';
+import { generationPrompt } from './generation-prompts.js?v=1.27.15';
+import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.15';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.15';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.15';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource } from './summary-source.js?v=1.27.15';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.15';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.15';
+import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.15';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.15';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.15';
+import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.15';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -507,9 +507,9 @@ export class MemorySummarizer {
 
     getMissingMemoryPlan({ onlyLong = false } = {}) {
         const settings = this.getSettings(), store = this.store.current();
-        const assistants = getAssistantMessages(this.getChat());
-        const latestFloor = onlyLong ? Math.max(assistants.at(-1)?.floor ?? 0,
-            ...store.checkpoints.filter(isUsableMemory).map(row => row.endFloor), 0) : assistants.at(-1)?.floor ?? 0;
+        const chat = this.getChat(), assistants = getAssistantMessages(chat);
+        const latest = Math.max(assistants.at(-1)?.floor ?? 0, chatInheritedThrough(chat));
+        const latestFloor = onlyLong ? Math.max(latest, ...store.checkpoints.filter(isUsableMemory).map(row => row.endFloor)) : latest;
         const checkpointInterval = Math.max(1, Number(settings.checkpointInterval) || 5);
         const longSpan = Math.ceil(Math.max(checkpointInterval, Number(settings.longMemoryInterval) || 50) / checkpointInterval) * checkpointInterval;
         const missingRanges = (items, interval) => {
@@ -632,9 +632,10 @@ export class MemorySummarizer {
 
     getMissingCheckpointPlan() {
         const interval = Math.max(1, Number(this.getSettings().checkpointInterval) || 5);
-        const assistants = getAssistantMessages(this.getChat());
-        const latestFloor = assistants.at(-1)?.floor ?? 0;
+        const chat = this.getChat(), assistants = getAssistantMessages(chat);
+        const latestFloor = Math.max(assistants.at(-1)?.floor ?? 0, chatInheritedThrough(chat));
         const byFloor = new Map(assistants.map(entry => [entry.floor, entry]));
+        const summaries = new Map(this.store.currentSummaries(chat).map(record => [record.floor, record]));
         const store = this.store.current();
         const candidates = [];
         const blocked = [];
@@ -650,8 +651,8 @@ export class MemorySummarizer {
             const missingFloors = [];
             for (let floor = startFloor; floor <= endFloor; floor += 1) {
                 const entry = byFloor.get(floor);
-                const summary = entry ? this.store.getSummaryForEntry(entry) : null;
-                if (!summary || this.summaryNeedsUpdate(entry, summary)) missingFloors.push(floor);
+                const summary = summaries.get(floor);
+                if (!summary || (entry && this.summaryNeedsUpdate(entry, summary, chat))) missingFloors.push(floor);
             }
             if (missingFloors.length) blocked.push({ ...range, missingFloors });
             else candidates.push(range);
@@ -752,7 +753,8 @@ export class MemorySummarizer {
 
     async generateAggregatesFrom(startFloor, { signal } = {}) {
         const settings = this.getSettings();
-        const latestFloor = getAssistantMessages(this.getChat()).at(-1)?.floor ?? 0;
+        const chat = this.getChat();
+        const latestFloor = Math.max(getAssistantMessages(chat).at(-1)?.floor ?? 0, chatInheritedThrough(chat));
         let start = Math.max(1, Math.floor(Number(startFloor) || 1));
         return this.store.withAggregateBatch(async () => {
             while (start + settings.checkpointInterval - 1 <= latestFloor) {
@@ -771,8 +773,8 @@ export class MemorySummarizer {
     async generateDueAggregates({ signal } = {}) {
         if (this.aggregateDeferrals) return null;
         return this.store.withAggregateBatch(async () => {
-            const assistants = getAssistantMessages(this.getChat());
-            const latestFloor = assistants.at(-1)?.floor ?? 0;
+            const chat = this.getChat();
+            const latestFloor = Math.max(getAssistantMessages(chat).at(-1)?.floor ?? 0, chatInheritedThrough(chat));
             let range = this.getNextCheckpointRange();
             while (range.endFloor <= latestFloor) {
                 const created = await this.generateCheckpoint(range.startFloor, range.endFloor, { signal });

@@ -53,6 +53,7 @@ function swipeMessageIds(message) {
 
 export function getAssistantMessages(chat) {
     let floor = chatFloorOffset(chat);
+    const inheritedThrough = chatInheritedThrough(chat);
     return (Array.isArray(chat) ? chat : []).flatMap((message, messageIndex) => {
         if (!isNormalAssistant(message)) return [];
         const isUngeneratedGreeting = messageIndex === 0
@@ -62,7 +63,16 @@ export function getAssistantMessages(chat) {
             && !message.extra?.api
             && !message.extra?.model;
         if (isUngeneratedGreeting) return [];
-        floor += 1;
+        if (inheritedThrough > 0) {
+            // A copied reply keeps its original slot, including when a swipe
+            // restores the saved extra from a different alternative.
+            const savedFloor = message.extra?.cache_memory_branch_floor
+                ?? message.swipe_info?.find?.(info => Number.isSafeInteger(info?.extra?.cache_memory_branch_floor))?.extra?.cache_memory_branch_floor;
+            floor = Number.isSafeInteger(savedFloor) && savedFloor > floor && savedFloor <= inheritedThrough
+                ? savedFloor : Math.max(floor, inheritedThrough) + 1;
+        } else {
+            floor += 1;
+        }
         const relatedMessageIds = swipeMessageIds(message);
         return [{
             floor,
@@ -80,6 +90,12 @@ export function getAssistantMessages(chat) {
 export function chatFloorOffset(chat) {
     const offset = chat?.[0]?.extra?.cache_memory_branch?.floorOffset;
     return Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
+}
+
+// New branches record how far inherited memory must cover omitted raw replies.
+export function chatInheritedThrough(chat) {
+    const floor = chat?.[0]?.extra?.cache_memory_branch?.inheritedThrough;
+    return Number.isSafeInteger(floor) && floor > 0 ? floor : 0;
 }
 
 export function replacePromptVariables(template, values) {
