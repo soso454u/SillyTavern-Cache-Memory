@@ -3,9 +3,9 @@ import { normalizeThemeMode } from './ui-theme.js?v=1.27.16';
 import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.16';
 export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.16';
-import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.16';
+import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.17';
 
-export const PLUGIN_VERSION = '1.27.16';
+export const PLUGIN_VERSION = '1.27.17';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';

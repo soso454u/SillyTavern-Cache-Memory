@@ -1,6 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.27.16';
+import { INJECTION_MODES } from './defaults.js?v=1.27.17';
 import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.16';
 import { fnv1a } from './utils.js?v=1.27.16';
+import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
 
 export function effectiveInjectionMode(settings) {
     if (settings.injectionMode === INJECTION_MODES.ROLLING) return INJECTION_MODES.ROLLING;
@@ -44,8 +45,59 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
 }
 
 export class CacheDiagnostics {
-    constructor() { this.snapshots = new Map(); this.histories = new Map(); }
-    reset() { this.snapshots.clear(); this.histories.clear(); }
+    constructor() {
+        this.snapshots = new Map();
+        this.histories = new Map();
+        this.requests = new Map();
+        this.pending = [];
+    }
+    reset() {
+        this.snapshots.clear();
+        this.histories.clear();
+        this.requests.clear();
+        this.clearPending();
+    }
+    clearPending() { this.pending = []; }
+
+    repeat(key, observation, expectedHash, reason) {
+        const previous = this.requests.get(key);
+        this.requests.delete(key);
+        this.requests.set(key, { observation, expectedHash });
+        if (this.requests.size > 48) this.requests.delete(this.requests.keys().next().value);
+        if (!previous) return null;
+        const publication = previous.expectedHash !== expectedHash ? reason : null;
+        const changes = compareRequests(previous.observation, observation);
+        return { publication, changes: publication && previous.observation.memory.state === 'match' && observation.memory.state === 'match'
+            ? changes.filter(change => change.kind !== 'memory-text-changed') : changes };
+    }
+
+    settingsReady(key, body, expected, reference, reason, debug) {
+        const observation = debug ? inspectRequest(body, expected) : null;
+        const expectedHash = debug && expected !== null ? fingerprint(expected) : null;
+        const repeat = observation ? this.repeat(`settings:${key}`, observation, expectedHash, reason) : null;
+        const report = observation ? { expectedHash, settingsReady: requestReport(observation), repeat,
+            browserFetch: '尚未观察；若绕过 fetch 桥接（如 XHR），此阶段不可验证' } : null;
+        this.pending = this.pending.filter(item => Date.now() - item.time < 30_000);
+        if (this.pending.length >= 16) this.clearPending();
+        else this.pending.push({ key, time: Date.now(), expected, expectedHash, reference, observation, reason, report });
+        return report;
+    }
+
+    browserRequest(key, body, debug) {
+        const matches = this.pending.filter(item => item.key === key && Date.now() - item.time < 30_000);
+        this.pending = this.pending.filter(item => item.key !== key);
+        const early = matches.length === 1 ? matches[0] : null;
+        const observation = debug ? inspectRequest(body, early?.expected ?? null) : null;
+        return {
+            reference: early?.reference,
+            observation,
+            early,
+            report: observation ? { browserFetch: requestReport(observation),
+                sinceSettingsReady: early?.observation ? compareRequests(early.observation, observation) : '缺少可唯一匹配的设置事件',
+                browserRepeat: early ? this.repeat(`browser:${key}`, observation, early.expectedHash, early.reason) : null } : null,
+        };
+    }
+
     memory(store, settings, floor) {
         const value = store.injectionSnapshot?.value ?? '';
         const hash = fnv1a(value);

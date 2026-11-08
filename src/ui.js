@@ -3,14 +3,14 @@ import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
 import { generationPrompt } from './generation-prompts.js?v=1.27.16';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.16';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.16';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.17';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.17';
 import { HistoryBackfill } from './history-backfill.js?v=1.27.16';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.16';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.16';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.16';
+import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.17';
 import { parseFloorSummary } from './summarizer.js?v=1.27.16';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.16';
 
@@ -482,6 +482,7 @@ export function configTemplate() {
                             <div class="cache-memory-adapter-connection"><strong>当前连接：</strong><span data-api-cache-connection>尚未识别</span></div>
                             <div class="cache-memory-switches">
                                 <label class="cache-memory-toggle"><span><strong>启用此连接策略</strong><small>按主模型 API 连接分别保存</small></span><input type="checkbox" data-api-cache-policy="enabled"></label>
+                                <label class="cache-memory-toggle"><span><strong>拒绝已证实的冻结记忆改写</strong><small>默认关闭。服务端有当前权威快照且识别到正文不一致时，才会在转发前拒绝。</small></span><input type="checkbox" data-api-cache-policy="rejectFrozenMemoryChanges"></label>
                                 <label class="cache-memory-toggle"><span><strong>固定设定断点</strong><small>只选择独立、非空的前置 system 消息块</small></span><input type="checkbox" data-api-cache-policy="cacheStatic"></label>
                                 <label class="cache-memory-toggle"><span><strong>冻结记忆断点</strong><small>识别 CACHE_MEMORY / Checkpoint / Long Memory</small></span><input type="checkbox" data-api-cache-policy="cacheMemory"></label>
                                 <label class="cache-memory-toggle"><span><strong>滚动历史断点</strong><small>按独立 user / assistant 消息块选择</small></span><input type="checkbox" data-api-cache-policy="cacheHistory"></label>
@@ -513,7 +514,7 @@ export function configTemplate() {
                         <label class="cache-memory-toggle"><span><strong>只发送最后一条 user</strong><small>默认关闭；开启后过滤更早的user输入，可独立于正文衔接使用</small></span><input type="checkbox" data-setting="lastUserOnly"></label>
                         <small class="cache-memory-help">关闭时沿用现有user历史发送方式；开启后只保留最后一条非开场白user输入。第0条在首段记忆接管前暂时保留，避免初始背景丢失。原“不发送用户”正则可以保留，开启此开关后也可停用；继续生成时旧深度正则可能清空最后一条user。开关不改写已冻结记忆。</small>
                         <small class="cache-memory-help">仅把“替换为”留空才表示删除匹配内容，“查找”不能为空。酒馆深度按消息计数：普通一问一答、末尾为新user时，char最小深度9清空通常只留4条回复，11才留5条。固定深度仍可能与CP重叠或出现缺口。</small>
-                        <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>仅记录 hash、过滤来源和字符数；不记录正文</small></span><input type="checkbox" data-setting="cacheDebug"></label>
+                        <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>分开显示设置事件、浏览器与服务端入站的指纹、冲突位置及跨请求变化。仅记录脱敏诊断。</small></span><input type="checkbox" data-setting="cacheDebug"></label>
                         <pre class="cache-memory-continuity" data-cache-debug hidden></pre>
                     </section>
 
@@ -1381,7 +1382,7 @@ export class CacheMemoryUI {
         }
         for (const output of this.doc.querySelectorAll('[data-api-cache-preview]')) {
             output.hidden = !status.preview;
-            output.textContent = status.preview ? `实际请求结构（脱敏）\n${JSON.stringify(status.preview, null, 2)}` : '';
+            output.textContent = status.preview ? `适配器入站诊断与委托结构（脱敏）\n${JSON.stringify(status.preview, null, 2)}` : '';
         }
         const connection = this.config?.querySelector('[data-api-cache-connection]');
         if (connection) connection.textContent = this.apiCacheAdapter?.currentPolicy?.().label || '默认策略（尚未识别主模型连接）';

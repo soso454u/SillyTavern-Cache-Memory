@@ -14,6 +14,7 @@ const root = path.resolve(process.env.SILLYTAVERN_DATA_DIR || globalThis.DATA_RO
 // only if the configured location is absent; corruption never triggers fallback.
 const legacyRoot = path.resolve(process.env.SILLYTAVERN_DATA_DIR || path.join(process.cwd(), 'data'), 'cache-memory');
 const locks = new Map();
+let active = false;
 
 function userId(request) {
     const value = request?.user?.profile?.handle;
@@ -84,6 +85,27 @@ async function readFile(user, chatId) {
         catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     return null;
+}
+
+// Read-only, same-user handoff to the optional cache adapter. The client can
+// select a revision, but only this store supplies its expected frozen bytes.
+export async function readSavedFrozenSnapshot(request, reference) {
+    if (!active) return { reason: 'authority-store-inactive' };
+    const user = userId(request);
+    const chatId = typeof reference?.chatId === 'string' ? safeId(reference.chatId) : '';
+    if (!user || !chatId || !Number.isSafeInteger(reference?.revision) || reference.revision < 1) {
+        return { reason: 'missing-authenticated-snapshot-reference' };
+    }
+    const record = await readFile(user, chatId);
+    if (!record) return { reason: 'no-saved-snapshot' };
+    if (record.revision !== reference.revision) return { reason: 'saved-revision-changed' };
+    const snapshot = record.store.injectionSnapshot;
+    let signature;
+    try { signature = JSON.parse(snapshot?.signature ?? 'null'); } catch { /* Legacy snapshot without verifiable freeze settings. */ }
+    if (signature?.[0] !== true || signature?.[1] !== true
+        || !['checkpoint_boundary', 'long_boundary'].includes(snapshot?.mode ?? signature?.[2])
+        || typeof snapshot?.value !== 'string' || !snapshot.value) return { reason: 'no-saved-frozen-snapshot' };
+    return { value: snapshot.value, revision: record.revision };
 }
 
 function validateSnapshot(store) {
@@ -227,8 +249,9 @@ export async function init(router) {
             return response.json({ state: 'committed', record: next });
         });
     }));
+    active = true;
 }
 
-export async function exit() {}
+export async function exit() { active = false; }
 
 export { digest, threeWayMerge };

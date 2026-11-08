@@ -294,10 +294,11 @@ function getStRequestContext() {
 }
 
 export class SummaryApiClient {
-    constructor({ getSettings, storage, storageKey }) {
+    constructor({ getSettings, storage, storageKey, observeInternalRequest }) {
         this.getSettings = getSettings;
         this.storage = storage;
         this.storageKey = storageKey;
+        this.observeInternalRequest = observeInternalRequest;
         this.activeControllers = new Set();
         this.cancelledControllers = new WeakSet();
         this.responseControls = new WeakMap();
@@ -481,13 +482,20 @@ export class SummaryApiClient {
             aborted.code = cancelled ? 'REQUEST_ABORTED' : 'CONNECTION_CLOSED';
             return aborted;
         };
+        let finishObservation;
         try {
+            if (url === ST_GENERATE_PROXY_PATH && this.observeInternalRequest) {
+                try { finishObservation = this.observeInternalRequest(controller.signal, JSON.parse(options.body)); }
+                catch { /* Diagnostics cannot interrupt an independent API request. */ }
+            }
             const response = await fetchContext.fetch(url, { cache: 'no-cache', ...options, signal: controller.signal });
             this.responseControls.set(response, { cleanup, translate, signal: controller.signal });
             return response;
         } catch (error) {
             cleanup();
             throw translate(error);
+        } finally {
+            try { finishObservation?.(); } catch { /* Keep the original API result. */ }
         }
     }
 

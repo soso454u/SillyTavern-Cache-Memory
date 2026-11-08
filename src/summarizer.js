@@ -1,6 +1,6 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.16';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.16';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.17';
 import { generationPrompt } from './generation-prompts.js?v=1.27.16';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.16';

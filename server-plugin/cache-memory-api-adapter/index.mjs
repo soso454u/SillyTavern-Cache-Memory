@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { cacheFields, fingerprint, inspectRequest, requestReport } from './request-integrity.mjs';
 
 export const info = Object.freeze({
     id: 'cache-memory-api-adapter',
@@ -6,11 +7,12 @@ export const info = Object.freeze({
     description: 'Server-side prompt cache breakpoint adapter for SillyTavern Cache Memory.',
 });
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const CACHE_MEMORY_PATTERN = /\[(?:CACHE_MEMORY|LONG_MEMORY|CHECKPOINT|KEEP)(?:_|\]|\s|$)/i;
 const STATIC_NAMES = new Set(['main', 'charDescription', 'charPersonality', 'scenario', 'personaDescription', 'nsfw']);
 let coreRouter = null;
 let nativeClaudeConfig = null;
+let readSavedSnapshot = null;
 
 function textParts(message) {
     if (typeof message?.content === 'string') return message.content.trim() ? [{ index: 0, text: message.content }] : [];
@@ -26,15 +28,9 @@ function textProjection(messages) {
     }));
 }
 
-function containsCacheControl(value, seen = new Set()) {
-    if (!value || typeof value !== 'object' || seen.has(value)) return false;
-    seen.add(value);
-    if (Object.hasOwn(value, 'cache_control')) return true;
-    return Object.values(value).some(child => containsCacheControl(child, seen));
-}
-
 function existingRewrite(body) {
-    if (containsCacheControl(body.messages)) return 'messages 已含 cache_control';
+    const location = cacheFields(body).controlLocation;
+    if (location) return `已有缓存参数（${location}）`;
     if (/cache[_-]?control|prompt[_-]?cach/i.test(String(body.custom_include_body || ''))) return 'New API 附加参数已包含缓存改写';
     if (/prompt-caching|extended-cache-ttl/i.test(String(body.custom_include_headers || ''))) return 'New API 附加请求头已包含缓存配置';
     return '';
@@ -154,11 +150,37 @@ export function transformRequest(inputBody, inputPolicy = {}) {
     return { body, preview: makePreview(body, points, { applied: points.length > 0, reason: '没有找到非空、可独立标记的文本块' }) };
 }
 
+export async function verifyInboundIntegrity(request, readSaved = readSavedSnapshot) {
+    const body = request.body ?? {};
+    const metadata = body.cache_memory_adapter;
+    let saved = { reason: 'missing-snapshot-reference' };
+    if (body.cache_memory_internal === true) saved = { reason: 'internal-request-outside-integrity-scope' };
+    else if (metadata?.snapshot && !readSaved) saved = { reason: 'authority-store-unavailable' };
+    else if (metadata?.snapshot) {
+        try { saved = await readSaved(request, metadata.snapshot); }
+        catch { saved = { reason: 'authority-read-failed' }; }
+    }
+    const inbound = requestReport(inspectRequest(body, saved.value ?? null));
+    return {
+        stage: 'server-ingress',
+        upstream: 'unobserved',
+        authority: saved.value ? { state: 'saved-frozen-snapshot', revision: saved.revision, expectedHash: fingerprint(saved.value) }
+            : { state: 'unverifiable', reason: saved.reason },
+        inbound,
+        // An absent or ambiguous block can also result from prompt assembly or
+        // token budgeting. Only an identifiable, different block is rejected.
+        rejected: Boolean(saved.value && inbound.memory.state === 'changed'
+            && metadata?.policy?.enabled === true && metadata.policy.rejectFrozenMemoryChanges === true),
+    };
+}
+
 function previewHeader(preview) {
     return encodeURIComponent(JSON.stringify(preview));
 }
 
 export async function init(router) {
+    try { ({ readSavedFrozenSnapshot: readSavedSnapshot } = await import('../cache-memory-memory/index.mjs')); }
+    catch { /* The authoritative memory plugin is optional. */ }
     try {
         const core = await import(new URL('../../src/endpoints/backends/chat-completions.js', import.meta.url));
         const util = await import(new URL('../../src/util.js', import.meta.url));
@@ -177,15 +199,24 @@ export async function init(router) {
         version: VERSION,
         coreDelegation: Boolean(coreRouter),
         nativeClaude: nativeClaudeConfig,
+        requestIntegrity: { ingress: true, upstream: false, savedSnapshotCheck: typeof readSavedSnapshot === 'function' },
         modes: ['openrouter-claude-auto', 'custom-anthropic-blocks'],
     }));
 
-    router.post('/generate', (request, response, next) => {
+    const generate = async (request, response, next) => {
         if (!coreRouter) return response.status(503).json({ error: 'SillyTavern Chat Completion router unavailable' });
         const metadata = request.body?.cache_memory_adapter;
-        const { body, preview } = transformRequest(request.body, metadata?.policy);
+        let integrity;
+        try { integrity = await verifyInboundIntegrity(request); }
+        catch { integrity = { stage: 'server-ingress', upstream: 'unobserved', authority: { state: 'unverifiable', reason: 'inspection-failed' }, rejected: false }; }
+        if (integrity.rejected) {
+            const summary = '服务端入站 CACHE_MEMORY 与已保存冻结快照不一致，已拒绝转发';
+            response.setHeader('x-cache-memory-adapter-preview', previewHeader({ applied: false, summary, integrity }));
+            return response.status(409).json({ error: { message: summary } });
+        }
+        const { body, preview } = transformRequest(request.body, request.body?.cache_memory_internal === true ? {} : metadata?.policy);
         request.body = body;
-        response.setHeader('x-cache-memory-adapter-preview', previewHeader(preview));
+        response.setHeader('x-cache-memory-adapter-preview', previewHeader({ ...preview, integrity }));
         const previousUrl = request.url;
         request.url = '/generate';
         return coreRouter.handle(request, response, error => {
@@ -193,10 +224,12 @@ export async function init(router) {
             if (error) return next(error);
             if (!response.headersSent) return response.status(404).json({ error: 'SillyTavern Chat Completion handler unavailable' });
         });
-    });
+    };
+    router.post('/generate', (request, response, next) => generate(request, response, next).catch(next));
 }
 
 export async function exit() {
     coreRouter = null;
     nativeClaudeConfig = null;
+    readSavedSnapshot = null;
 }

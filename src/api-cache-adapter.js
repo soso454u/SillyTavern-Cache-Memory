@@ -1,4 +1,5 @@
 import { fnv1a } from './utils.js?v=1.27.16';
+import { compareRequests, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
 
 export const API_CACHE_TTLS = Object.freeze(['5m', '1h']);
 export const API_CACHE_COMPATIBILITY = Object.freeze({
@@ -14,6 +15,7 @@ export const DEFAULT_API_CACHE_POLICY = Object.freeze({
     cacheHistory: true,
     historyDepth: 4,
     compatibility: API_CACHE_COMPATIBILITY.AUTO,
+    rejectFrozenMemoryChanges: false,
 });
 
 export function normalizeApiCachePolicy(value = {}) {
@@ -28,6 +30,7 @@ export function normalizeApiCachePolicy(value = {}) {
         historyDepth: Math.min(64, Math.max(1, Number.isFinite(parsedDepth) ? Math.round(parsedDepth) : DEFAULT_API_CACHE_POLICY.historyDepth)),
         compatibility: Object.values(API_CACHE_COMPATIBILITY).includes(source.compatibility)
             ? source.compatibility : DEFAULT_API_CACHE_POLICY.compatibility,
+        rejectFrozenMemoryChanges: source.rejectFrozenMemoryChanges === true,
     };
 }
 
@@ -67,11 +70,12 @@ export function resolveApiCachePolicy(settings, connectionKey) {
 }
 
 function isGenerateRequest(resource, init) {
-    const raw = typeof resource === 'string' ? resource : resource?.url;
+    const raw = typeof resource === 'string' ? resource : resource?.url ?? resource?.href;
     if (!raw || String(init?.method || resource?.method || 'GET').toUpperCase() !== 'POST') return false;
     try {
-        const url = new URL(raw, globalThis.location?.href || 'http://localhost');
-        return url.pathname === '/api/backends/chat-completions/generate';
+        const base = globalThis.location?.href || 'http://localhost';
+        const url = new URL(raw, base);
+        return url.origin === new URL(base).origin && url.pathname === '/api/backends/chat-completions/generate';
     } catch {
         return raw === '/api/backends/chat-completions/generate';
     }
@@ -85,17 +89,32 @@ function parsePreviewHeader(response) {
 }
 
 export class ApiCacheAdapterBridge {
-    constructor({ getSettings, updateSettings, fetchImpl, onStatus } = {}) {
+    constructor({ getSettings, updateSettings, fetchImpl, onStatus, observeMain, onInternal } = {}) {
         this.getSettings = getSettings;
         this.updateSettings = updateSettings;
         this.fetchImpl = fetchImpl;
         this.onStatus = onStatus;
+        this.observeMain = observeMain;
+        this.onInternal = onInternal;
+        this.internalRequests = new WeakMap();
         this.available = false;
         this.capabilities = null;
         this.currentConnection = null;
         this.installedTarget = null;
         this.originalFetch = null;
+        this.wrapper = null;
         this.status = { state: 'idle', message: '尚未检测服务端适配器', preview: null };
+    }
+
+    trackInternal(signal, payload) {
+        const settings = this.getSettings?.();
+        if (!settings?.cacheDebug && !settings?.apiCacheAdapterEnabled) return;
+        const expected = settings.cacheDebug ? inspectRequest(payload) : null;
+        this.internalRequests.set(signal, { expected });
+        return () => {
+            if (!this.internalRequests.delete(signal) || !expected) return;
+            this.onInternal?.({ expected: requestReport(expected), browserFetch: '桥接未观察到该独立请求；发送内容不可验证' });
+        };
     }
 
     report(state, message, preview = this.status.preview) {
@@ -128,20 +147,42 @@ export class ApiCacheAdapterBridge {
     install(target = globalThis.window ?? globalThis) {
         if (this.installedTarget || typeof target?.fetch !== 'function') return;
         this.installedTarget = target;
-        this.originalFetch = target.fetch.bind(target);
+        const original = target.fetch;
+        const fetcher = original.bind(target);
+        this.originalFetch = fetcher;
         const bridge = this;
-        target.fetch = async function cacheMemoryFetch(resource, init = {}) {
-            if (!isGenerateRequest(resource, init)) return bridge.originalFetch(resource, init);
+        const wrapper = async function cacheMemoryFetch(resource, init = {}) {
+            if (bridge.wrapper !== wrapper || !isGenerateRequest(resource, init)) return fetcher(resource, init);
             const settings = bridge.getSettings?.();
-            if (!settings?.apiCacheAdapterEnabled || !bridge.available) return bridge.originalFetch(resource, init);
+            const adapterEnabled = settings?.apiCacheAdapterEnabled && bridge.available;
+            if (!settings?.cacheDebug && !adapterEnabled) return fetcher(resource, init);
+            const signal = init?.signal ?? resource?.signal;
+            const internal = bridge.internalRequests.get(signal);
             let payload;
             try { payload = JSON.parse(String(init?.body ?? '')); }
             catch {
-                bridge.report('bypassed', '主请求不是可解析的 JSON，缓存适配器已安全旁路');
-                return bridge.originalFetch(resource, init);
+                if (adapterEnabled && !internal) bridge.report('bypassed', '主请求不是可解析的 JSON，缓存适配器已安全旁路');
+                return fetcher(resource, init);
             }
-            if (payload.cache_memory_internal === true) return bridge.originalFetch(resource, init);
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return fetcher(resource, init);
+            if (internal) {
+                bridge.internalRequests.delete(signal);
+                try {
+                    if (internal.expected) {
+                        const actual = inspectRequest(payload);
+                        const changes = compareRequests(internal.expected, actual);
+                        if (payload.cache_memory_internal !== true) changes.push({ kind: 'internal-marker-changed', location: 'cache_memory_internal' });
+                        bridge.onInternal?.({ expected: requestReport(internal.expected), browserFetch: requestReport(actual), changes });
+                    }
+                } catch { /* Observation must preserve the original request. */ }
+                return fetcher(resource, init);
+            }
+            if (payload.cache_memory_internal === true) return fetcher(resource, init);
             const connection = describeApiConnection(payload);
+            let observation;
+            try { observation = bridge.observeMain?.(payload, connection); }
+            catch { /* Route normally if a diagnostic is unavailable. */ }
+            if (!adapterEnabled) return fetcher(resource, init);
             bridge.currentConnection = connection;
             if (settings.apiCacheLastConnection !== connection.key || settings.apiCacheLastConnectionLabel !== connection.label) {
                 bridge.updateSettings?.({ apiCacheLastConnection: connection.key, apiCacheLastConnectionLabel: connection.label });
@@ -149,29 +190,41 @@ export class ApiCacheAdapterBridge {
             const policy = resolveApiCachePolicy(settings, connection.key);
             if (!policy.enabled) {
                 bridge.report('bypassed', `${connection.label}：此连接的 API 缓存策略已关闭`);
-                return bridge.originalFetch(resource, init);
+                return fetcher(resource, init);
             }
             const adaptedBody = JSON.stringify({
                 ...payload,
-                cache_memory_adapter: { version: 1, connection, policy },
+                cache_memory_adapter: { version: 1, connection, policy, snapshot: observation?.reference },
             });
             bridge.report('working', `${connection.label}：正在由服务端构造缓存断点…`);
             let response;
             try {
-                response = await bridge.originalFetch('/api/plugins/cache-memory-api-adapter/generate', { ...init, body: adaptedBody });
+                response = await fetcher('/api/plugins/cache-memory-api-adapter/generate', { ...init, body: adaptedBody });
             } catch (error) {
                 bridge.report('error', `服务端适配路由失败；为避免重复调用模型，没有自动重试：${error.message}`);
                 throw error;
             }
             const preview = parsePreviewHeader(response);
-            if (preview) bridge.report(preview.applied ? 'applied' : 'bypassed', preview.summary || '服务端已处理请求', preview);
+            try { observation?.onIngress?.(preview?.integrity); }
+            catch { /* Preserve the core response. */ }
+            if (preview) {
+                const integrity = preview.integrity;
+                const warning = !integrity?.rejected && integrity?.inbound?.memory?.state === 'changed' ? '；入站冻结记忆正文与已保存快照不一致' : '';
+                bridge.report(integrity?.rejected ? 'error' : preview.applied ? 'applied' : 'bypassed',
+                    (preview.summary || '服务端已处理请求') + warning, preview);
+            }
             else bridge.report('error', '服务端响应缺少适配器预览；为避免重复调用模型，没有自动重试');
             return response;
         };
+        this.wrapper = wrapper;
+        this.restoreFetch = () => { if (target.fetch === wrapper) target.fetch = original; };
+        target.fetch = wrapper;
     }
 
     uninstall() {
-        if (this.installedTarget && this.originalFetch) this.installedTarget.fetch = this.originalFetch;
+        this.restoreFetch?.();
+        this.restoreFetch = null;
+        this.wrapper = null;
         this.installedTarget = null;
         this.originalFetch = null;
     }
