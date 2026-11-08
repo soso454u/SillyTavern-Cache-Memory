@@ -1,7 +1,7 @@
 import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.18';
 import { isUsableMemory } from './continuity.js?v=1.27.16';
 import { summaryVersionMatches } from './memory-store.js?v=1.27.16';
-import { getAssistantMessages, messageIdentity } from './utils.js?v=1.27.16';
+import { getAssistantMessages, messageFingerprint, messageIdentity } from './utils.js?v=1.27.16';
 import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.16';
 
 export const RECENT_RAW_FLOORS = 5;
@@ -51,6 +51,20 @@ function promptSourceResolver(chat) {
     };
 }
 
+function sameBodySourceFingerprints(entry) {
+    const fingerprints = new Set([entry.fingerprint]);
+    const message = entry.message;
+    // Imports can restore the selected reply's text with a different swipe
+    // index or timestamps. Only another saved copy of the exact body qualifies.
+    const swipeInfo = Array.isArray(message.swipe_info) ? message.swipe_info : [];
+    for (const [index, info] of swipeInfo.entries()) {
+        if (!info || message.swipes?.[index] !== message.mes) continue;
+        fingerprints.add(messageFingerprint({ ...message, swipe_id: index, send_date: info.send_date ?? '',
+            gen_started: info.gen_started ?? '', extra: info.extra ?? {} }));
+    }
+    return fingerprints;
+}
+
 export function promptHistoryFloor(coreChat, chat, summaries = {}) {
     if (!Array.isArray(coreChat) || !Array.isArray(chat)) return 0;
     const sourceFor = promptSourceResolver(chat);
@@ -91,7 +105,7 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
     const originalById = unique(chat);
     const sourceFor = promptSourceResolver(chat);
     const openingMessage = getOpeningSource(chat)?.message;
-    const latestUser = (shortHistory ? coreChat.map(sourceFor) : chat).findLast(row => row && row !== openingMessage && row.is_user === true
+    const latestUser = (adaptive ? coreChat.map(sourceFor) : chat).findLast(row => row && row !== openingMessage && row.is_user === true
         && !row.is_system && !Array.isArray(row.extra?.tool_invocations));
     const openingCovered = (!shortHistory || !hasNonTextContext(openingMessage)) && publishedOpeningCoverage(chat, snapshot, publishedValue);
     const selected = coreChat.filter(row => {
@@ -104,15 +118,22 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
         return !lastUserOnly || source.is_user !== true || source === latestUser;
     });
     const entries = getAssistantMessages(chat);
+    const contentCounts = new Map();
+    if (adaptive) for (const entry of entries) {
+        contentCounts.set(entry.contentFingerprint, (contentCounts.get(entry.contentFingerprint) ?? 0) + 1);
+    }
     const available = new Set(selected.map(sourceFor));
     const recent = new Set((adaptive ? entries.filter(entry => available.has(entry.message)) : entries)
         .slice(-(adaptive ? recentRawFloors : RECENT_RAW_FLOORS)).map(entry => entry.message));
+    const retainedReasons = new Map();
     const finish = (messages, reason, replacements = new Map()) => {
         const retained = adaptive ? new Set(messages.filter(row => !replacements.has(row)).map(sourceFor)) : null;
+        const older = retained ? entries.filter(entry => !recent.has(entry.message) && retained.has(entry.message)) : [];
         return { messages: replacements.size ? messages.map(row => replacements.get(row) ?? row) : messages,
             removed: coreChat.length - messages.length, reason, ...(shortHistory ? { replacedWithSummaries: replacements.size } : {}),
-            ...(retained ? { retainedOlderFloors: entries.filter(entry => !recent.has(entry.message)
-                && retained.has(entry.message)).map(entry => entry.floor) } : {}) };
+            ...(retained ? { recentFloors: entries.filter(entry => recent.has(entry.message)).map(entry => entry.floor),
+                retainedOlderFloors: older.map(entry => entry.floor),
+                retainedOlderDetails: older.map(entry => ({ floor: entry.floor, reason: retainedReasons.get(entry.message) ?? reason })) } : {}) };
     };
     if (!shortHistory && ((!historyHandoff && !rolling) || snapshot?.historyHandoff !== true || !publishedValue || snapshot.value !== publishedValue)) return finish(selected, 'selection-only');
     const blocks = (snapshot.blocks ?? []).filter(block => ['checkpoint', 'long-story', ...(rolling ? ['summary-story'] : [])].includes(block.type) && block.coversHistory === true
@@ -121,18 +142,18 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
         && block.text?.trim() && publishedValue.includes(block.text));
     if (!blocks.length && !shortHistory) return finish(selected, 'no-story-coverage');
     const limit = shortHistory ? Infinity : (entries.at(-1)?.floor ?? 0) - (rolling ? recentRawFloors : RECENT_RAW_FLOORS);
-    const promptById = unique(selected);
+    const promptBySource = new Map();
     if (adaptive) {
         // Regex may change text-only identities. The original index still
         // identifies that prompt copy, but duplicate source mappings stay unsafe.
-        promptById.clear();
         for (const row of selected) {
             const source = sourceFor(row);
             if (!source) continue;
-            const key = identity(source);
-            promptById.set(key, promptById.has(key) ? null : row);
+            promptBySource.set(source, promptBySource.has(source) ? null : row);
         }
     }
+    const promptById = adaptive ? null : unique(selected);
+    const promptFor = original => adaptive ? promptBySource.get(original) : promptById.get(identity(original));
     const sourceFloors = new Map(), contentFloors = new Map(), summariesByFloor = new Map();
     for (const row of Object.values(summaries)) {
         if (adaptive) {
@@ -161,26 +182,37 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
         // coverage. Unknown or ambiguous identities keep their original turns.
         const userFingerprint = adaptive ? summaryUserSource(chat, entry).fingerprint : '';
         const direct = summaries[entry.messageId];
-        const changedUser = direct && Object.hasOwn(direct, 'userSourceFingerprint') && direct.userSourceFingerprint !== userFingerprint;
-        const matchingSummaries = adaptive && !changedUser ? (summariesByFloor.get(entry.floor) ?? []).filter(row =>
+        const changedUser = direct?.floor === entry.floor && Object.hasOwn(direct, 'userSourceFingerprint')
+            && direct.userSourceFingerprint !== userFingerprint;
+        let fingerprints;
+        const bodyMatches = row => row.sourceContentFingerprint ? row.sourceContentFingerprint === entry.contentFingerprint
+            : row.sourceFingerprint && (fingerprints ??= sameBodySourceFingerprints(entry)).has(row.sourceFingerprint);
+        const sameFloor = summariesByFloor.get(entry.floor) ?? [];
+        const matchingSummaries = adaptive && !changedUser ? sameFloor.filter(row =>
             (!shortHistory || isUsableMemory(row) && Boolean(row.sourceContentFingerprint || row.sourceFingerprint))
             && row.status !== 'failed' && row.frozen !== false
             && (!Object.hasOwn(row, 'userSourceFingerprint') || row.userSourceFingerprint === userFingerprint)
-            && (row.messageId === entry.messageId || row.sourceMessageKey === entry.sourceMessageKey || row.sourceContentFingerprint === entry.contentFingerprint)
-            && (!row.sourceContentFingerprint || row.sourceContentFingerprint === entry.contentFingerprint)
-            && (row.sourceContentFingerprint || !row.sourceFingerprint || row.sourceFingerprint === entry.fingerprint)) : [];
-        const assistant = promptById.get(assistantKey);
-        const verified = (!adaptive || matchingSummaries.length > 0) && known?.size === 1 && known.has(entry.floor)
-            && originalById.get(assistantKey) === entry.message && assistant
-            && (!shortHistory || !hasNonTextContext(assistant) && !hasNonTextContext(entry.message));
-        if (!verified) continue;
+            && (bodyMatches(row) || !row.sourceContentFingerprint && !row.sourceFingerprint
+                && (row.messageId === entry.messageId || row.sourceMessageKey === entry.sourceMessageKey))) : [];
+        const assistant = promptFor(entry.message);
+        const identityMatches = known?.size === 1 && known.has(entry.floor) && originalById.get(assistantKey) === entry.message;
+        const uniqueBodyMatches = adaptive && contentCounts.get(entry.contentFingerprint) === 1
+            && (!contentFloors.has(entry.contentFingerprint) || contentFloors.get(entry.contentFingerprint).size === 1)
+            && matchingSummaries.some(bodyMatches);
+        let retainedReason;
+        if (!assistant || !identityMatches && !uniqueBodyMatches) retainedReason = 'source-identity-unverified';
+        if (adaptive && !matchingSummaries.length) retainedReason = changedUser || sameFloor.some(row => bodyMatches(row)
+            && Object.hasOwn(row, 'userSourceFingerprint') && row.userSourceFingerprint !== userFingerprint)
+            ? 'user-source-changed' : sameFloor.length ? 'summary-source-unverified' : 'summary-missing';
+        if ((shortHistory || !identityMatches) && (hasNonTextContext(assistant) || hasNonTextContext(entry.message))) retainedReason = 'protected-message';
+        if (retainedReason) { retainedReasons.set(entry.message, retainedReason); continue; }
         const source = matchingSummaries.length === 1 ? matchingSummaries[0] : null;
         const covered = blocks.some(block => block.startFloor <= entry.floor && block.endFloor >= entry.floor
             && (!shortHistory || source && !block.missingFloors?.includes(entry.floor)
                 && Object.hasOwn(block.sourceVersions ?? {}, source.messageId)
                 && summaryVersionMatches(source, block.sourceVersions[source.messageId])));
         const story = shortHistory && !covered && source ? summaryStoryBlock(source) : null;
-        if (!covered && !story) continue;
+        if (!covered && !story) { retainedReasons.set(entry.message, 'no-verified-story-coverage'); continue; }
         if (story) {
             // Replace in the same history slot, after the frozen prompt.
             // Core owns token budgeting and serializes narrator rows as system.
@@ -193,12 +225,12 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
             const original = chat[i];
             if (original === openingMessage) continue; // only the opening-coverage policy may remove it
             if (i !== entry.messageIndex && original.is_user !== true) continue;
-            if (lastUserOnly && original === latestUser) continue;
+            if ((lastUserOnly || adaptive) && original === latestUser) continue;
             if (original.is_system || Array.isArray(original.extra?.tool_invocations)) continue;
-            const key = identity(original), candidate = promptById.get(key);
-            if (shortHistory && (original === latestUser || hasNonTextContext(original) || hasNonTextContext(candidate)
+            const candidate = promptFor(original);
+            if (shortHistory && (hasNonTextContext(original) || hasNonTextContext(candidate)
                 || i !== entry.messageIndex && (!source || !Object.hasOwn(source, 'userSourceFingerprint')))) continue;
-            if (originalById.get(key) === original && candidate && candidate.is_system !== true
+            if ((adaptive && i === entry.messageIndex || originalById.get(identity(original)) === original) && candidate && candidate.is_system !== true
                 && !Array.isArray(candidate.extra?.tool_invocations) && !replacements.has(candidate)) remove.add(candidate);
         }
     }

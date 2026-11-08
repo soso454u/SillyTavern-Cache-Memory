@@ -4,7 +4,7 @@ import { INJECTION_MODES, normalizeSettings, normalizeLoadedSettings } from '../
 import { aggregateVersion, createEmptyStore, MemoryStore, summaryVersion } from '../src/memory-store.js';
 import { refreshSnapshot, effectiveInjectionMode, shouldRefreshInjection } from '../src/cache-control.js';
 import { filterCoveredHistory, promptHistoryFloor } from '../src/history-handoff.js';
-import { getAssistantMessages } from '../src/utils.js';
+import { getAssistantMessages, messageFingerprint } from '../src/utils.js';
 import { getOpeningSource } from '../src/opening-source.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { summaryUserSource } from '../src/summary-source.js';
@@ -177,6 +177,33 @@ test('missing or failed CP uses summaries; missing, failed or state-only summary
         f.store.summaries[entry.messageId] = { messageId: entry.messageId, floor: 4, ...record };
         assert.deepEqual(rawFloors(send(f)), [4, 10, 11, 12]);
     }
+});
+
+test('Rolling keeps 3 of 76 raw turns when four covered sources have stale swipe metadata or competing saved aliases', () => {
+    const f = fixture(76);
+    const entries = getAssistantMessages(f.chat);
+    for (const floor of [18, 24, 31, 57]) {
+        const entry = entries[floor - 1], summary = f.store.summaries[entry.messageId];
+        if (floor < 30) {
+            const old = { send_date: `saved-a${floor}`, gen_started: `saved-g${floor}`, extra: {} };
+            summary.sourceFingerprint = messageFingerprint({ ...entry.message, ...old, swipe_id: 0 });
+            delete summary.sourceContentFingerprint;
+            entry.message.swipe_id = 1;
+            entry.message.swipes = [entry.message.mes, entry.message.mes];
+            entry.message.swipe_info = [old, { send_date: entry.message.send_date, gen_started: entry.message.gen_started }];
+        } else {
+            f.store.summaries[entries[floor].messageId].sourceMessageKey = entry.messageId;
+        }
+    }
+    const result = send(f);
+    assert.deepEqual(rawFloors(result), [74, 75, 76]);
+    assert.deepEqual(result.recentFloors, [74, 75, 76]);
+    assert.deepEqual(result.retainedOlderDetails, []);
+    assert.deepEqual(storyBlocks(f.store).filter(b => b.type === 'summary-story').map(b => b.startFloor), [71, 72, 73]);
+    f.chat.find(row => row.send_date === 'a18').mes += '新增的当前正文';
+    const changed = send(f);
+    assert.deepEqual(rawFloors(changed), [18, 74, 75, 76]);
+    assert.deepEqual(changed.retainedOlderDetails, [{ floor: 18, reason: 'summary-source-unverified' }]);
 });
 
 test('swipe/regenerate retain three available raw replies without overlapping summary and protect system/tools', () => {

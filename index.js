@@ -14,18 +14,18 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
 import { SummaryApiClient } from './src/api-client.js?v=1.27.17';
 import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.17';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.18';
-import { CacheDiagnostics, freezesInjection, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.18';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.19';
+import { CacheDiagnostics, freezesInjection, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.19';
 import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.18';
 import { chatInheritedThrough, getAssistantMessages } from './src/utils.js?v=1.27.16';
 import { MemoryStore } from './src/memory-store.js?v=1.27.16';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.18';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.18';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.19';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.19';
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.16';
 import { MemoryServerClient } from './src/memory-server.js?v=1.27.16';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.18';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.19';
 import { chatFileIdentity } from './src/chat-file.js?v=1.27.16';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.18';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.19';
 import { memoryContentDigest } from './src/memory-store.js?v=1.27.16';
 import { compareRequests } from './server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
 
@@ -45,6 +45,14 @@ const diagnostics = new CacheDiagnostics();
 const MAIN_GENERATION_TYPES = new Set([undefined, 'normal', 'swipe', 'regenerate', 'continue']);
 const REQUEST_CONFLICTS = new Set(['prefix-changed', 'memory-text-changed', 'memory-message-suffix-changed',
     'memory-no-longer-found', 'cache-parameters-changed']);
+const HISTORY_RETENTION_LABELS = {
+    'summary-missing': '缺少摘要',
+    'summary-source-unverified': '摘要来源不符或不可用',
+    'source-identity-unverified': '消息身份无法核实',
+    'user-source-changed': '对应 user 输入已变化',
+    'protected-message': '含受保护内容',
+    'no-verified-story-coverage': '已注入记忆未确认覆盖',
+};
 let cacheDebugState = {};
 let cacheDebugSequence = 0;
 let activeChatId = null;
@@ -308,6 +316,7 @@ function cacheDebugSnapshot(data) {
     const snapshot = diagnostics.memory(current, settings, getAssistantMessages(chat).at(-1)?.floor ?? 0);
     snapshot.history = Array.isArray(data?.messages) ? diagnostics.history(current.chatId, data.messages)
         : { unavailable: true, message: '当前 ST 未提供设置事件的 messages' };
+    if (Array.isArray(data?.messages)) snapshot.history.assistantMessageCount = data.messages.filter(message => message?.role === 'assistant').length;
     cacheDebugSequence++;
     reportCacheDebug('main', { snapshot, compatibility, upstream: '未观察到最终上游请求' },
         compatibility?.settingsReady.memory.state === 'changed' || compatibility?.settingsReady.cache.count > 0);
@@ -321,6 +330,7 @@ function observeMainRequest(data, connection) {
     if (!report) return { reference };
     const sequence = ++cacheDebugSequence;
     const previous = early?.report && early.report === cacheDebugState.main?.compatibility ? cacheDebugState.main : null;
+    if (Array.isArray(data.messages)) report.browserFetch.assistantMessageCount = data.messages.filter(message => message?.role === 'assistant').length;
     const compatibility = { ...early?.report, ...report };
     const main = { ...previous, compatibility, serverIngress: '尚未观察；仅启用的服务端适配连接可回传', upstream: '未观察到最终上游请求' };
     const warning = ['changed', 'ambiguous'].includes(observation.memory.state) || observation.cache.count > 0
@@ -377,8 +387,12 @@ async function historyInterceptor(coreChat, _contextSize, abort, type) {
         injectionMode: settings.injectionMode, recentRawFloors: settings.recentRawFloors,
     });
     if (result.removed || result.replacedWithSummaries) coreChat.splice(0, coreChat.length, ...result.messages);
-    if (result.retainedOlderFloors?.length) ui?.setStatus('warning', `最近${settings.recentRawFloors}层模式：第${result.retainedOlderFloors.slice(0, 12).join('、')}层等共${result.retainedOlderFloors.length}层尚无可核实的已注入剧情，暂时保留原文；可补齐缺失摘要。`);
-    if (settings.cacheDebug) console.info(LOG_PREFIX, 'HISTORY HANDOFF', {
+    if (result.retainedOlderDetails?.length) {
+        const details = result.retainedOlderDetails.slice(0, 6).map(({ floor, reason }) => `第${floor}层（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
+        ui?.setStatus('warning', `最近${settings.recentRawFloors}层模式额外保留 ${result.retainedOlderDetails.length} 层原文：${details.join('、')}。`);
+    }
+    reportCacheDebug('historyHandoff', {
+        recentFloors: result.recentFloors, retainedOlder: result.retainedOlderDetails,
         removedMessages: result.removed, summaryTailFloors: result.replacedWithSummaries, reason: result.reason,
     });
 }
