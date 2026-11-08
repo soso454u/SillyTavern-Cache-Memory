@@ -131,7 +131,7 @@ test('user-origin table evidence is accepted, but an edited user source does not
     assert.deepEqual(record.stateChanges, []);
 });
 
-test('a known changed user source keeps the old turn’s original text until a matching summary is saved', async () => {
+test('Rolling keeps the changed user input while capping the old assistant reply', async () => {
     const chat = Array.from({ length: 5 }, (_, i) => [{ is_user: true, mes: `用户事实${i + 1}`, send_date: `u${i}` }, { mes: `答复${i + 1}`, gen_started: `a${i}` }]).flat();
     const f = fixture(chat);
     for (const entry of getAssistantMessages(chat)) await f.summarizer.summarizeMessage(entry.messageId, { deferAggregates: true });
@@ -140,7 +140,8 @@ test('a known changed user source keeps the old turn’s original text until a m
     const data = f.store.current(), result = filterCoveredHistory(structuredClone(chat), chat, data.injectionSnapshot, data.injectionSnapshot.value,
         { type: 'normal', summaries: data.summaries, injectionMode: 'rolling', recentRawFloors: 3 });
     assert.ok(result.messages.some(message => message.mes === chat[0].mes));
-    assert.ok(result.messages.some(message => message.mes === '答复1'));
+    assert.equal(result.messages.some(message => message.mes === '答复1'), false);
+    assert.deepEqual(result.omittedOlderDetails, [{ floor: 1, reason: 'user-source-changed' }]);
 });
 
 test('changed user facts pass through the same Summary→CP→Long chain without separate user summaries', async () => {

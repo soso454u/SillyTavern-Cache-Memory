@@ -162,7 +162,7 @@ test('rolling takes precedence over strict freezing, latest user selection is in
     for (const [value, expected] of [[0, 1], [Infinity, 3], ['5', 5], [101, 100], ['', 3]]) assert.equal(normalizeSettings({ recentRawFloors: value }).recentRawFloors, expected);
 });
 
-test('missing or failed CP uses summaries; missing, failed or state-only summary keeps only its uncovered raw turn and reports it', () => {
+test('missing or failed CP uses summaries; unavailable old summaries are reported without exceeding the Rolling cap', () => {
     const f = fixture(12);
     f.store.checkpoints = [];
     let result = send(f);
@@ -171,11 +171,13 @@ test('missing or failed CP uses summaries; missing, failed or state-only summary
     const entry = getAssistantMessages(f.chat).find(row => row.floor === 4);
     delete f.store.summaries[entry.messageId];
     result = send(f);
-    assert.deepEqual(rawFloors(result), [4, 10, 11, 12]);
-    assert.deepEqual(result.retainedOlderFloors, [4]);
+    assert.deepEqual(rawFloors(result), [10, 11, 12]);
+    assert.deepEqual(result.omittedOlderDetails, [{ floor: 4, reason: 'summary-missing' }]);
     for (const record of [{ status: 'failed', event: '旧的失败结果' }, { status: 'frozen', state: '只有状态，不能代替剧情' }]) {
         f.store.summaries[entry.messageId] = { messageId: entry.messageId, floor: 4, ...record };
-        assert.deepEqual(rawFloors(send(f)), [4, 10, 11, 12]);
+        result = send(f);
+        assert.deepEqual(rawFloors(result), [10, 11, 12]);
+        assert.deepEqual(result.omittedOlderDetails.map(row => row.floor), [4]);
     }
 });
 
@@ -202,8 +204,8 @@ test('Rolling keeps 3 of 76 raw turns when four covered sources have stale swipe
     assert.deepEqual(storyBlocks(f.store).filter(b => b.type === 'summary-story').map(b => b.startFloor), [71, 72, 73]);
     f.chat.find(row => row.send_date === 'a18').mes += '新增的当前正文';
     const changed = send(f);
-    assert.deepEqual(rawFloors(changed), [18, 74, 75, 76]);
-    assert.deepEqual(changed.retainedOlderDetails, [{ floor: 18, reason: 'summary-source-unverified' }]);
+    assert.deepEqual(rawFloors(changed), [74, 75, 76]);
+    assert.deepEqual(changed.omittedOlderDetails, [{ floor: 18, reason: 'summary-source-unverified' }]);
 });
 
 test('swipe/regenerate retain three available raw replies without overlapping summary and protect system/tools', () => {
@@ -221,15 +223,21 @@ test('swipe/regenerate retain three available raw replies without overlapping su
     for (const type of ['quiet', 'impersonate']) assert.equal(send(f, structuredClone(f.chat), type).removed, 0);
 });
 
-test('empty, mismatched or unpublished projections cannot remove raw history; same-ID body edits stay visible', () => {
+test('Rolling caps the request even when the projection is empty or unpublished and preserves stored originals', () => {
     const f = fixture(12); send(f);
     const snapshot = f.store.injectionSnapshot;
-    assert.equal(filterCoveredHistory(structuredClone(f.chat), f.chat, snapshot, 'not published', { summaries: f.store.summaries }).removed, 0);
+    const unpublished = filterCoveredHistory(structuredClone(f.chat), f.chat, snapshot, 'not published', { summaries: f.store.summaries });
+    assert.deepEqual(rawFloors(unpublished), [10, 11, 12]);
+    assert.equal(unpublished.omittedOlderDetails.length, 9);
+    assert.ok(unpublished.messages.some(row => row.mes === '初始背景'));
     const empty = fixture(12); empty.store.summaries = {}; empty.store.checkpoints = [];
-    assert.equal(send(empty).removed, 0);
-    assert.equal(send(empty).retainedOlderFloors.length, 9);
+    const original = structuredClone(empty.chat);
+    assert.equal(send(empty).recentRawCount, 3);
+    assert.equal(send(empty, empty.chat.slice()).omittedOlderDetails.length, 9);
+    assert.deepEqual(empty.chat, original);
     f.chat.find(row => row.send_date === 'a4').mes = '正文4：人工改写的新事实';
-    assert.ok(rawFloors(send(f)).includes(4));
+    assert.deepEqual(rawFloors(send(f)), [10, 11, 12]);
+    assert.ok(f.chat.some(row => row.mes === '正文4：人工改写的新事实'));
 });
 
 test('regex text-only identities use verified original indices without editing stored chat', () => {
@@ -252,7 +260,7 @@ test('rolling reload rebuilds old inflated snapshots, preserves durable KEEP and
     assert.match(f.store.injectionSnapshot.value, /守卫知道密道，旅人不知道/);
     const stats = memoryOverviewStats(f.store, getAssistantMessages(f.chat), f.settings);
     assert.equal(stats.injectedSummaries, 4); assert.equal(stats.injectedCheckpoints, 1);
-    assert.match(stats.recentBodyWindow, /最近3层/);
+    assert.match(stats.recentBodyWindow, /最多最近 3 层/);
     assert.match(configTemplate(), /data-setting="recentRawFloors"/);
     assert.equal(normalizeLoadedSettings({ injectionMode: 'checkpoint_boundary', prompts: { summary: '自定义' } }).prompts.summary, '自定义');
 });

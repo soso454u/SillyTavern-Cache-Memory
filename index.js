@@ -14,18 +14,18 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
 import { SummaryApiClient } from './src/api-client.js?v=1.27.17';
 import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.17';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.19';
-import { CacheDiagnostics, freezesInjection, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.19';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.20';
+import { CacheDiagnostics, freezesInjection, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.20';
 import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.18';
 import { chatInheritedThrough, getAssistantMessages } from './src/utils.js?v=1.27.16';
 import { MemoryStore } from './src/memory-store.js?v=1.27.16';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.19';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.19';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.20';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.20';
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.16';
 import { MemoryServerClient } from './src/memory-server.js?v=1.27.16';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.19';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.20';
 import { chatFileIdentity } from './src/chat-file.js?v=1.27.16';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.19';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.20';
 import { memoryContentDigest } from './src/memory-store.js?v=1.27.16';
 import { compareRequests } from './server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
 
@@ -351,12 +351,42 @@ async function prepareInjection() {
     return summarizer.completeBeforeInjection({ signal: runtimeController.signal });
 }
 
+function applyHistorySelection(coreChat, type, snapshot, publishedValue, summaries) {
+    const result = filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
+        type, summaries, historyHandoff: settings.historyHandoff, lastUserOnly: settings.lastUserOnly,
+        injectionMode: settings.injectionMode, recentRawFloors: settings.recentRawFloors,
+    });
+    if (result.removed || result.replacedWithSummaries) coreChat.splice(0, coreChat.length, ...result.messages);
+    if (result.retainedOlderDetails?.length) {
+        const details = result.retainedOlderDetails.slice(0, 6).map(({ floor, reason }) => `第${floor}层（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
+        ui?.setStatus('warning', `最近${settings.recentRawFloors}层模式额外保留 ${result.retainedOlderDetails.length} 层原文：${details.join('、')}。`);
+    }
+    if (result.omittedOlderDetails?.length) {
+        const details = result.omittedOlderDetails.slice(0, 6).map(({ floor, reason }) =>
+            `${floor === null ? '未定位楼层' : `第${floor}层`}（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
+        ui?.setStatus('warning', `本次按设定只发送最近 ${result.recentRawCount} 层 char 正文。${result.omittedOlderDetails.length} 层旧正文的记忆覆盖未核实，已按上限省略：${details.join('、')}。`);
+    }
+    reportCacheDebug('historyHandoff', {
+        recentFloors: result.recentFloors, retainedOlder: result.retainedOlderDetails,
+        recentRawCount: result.recentRawCount, omittedOlder: result.omittedOlderDetails,
+        removedMessages: result.removed, summaryTailFloors: result.replacedWithSummaries, reason: result.reason,
+    });
+}
+
 // ST awaits this interceptor before assembling the main prompt. Repair only
 // at this boundary, never from publication/save callbacks that repair triggers.
 async function historyInterceptor(coreChat, _contextSize, abort, type) {
-    if (!settings?.enabled || memoryChatId() !== activeChatId) return;
+    if (!settings?.enabled) return;
     if (![undefined, 'normal', 'swipe', 'regenerate', 'continue'].includes(type)) return;
-    const chatId = memoryChatId(), revision = summarizer.contextRevision;
+    const chatId = memoryChatId();
+    if (!chatId) return;
+    if (chatId !== activeChatId) {
+        // The chat may still be loading its saved memory. The Rolling window
+        // needs only the temporary history, never the previous chat's snapshot.
+        if (settings.injectionMode === INJECTION_MODES.ROLLING) applyHistorySelection(coreChat, type);
+        return;
+    }
+    const revision = summarizer.contextRevision;
     try { await prepareInjection(); }
     catch (error) {
         if (['CHAT_CHANGED', 'SOURCE_CHANGED', 'REQUEST_ABORTED'].includes(error.code)
@@ -382,19 +412,7 @@ async function historyInterceptor(coreChat, _contextSize, abort, type) {
     if (!rolling && !shortHistory && !settings.historyHandoff && !settings.lastUserOnly) return;
     const current = store.current();
     if (current.chatId !== activeChatId) return;
-    const result = filterCoveredHistory(coreChat, chat, current.injectionSnapshot, publishedMemoryValue, {
-        type, summaries: current.summaries, historyHandoff: settings.historyHandoff, lastUserOnly: settings.lastUserOnly,
-        injectionMode: settings.injectionMode, recentRawFloors: settings.recentRawFloors,
-    });
-    if (result.removed || result.replacedWithSummaries) coreChat.splice(0, coreChat.length, ...result.messages);
-    if (result.retainedOlderDetails?.length) {
-        const details = result.retainedOlderDetails.slice(0, 6).map(({ floor, reason }) => `第${floor}层（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
-        ui?.setStatus('warning', `最近${settings.recentRawFloors}层模式额外保留 ${result.retainedOlderDetails.length} 层原文：${details.join('、')}。`);
-    }
-    reportCacheDebug('historyHandoff', {
-        recentFloors: result.recentFloors, retainedOlder: result.retainedOlderDetails,
-        removedMessages: result.removed, summaryTailFloors: result.replacedWithSummaries, reason: result.reason,
-    });
+    applyHistorySelection(coreChat, type, current.injectionSnapshot, publishedMemoryValue, current.summaries);
 }
 
 // Actual assistant text changes affect only the selected floor's Summary.

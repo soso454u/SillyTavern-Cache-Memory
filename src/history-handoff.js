@@ -1,7 +1,7 @@
 import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.18';
 import { isUsableMemory } from './continuity.js?v=1.27.16';
 import { summaryVersionMatches } from './memory-store.js?v=1.27.16';
-import { getAssistantMessages, messageFingerprint, messageIdentity } from './utils.js?v=1.27.16';
+import { getAssistantMessages, isNormalAssistant, messageFingerprint, messageIdentity } from './utils.js?v=1.27.16';
 import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.16';
 
 export const RECENT_RAW_FLOORS = 5;
@@ -85,8 +85,8 @@ export function promptHistoryFloor(coreChat, chat, summaries = {}) {
     return floor ? Math.max(0, floor + (offsets.size === 1 ? [...offsets][0] : 0)) : 0;
 }
 
-/** Filter only a temporary generation array, using the exact published blocks.
- * No textual guessing, maximum-covered-floor shortcut, or stored-chat writes.
+/** Filter only a temporary generation array. Memory coverage governs paired
+ * history pruning; Rolling also caps normal assistant replies independently.
  */
 export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
     type, summaries = {}, historyHandoff = snapshot?.historyHandoff === true, lastUserOnly = false,
@@ -94,10 +94,12 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
 } = {}) {
     const unchanged = reason => ({ messages: coreChat, removed: 0, reason });
     if (!Array.isArray(coreChat) || !Array.isArray(chat) || coreChat === chat) return unchanged('not-a-prompt-copy');
-    const originals = new Set(chat);
-    if (coreChat.some(row => originals.has(row))) return unchanged('not-a-prompt-copy');
     if (![undefined, 'normal', 'swipe', 'regenerate', 'continue'].includes(type)) return unchanged('generation-type');
     const rolling = injectionMode === 'rolling';
+    if (!rolling) {
+        const originals = new Set(chat);
+        if (coreChat.some(row => originals.has(row))) return unchanged('not-a-prompt-copy');
+    }
     const shortHistory = injectionMode === 'checkpoint_short_history';
     const adaptive = rolling || shortHistory;
     if (!historyHandoff && !lastUserOnly && !adaptive) return unchanged('selection-disabled');
@@ -122,18 +124,34 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
     if (adaptive) for (const entry of entries) {
         contentCounts.set(entry.contentFingerprint, (contentCounts.get(entry.contentFingerprint) ?? 0) + 1);
     }
-    const available = new Set(selected.map(sourceFor));
-    const recent = new Set((adaptive ? entries.filter(entry => available.has(entry.message)) : entries)
-        .slice(-(adaptive ? recentRawFloors : RECENT_RAW_FLOORS)).map(entry => entry.message));
+    const entryBySource = rolling ? new Map(entries.map(entry => [entry.message, entry])) : null;
+    const separateOpening = rolling && openingMessage && !entryBySource.has(openingMessage);
+    const isRollingReply = row => isNormalAssistant(row) && (!separateOpening || sourceFor(row) !== openingMessage);
+    const rollingReplies = rolling ? selected.filter(isRollingReply) : [];
+    const available = shortHistory ? new Set(selected.map(sourceFor)) : null;
+    const recent = rolling ? new Set(rollingReplies.slice(-recentRawFloors).map(sourceFor))
+        : new Set((shortHistory ? entries.filter(entry => available.has(entry.message)) : entries)
+            .slice(-(shortHistory ? recentRawFloors : RECENT_RAW_FLOORS)).map(entry => entry.message));
     const retainedReasons = new Map();
     const finish = (messages, reason, replacements = new Map()) => {
-        const retained = adaptive ? new Set(messages.filter(row => !replacements.has(row)).map(sourceFor)) : null;
+        const retained = shortHistory ? new Set(messages.filter(row => !replacements.has(row)).map(sourceFor)) : null;
         const older = retained ? entries.filter(entry => !recent.has(entry.message) && retained.has(entry.message)) : [];
-        return { messages: replacements.size ? messages.map(row => replacements.get(row) ?? row) : messages,
-            removed: coreChat.length - messages.length, reason, ...(shortHistory ? { replacedWithSummaries: replacements.size } : {}),
-            ...(retained ? { recentFloors: entries.filter(entry => recent.has(entry.message)).map(entry => entry.floor),
+        const omittedOlderDetails = [];
+        const rawCount = rolling ? messages.filter(isRollingReply).length : 0;
+        let toOmit = Math.max(0, rawCount - recentRawFloors);
+        const output = toOmit ? messages.filter(row => {
+            if (!toOmit || !isRollingReply(row)) return true;
+            toOmit--;
+            const source = sourceFor(row);
+            omittedOlderDetails.push({ floor: entryBySource.get(source)?.floor ?? null, reason: retainedReasons.get(source) ?? reason });
+            return false;
+        }) : messages;
+        return { messages: replacements.size ? output.map(row => replacements.get(row) ?? row) : output,
+            removed: coreChat.length - output.length, reason, ...(shortHistory ? { replacedWithSummaries: replacements.size } : {}),
+            ...(adaptive ? { recentFloors: entries.filter(entry => recent.has(entry.message)).map(entry => entry.floor),
                 retainedOlderFloors: older.map(entry => entry.floor),
-                retainedOlderDetails: older.map(entry => ({ floor: entry.floor, reason: retainedReasons.get(entry.message) ?? reason })) } : {}) };
+                retainedOlderDetails: older.map(entry => ({ floor: entry.floor, reason: retainedReasons.get(entry.message) ?? reason })) } : {}),
+            ...(rolling ? { recentRawCount: rawCount - omittedOlderDetails.length, omittedOlderDetails } : {}) };
     };
     if (!shortHistory && ((!historyHandoff && !rolling) || snapshot?.historyHandoff !== true || !publishedValue || snapshot.value !== publishedValue)) return finish(selected, 'selection-only');
     const blocks = (snapshot.blocks ?? []).filter(block => ['checkpoint', 'long-story', ...(rolling ? ['summary-story'] : [])].includes(block.type) && block.coversHistory === true

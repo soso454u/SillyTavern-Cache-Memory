@@ -61,7 +61,7 @@ async function runtimeFixture(t, { blocked = false, invalid = false, shortHistor
     }
     const bindings = { ...modules, chat, chat_metadata: metadata,
         eventSource: { on: (name, fn) => handlers.set(name, fn), off: name => handlers.delete(name) }, event_types: { GENERATION_STOPPED: 'stopped' },
-        extension_prompt_roles: {}, extension_prompt_types: {}, getCurrentChatId: () => 'synthetic', isGenerating: () => true,
+        extension_prompt_roles: {}, extension_prompt_types: {}, getCurrentChatId: () => context.chatId, isGenerating: () => true,
         saveSettingsDebounced() {}, setExtensionPrompt() {}, extension_settings: { [defaults.MODULE_ID]: settings }, getContext: () => context, promptManager: null,
         SummaryApiClient: Client, ApiCacheAdapterBridge: EmptyClient, CacheMemoryInjectionPublisher: Publisher, MemoryServerClient: Server, CacheMemoryUI: UI,
         window, document, requestAnimationFrame: fn => setTimeout(fn, 0), cancelAnimationFrame: clearTimeout };
@@ -69,7 +69,7 @@ async function runtimeFixture(t, { blocked = false, invalid = false, shortHistor
     t.after(() => runtime.onHotUnload());
     await runtime.refreshChatState({ serverLoaded: true }); await settle();
     runtime.summarizer.retryDelay = async () => {};
-    return { ...runtime, chat, calls, publications, statuses, handlers, hold, get remote() { return remote; } };
+    return { ...runtime, chat, context, calls, publications, statuses, handlers, hold, get remote() { return remote; } };
 }
 
 test('actual interceptor waits, saves all layers, then publishes and filters the same prompt', async t => {
@@ -95,13 +95,24 @@ test('native stop cancels the paid preflight and aborts the main request without
     assert.equal(Object.keys(f.remote.summaries).length, 4); assert.equal(f.summarizer.injectionRecovery, null);
 });
 
-test('persistent validation errors retain uncovered original text and leave the main request usable', async t => {
+test('persistent validation errors keep the Rolling cap and report uncovered old floors', async t => {
     const f = await runtimeFixture(t, { invalid: true }), prompt = clone(f.chat), aborted = [];
     await f.historyInterceptor(prompt, 10000, value => aborted.push(value), 'normal');
     assert.deepEqual(f.calls, ['Summary', 'Summary', 'Summary', 'Summary']); assert.deepEqual(aborted, []);
-    assert.ok(prompt.some(row => row.mes === '运行时合成正文2'));
+    assert.deepEqual(prompt.map(row => row.mes), ['运行时合成正文3', '运行时合成正文4', '运行时合成正文5']);
+    assert.ok(f.chat.some(row => row.mes === '运行时合成正文2'));
     assert.ok(f.statuses.some(([status, text]) => status === 'warning' && text.includes('下次注入')));
+    assert.ok(f.statuses.some(([status, text]) => status === 'warning' && text.includes('只发送最近 3 层 char 正文')));
     assert.equal(f.remote.checkpoints.length, 0); assert.equal(f.remote.longMemories.length, 0);
+});
+
+test('Rolling caps the request while the new chat memory is still loading', async t => {
+    const f = await runtimeFixture(t), prompt = clone(f.chat), publications = f.publications.length;
+    f.context.chatId = 'next-chat';
+    await f.historyInterceptor(prompt, 10000, () => assert.fail('window selection must not abort'), 'normal');
+    assert.deepEqual(prompt, f.chat.slice(-3));
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.publications.length, publications);
 });
 
 test('short history applies Summary replacements even with no removed rows or new frozen bytes', async t => {

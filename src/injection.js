@@ -1,9 +1,9 @@
 import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.16';
-import { INJECTION_MODES } from './defaults.js?v=1.27.19';
+import { INJECTION_MODES } from './defaults.js?v=1.27.20';
 import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.16';
 import { stripStructuredSections } from './summary-format.js?v=1.27.16';
 import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.16';
-import { historyPublicationLimit } from './history-handoff.js?v=1.27.19';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.20';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
 import { summaryStoryBlock } from './summary-source.js?v=1.27.18';
 import { aggregateVersion } from './memory-store.js?v=1.27.16';

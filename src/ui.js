@@ -1,17 +1,17 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.19';
+import { generationPrompt } from './generation-prompts.js?v=1.27.20';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.19';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.19';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.20';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.20';
 import { HistoryBackfill } from './history-backfill.js?v=1.27.16';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.16';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.17';
-import { parseFloorSummary } from './summarizer.js?v=1.27.19';
+import { parseFloorSummary } from './summarizer.js?v=1.27.20';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.16';
 
 import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.16';
@@ -194,13 +194,14 @@ export function memoryOverviewStats(store, assistants, settings) {
         injectionExplanation: shortHistory
             ? `CP／Long 作为冻结前缀。本次请求用楼层摘要接续尚未覆盖的旧剧情，保留最近 ${settings.recentRawFloors} 层 char 正文。此处只统计冻结部分。`
             : rolling
-            ? `最近${settings.recentRawFloors}层正文＋每层更新记忆：旧剧情用大总结／阶段总结，阶段外使用楼层摘要；缺少可核实记忆时暂留对应原文并提示。开场在首段记忆接管前保留。`
+            ? `最多发送最近 ${settings.recentRawFloors} 层 char 正文。旧剧情使用大总结／阶段总结和楼层摘要，覆盖有缺口时提示。开场在首段记忆接管前保留。`
             : [!checkpoints.length ? (usableSummaries.length < checkpointInterval
             ? `当前仅有 ${usableSummaries.length} 条可用摘要，尚未凑齐 ${checkpointInterval} 层阶段总结；重新注入不会自动生成。`
             : '已有摘要但阶段总结尚未生成，请在概览检查聚合进度。')
             : !blockCount && !textCount ? '已有阶段总结尚未进入冻结快照；可手动重新注入，或等待原有发布边界。' : '', missingLongExplanation].filter(Boolean).join(' '),
         estimatedTokens: estimateTokenCount(injectionValue),
-        recentBodyWindow: shortHistory || rolling ? `最近${settings.recentRawFloors}层 char（缺记忆时额外保留）` : '由 SillyTavern 上下文设置控制',
+        recentBodyWindow: rolling ? `最多最近 ${settings.recentRawFloors} 层 char`
+            : shortHistory ? `最近${settings.recentRawFloors}层 char（缺记忆时额外保留）` : '由 SillyTavern 上下文设置控制',
         storedSummaryRecords: Object.keys(safeStore.summaries).length,
         summaryDetails, aggregateDetails,
         issues,
@@ -510,7 +511,7 @@ export function configTemplate() {
                         <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择正文保留层数与历史记忆的发送方式。</p></div></div>
                         <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.ROLLING}">最近正文＋每层更新记忆（默认）</option><option value="${INJECTION_MODES.CHECKPOINT_SHORT_HISTORY}">Checkpoint 边界＋短正文（动态摘要尾部）</option><option value="${INJECTION_MODES.NONE}">不注入记忆（旧剧情不会通过记忆发送）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（保留旧策略）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">旧版近期模式（按阶段总结发送）</option></select></label>
                         <label class="cache-memory-field">保留最近几层 char 正文<input type="number" min="1" max="100" step="1" data-setting="recentRawFloors"></label>
-                        <small class="cache-memory-help">默认 3 层，适用于 Rolling 和 Checkpoint 短正文策略，按正常 char 回复计数。请停用整条清空 char 的深度正则。缺少可核实的记忆时保留原文，开场在首段记忆接管前保留。</small>
+                        <small class="cache-memory-help">默认 3 层，按正常 char 回复计数。Rolling 将其作为上限，记忆覆盖不足时提示。Checkpoint 短正文在覆盖不足时保留相关原文。开场在首段记忆接管前单独保留。</small>
                         <div class="cache-memory-note" data-boundary-injection><i class="fa-solid fa-shield-halved"></i><span>以下冻结规则仅用于旧阶段模式：严格模式不注入逐层小总结；Checkpoint / Long Memory 提交后更新一次，其余楼层逐字冻结。Long Memory 边界可替换其覆盖的阶段注入，原始记录仍保留。</span></div>
                         <p class="cache-memory-warning" data-cache-mode-warning></p>
                         <label class="cache-memory-toggle" data-boundary-injection><span><strong>旧阶段模式：正文与记忆自动衔接</strong><small>正常续聊至少保留最近5层原文，较早原文由已发送的阶段剧情接管</small></span><input type="checkbox" data-setting="historyHandoff"></label>
@@ -826,7 +827,7 @@ export class CacheMemoryUI {
             if (warning) warning.textContent = shortHistory
                 ? `当前：冻结 CP／Long 前缀＋动态摘要尾部。保留最近 ${settings.recentRawFloors} 层 char 正文。较早且未被前缀覆盖的楼层用已有摘要接续，无法核实则暂留原文。适用于 Chat Completion 的 chatHistory 标记。动态尾部会随楼层变化。`
                 : rolling
-                ? `当前：最近${settings.recentRawFloors}层 char 正文＋每层更新记忆。更早剧情使用 Long／CP，未成整段的部分使用楼层摘要；缺少可核实记忆时提示并暂留原文，避免丢剧情。此模式优先缩短正文，不保证缓存命中；预设、世界书和历史记忆仍占输入。`
+                ? `当前：最多发送最近 ${settings.recentRawFloors} 层 char 正文＋每层更新记忆。更早剧情由 Long／CP 和楼层摘要接续。旧正文即使缺少可核实记忆也会按上限省略，覆盖不足时显示提示。`
                 : settings.strictCacheMode
                 ? `近期小总结会每轮改变 Prompt，不适合严格缓存模式。当前实际策略：${effectiveInjectionMode(settings)}；近期模式会自动降级到 Checkpoint 边界。`
                 : '严格缓存模式已关闭：当前长期事实、KEEP 等动态内容可能改变 Prompt Prefix。';
