@@ -14,18 +14,18 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
 import { SummaryApiClient } from './src/api-client.js?v=1.27.17';
 import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.17';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.17';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.17';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.16';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.18';
+import { CacheDiagnostics, freezesInjection, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.18';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.18';
 import { chatInheritedThrough, getAssistantMessages } from './src/utils.js?v=1.27.16';
 import { MemoryStore } from './src/memory-store.js?v=1.27.16';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.16';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.17';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.18';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.18';
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.16';
 import { MemoryServerClient } from './src/memory-server.js?v=1.27.16';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.16';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.18';
 import { chatFileIdentity } from './src/chat-file.js?v=1.27.16';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.16';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.18';
 import { memoryContentDigest } from './src/memory-store.js?v=1.27.16';
 import { compareRequests } from './server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
 
@@ -222,7 +222,7 @@ function updateInjection(reason = 'manual edit', injectionFloor = promptHistoryF
     const migration = reason === 'chat changed' && result.migrated;
     const readOnly = !migration && ['chat changed', 'history metadata changed', 'store migration'].includes(reason);
     if (readOnly) persistence.noteReadOnlySnapshot(current);
-    if (result.changed && !readOnly) store.persist('injection snapshot', { notify: false });
+    if ((result.changed || result.coverageChanged) && !readOnly) store.persist('injection snapshot', { notify: false });
     const placement = injectionPublisher.publish(result.value, { forceRelocate: reason === 'manual reinject' });
     publishedMemoryValue = result.value;
     return { ...result, placement };
@@ -295,7 +295,7 @@ function cacheDebugSnapshot(data) {
     const chatId = memoryChatId();
     const expected = chatId && chatId === activeChatId && current.chatId === chatId ? publishedMemoryValue : null;
     const baseline = persistence.baselines.get(chatId);
-    const reference = expected && settings.strictCacheMode && settings.injectionMode !== 'rolling'
+    const reference = expected && freezesInjection(settings) && settings.injectionMode !== INJECTION_MODES.ROLLING
         && baseline?.authoritative && baseline.revision > 0 && baseline.snapshot?.injectionSnapshot?.value === expected
         ? { chatId, revision: baseline.revision } : undefined;
     let compatibility;
@@ -359,18 +359,28 @@ async function historyInterceptor(coreChat, _contextSize, abort, type) {
     if (runtimeController.signal.aborted || memoryChatId() !== chatId || memoryChatId() !== activeChatId || summarizer.contextRevision !== revision) {
         abort?.(true); return;
     }
-    // Rebuild the rolling projection only after generated records are saved.
-    if (settings.injectionMode === 'rolling') updateInjection('before generation', promptHistoryFloor(coreChat, chat, store.current().summaries));
-    if (settings.injectionMode !== 'rolling' && !settings.historyHandoff && !settings.lastUserOnly) return;
+    if (!settings?.enabled) return;
+    const rolling = settings.injectionMode === INJECTION_MODES.ROLLING;
+    const shortHistory = settings.injectionMode === INJECTION_MODES.CHECKPOINT_SHORT_HISTORY;
+    if (shortHistory && (getContext()?.mainApi !== 'openai' || !injectionPublisher.supportsHistoryPlacement(type))) {
+        ui?.setStatus('warning', '短正文策略需要 Chat Completion 和启用的 chatHistory 标记。本次沿用原文。');
+        return;
+    }
+    // Only Rolling rewrites the injection here. Checkpoint short history
+    // replaces old turns in the temporary request while its prefix stays frozen.
+    if (rolling) updateInjection('before generation', promptHistoryFloor(coreChat, chat, store.current().summaries));
+    if (!rolling && !shortHistory && !settings.historyHandoff && !settings.lastUserOnly) return;
     const current = store.current();
     if (current.chatId !== activeChatId) return;
     const result = filterCoveredHistory(coreChat, chat, current.injectionSnapshot, publishedMemoryValue, {
         type, summaries: current.summaries, historyHandoff: settings.historyHandoff, lastUserOnly: settings.lastUserOnly,
         injectionMode: settings.injectionMode, recentRawFloors: settings.recentRawFloors,
     });
-    if (result.removed) coreChat.splice(0, coreChat.length, ...result.messages);
+    if (result.removed || result.replacedWithSummaries) coreChat.splice(0, coreChat.length, ...result.messages);
     if (result.retainedOlderFloors?.length) ui?.setStatus('warning', `最近${settings.recentRawFloors}层模式：第${result.retainedOlderFloors.slice(0, 12).join('、')}层等共${result.retainedOlderFloors.length}层尚无可核实的已注入剧情，暂时保留原文；可补齐缺失摘要。`);
-    if (settings.cacheDebug) console.info(LOG_PREFIX, 'HISTORY HANDOFF', { removedMessages: result.removed, reason: result.reason });
+    if (settings.cacheDebug) console.info(LOG_PREFIX, 'HISTORY HANDOFF', {
+        removedMessages: result.removed, summaryTailFloors: result.replacedWithSummaries, reason: result.reason,
+    });
 }
 
 // Actual assistant text changes affect only the selected floor's Summary.

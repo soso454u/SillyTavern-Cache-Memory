@@ -103,7 +103,7 @@ export async function readSavedFrozenSnapshot(request, reference) {
     let signature;
     try { signature = JSON.parse(snapshot?.signature ?? 'null'); } catch { /* Legacy snapshot without verifiable freeze settings. */ }
     if (signature?.[0] !== true || signature?.[1] !== true
-        || !['checkpoint_boundary', 'long_boundary'].includes(snapshot?.mode ?? signature?.[2])
+        || !['checkpoint_boundary', 'checkpoint_short_history', 'long_boundary'].includes(snapshot?.mode ?? signature?.[2])
         || typeof snapshot?.value !== 'string' || !snapshot.value) return { reason: 'no-saved-frozen-snapshot' };
     return { value: snapshot.value, revision: record.revision };
 }

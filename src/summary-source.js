@@ -1,4 +1,5 @@
 import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.16';
+import { parseStructuredSummary } from './summary-format.js?v=1.27.16';
 
 export const SUMMARY_FILTER_MODES = Object.freeze({
     DEFAULT: 'default',
@@ -67,4 +68,14 @@ export function summaryUserSource(chat, entry) {
 export function formatSummaryUserSource(source) {
     // JSON keeps source text (including marker-like strings) inside data values.
     return source.messages.length ? `\n\n[CURRENT_USER_INPUT]\n${JSON.stringify(source.messages)}` : '';
+}
+
+export function summaryStoryBlock(row) {
+    const fields = { ...(parseStructuredSummary(row.raw) ?? {}), ...row };
+    const meaningful = text => text && !/^(?:无|none)[。.]?$/iu.test(String(text).trim());
+    if (!meaningful(fields.event)) return null;
+    const story = [['标题', fields.title], ['人物', fields.characters], ['时间', fields.storyTime], ['地点', fields.location],
+        ['事件', fields.event], ['原话', fields.quote]].filter(([, text]) => meaningful(text)).map(([label, text]) => `${label}：${text}`).join('\n');
+    return { id: `summary:${row.messageId ?? row.floor}`, type: 'summary-story', coversHistory: true,
+        startFloor: row.floor, endFloor: row.floor, text: `[SUMMARY_STORY_${row.floor}]\n${story}` };
 }

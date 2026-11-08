@@ -22,6 +22,7 @@ function fixture({ marker = true, managerAvailable = true } = {}) {
         getPromptById: identifier => identifier === CHAT_HISTORY_MARKER_IDENTIFIER && marker
             ? { identifier, marker: true }
             : null,
+        getPromptOrderForCharacter: () => [{ identifier: CHAT_HISTORY_MARKER_IDENTIFIER, enabled: marker }],
         preparePrompt: prompt => ({ ...prompt }),
     } : null;
     const publisher = new CacheMemoryInjectionPublisher({
@@ -34,6 +35,7 @@ function fixture({ marker = true, managerAvailable = true } = {}) {
 test('CACHE_MEMORY uses the official chatHistory marker identifier and stays unique before it', () => {
     const { publisher, manager, fallback } = fixture();
     const placement = publisher.publish('<CACHE_MEMORY>one</CACHE_MEMORY>');
+    assert.equal(publisher.supportsHistoryPlacement(), true);
     const prompts = manager.getPromptCollection().collection;
     assert.deepEqual(placement, { target: 'chatHistory', fallback: false });
     assert.equal(fallback.at(-1), '');
@@ -46,6 +48,7 @@ test('CACHE_MEMORY uses the official chatHistory marker identifier and stays uni
 test('missing marker keeps the old relative-main behavior, and missing Prompt Manager uses legacy fallback', () => {
     const withoutMarker = fixture({ marker: false });
     withoutMarker.publisher.publish('<CACHE_MEMORY>two</CACHE_MEMORY>');
+    assert.equal(withoutMarker.publisher.supportsHistoryPlacement(), false);
     const relative = withoutMarker.manager.getPromptCollection().collection.at(-1);
     assert.equal(relative.identifier, CACHE_MEMORY_MARKER_IDENTIFIER);
     assert.equal(relative.extension, true);

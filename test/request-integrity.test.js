@@ -153,6 +153,14 @@ test('server verifies against the saved authenticated revision and rejects only 
         assert.deepEqual(delegated.response.data.delegated.messages, changed.messages);
         assert.equal(delegated.response.data.delegated.cache_memory_adapter, undefined);
         assert.equal(delegated.preview.integrity.inbound.memory.state, 'changed');
+
+        const shortSnapshot = structuredClone(saved);
+        shortSnapshot.injectionSnapshot.mode = 'checkpoint_short_history';
+        shortSnapshot.injectionSnapshot.signature = '[true,true,"checkpoint_short_history",4,true,3]';
+        await routes.get('/memory/:chatId')({ user: account, params: { chatId },
+            body: { snapshot: shortSnapshot, baseRevision: 1 } }, response);
+        const short = await verify(body(), account, { ...metadata, snapshot: { chatId, revision: 2 } });
+        assert.equal(short.inbound.memory.state, 'match');
     }
 });
 

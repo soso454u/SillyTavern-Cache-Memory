@@ -17,12 +17,13 @@ const source = (await readFile(new URL('../index.js', import.meta.url), 'utf8'))
     .replace(/^import[\s\S]*?from ['"][^'"]+['"];\n/gm, '').replaceAll('export function ', 'function ');
 const modules = Object.assign({}, ...await Promise.all(['defaults', 'cache-control', 'utils', 'memory-store', 'summarizer', 'persistence', 'history-handoff', 'chat-file', 'chat-branch']
     .map(name => import(`../src/${name}.js`))));
-async function runtimeFixture(t, { blocked = false, invalid = false } = {}) {
+async function runtimeFixture(t, { blocked = false, invalid = false, shortHistory = false } = {}) {
     t.mock.method(console, 'info', () => {}); t.mock.method(console, 'warn', () => {});
     const chatId = JSON.stringify(['character', 'synthetic.png', 'synthetic']);
     const chat = Array.from({ length: 5 }, (_, i) => ({ mes: `运行时合成正文${i + 1}`, gen_started: `g${i}` }));
     chat[0].extra = { cache_memory_branch: { hasOpening: false } };
-    const settings = defaults.normalizeSettings({ autoSummarize: false, checkpointInterval: 5, longMemoryInterval: 5 });
+    const settings = defaults.normalizeSettings({ autoSummarize: false, checkpointInterval: 5, longMemoryInterval: 5,
+        ...(shortHistory ? { injectionMode: defaults.INJECTION_MODES.CHECKPOINT_SHORT_HISTORY } : {}) });
     let remote = createEmptyStore(chatId);
     for (const entry of getAssistantMessages(chat)) if (entry.floor !== 2) remote.summaries[entry.messageId] = {
         floor: entry.floor, messageIndex: entry.messageIndex, messageId: entry.messageId, sourceFingerprint: entry.fingerprint,
@@ -30,7 +31,7 @@ async function runtimeFixture(t, { blocked = false, invalid = false } = {}) {
     };
     cache.refreshSnapshot(remote, settings, 'manual reinject');
     const metadata = { cache_memory: clone(remote) }, calls = [], publications = [], statuses = [], handlers = new Map(), hold = gate();
-    const context = { chatId: 'synthetic', characterId: 0, characters: [{ name: 'A', avatar: 'synthetic.png' }], chatMetadata: metadata, chat,
+    const context = { chatId: 'synthetic', mainApi: 'openai', characterId: 0, characters: [{ name: 'A', avatar: 'synthetic.png' }], chatMetadata: metadata, chat,
         getRequestHeaders: () => ({ 'Content-Type': 'application/json' }), saveMetadata: async () => { remote = clone(metadata.cache_memory); } };
     const window = Object.assign(new EventTarget(), { localStorage: storage(), sessionStorage: storage(), navigator: {}, setTimeout, clearTimeout,
         fetch: async () => new Response(JSON.stringify([{ chat_metadata: { cache_memory: clone(remote) } }, ...chat])) });
@@ -43,7 +44,7 @@ async function runtimeFixture(t, { blocked = false, invalid = false } = {}) {
     }
     class EmptyClient { abortAll() {} install() {} probe() { return Promise.resolve(); } uninstall() {} }
     class Server extends EmptyClient { available = false; }
-    class Publisher { publish(value) { publications.push(value); return {}; } dispose() {} }
+    class Publisher { publish(value) { publications.push(value); return {}; } supportsHistoryPlacement() { return true; } dispose() {} }
     class Client extends EmptyClient {
         async complete(request) {
             const kind = request.userContent.startsWith('[PREVIOUS_CONTEXT]') ? 'CP' : request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? 'Long' : 'Summary';
@@ -101,6 +102,23 @@ test('persistent validation errors retain uncovered original text and leave the 
     assert.ok(prompt.some(row => row.mes === '运行时合成正文2'));
     assert.ok(f.statuses.some(([status, text]) => status === 'warning' && text.includes('下次注入')));
     assert.equal(f.remote.checkpoints.length, 0); assert.equal(f.remote.longMemories.length, 0);
+});
+
+test('short history applies Summary replacements even with no removed rows or new frozen bytes', async t => {
+    const f = await runtimeFixture(t, { shortHistory: true }), prompt = clone(f.chat), original = clone(f.chat);
+    await f.historyInterceptor(prompt, 10000, () => assert.fail('short history must not abort'), 'normal');
+    assert.deepEqual(f.calls, ['Summary', 'CP', 'Long']);
+    assert.equal(prompt.length, 5);
+    assert.deepEqual(prompt.slice(0, 2).map(row => [row.extra.type, row.mes.split('\n')[0]]), [
+        ['narrator', '[SUMMARY_STORY_1]'], ['narrator', '[SUMMARY_STORY_2]'],
+    ]);
+    assert.deepEqual(prompt.slice(2), original.slice(2));
+    assert.equal(f.publications.at(-1), '');
+    assert.deepEqual(f.chat, original);
+    const frozen = f.store.current().injectionSnapshot;
+    await f.historyInterceptor(clone(f.chat), 10000, () => assert.fail('short history must not abort'), 'normal');
+    assert.equal(f.store.current().injectionSnapshot, frozen);
+    assert.equal(f.calls.length, 3);
 });
 
 test('quiet background generations skip injection completion entirely', async t => {

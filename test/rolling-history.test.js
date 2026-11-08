@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { INJECTION_MODES, normalizeSettings, normalizeLoadedSettings } from '../src/defaults.js';
-import { createEmptyStore, MemoryStore } from '../src/memory-store.js';
+import { aggregateVersion, createEmptyStore, MemoryStore, summaryVersion } from '../src/memory-store.js';
 import { refreshSnapshot, effectiveInjectionMode, shouldRefreshInjection } from '../src/cache-control.js';
 import { filterCoveredHistory, promptHistoryFloor } from '../src/history-handoff.js';
 import { getAssistantMessages } from '../src/utils.js';
 import { getOpeningSource } from '../src/opening-source.js';
 import { MemorySummarizer } from '../src/summarizer.js';
+import { summaryUserSource } from '../src/summary-source.js';
 import { memoryOverviewStats, configTemplate } from '../src/ui.js';
 
 function addTurn(chat, store, floor) {
@@ -36,6 +37,97 @@ function send(f, core = structuredClone(f.chat), type = 'normal') {
 }
 const storyBlocks = store => store.injectionSnapshot.blocks.filter(block => block.coversHistory);
 const rawFloors = result => result.messages.filter(row => /^正文\d+：/.test(row.mes)).map(row => Number(row.mes.match(/^正文(\d+)/)[1]));
+
+const shortMode = INJECTION_MODES.CHECKPOINT_SHORT_HISTORY;
+function prepareShortSources(f) {
+    for (const entry of getAssistantMessages(f.chat)) {
+        const summary = f.store.summaries[entry.messageId];
+        if (summary) summary.userSourceFingerprint = summaryUserSource(f.chat, entry).fingerprint;
+    }
+    for (const cp of f.store.checkpoints) {
+        cp.sourceVersions = Object.fromEntries(Object.values(f.store.summaries).filter(row => row.floor >= cp.startFloor && row.floor <= cp.endFloor)
+            .map(row => [row.messageId, summaryVersion(row)]));
+    }
+    for (const long of f.store.longMemories) {
+        long.checkpointVersions = Object.fromEntries(f.store.checkpoints.filter(cp => cp.startFloor >= long.startFloor && cp.endFloor <= long.endFloor)
+            .map(cp => [cp.id, aggregateVersion(cp)]));
+    }
+}
+const tailFloors = result => result.messages.flatMap(row => row.mes.match(/^\[SUMMARY_STORY_(\d+)\]/)?.[1] ?? []).map(Number);
+function sendShort(f, core = structuredClone(f.chat), type = 'normal', published = f.store.injectionSnapshot.value) {
+    return filterCoveredHistory(core, f.chat, f.store.injectionSnapshot, published,
+        { summaries: f.store.summaries, type, injectionMode: shortMode, recentRawFloors: f.settings.recentRawFloors });
+}
+
+test('checkpoint short history holds the CP/Long prefix at 5, 6, 9, 10, 11, 120 and 121 while the tail advances', () => {
+    const f = fixture(0, { injectionMode: shortMode, strictCacheMode: false });
+    f.chat.pop();
+    refreshSnapshot(f.store, f.settings, 'chat changed');
+    const expected = new Map([
+        [5, [0, [1, 2], [3, 4, 5]]], [6, [0, [1, 2, 3], [4, 5, 6]]], [9, [0, [1, 2, 3, 4, 5, 6], [7, 8, 9]]],
+        [10, [5, [6, 7], [8, 9, 10]]], [11, [5, [6, 7, 8], [9, 10, 11]]],
+        [120, [115, [116, 117], [118, 119, 120]]], [121, [115, [116, 117, 118], [119, 120, 121]]],
+    ]);
+    for (let floor = 1; floor <= 121; floor++) {
+        addTurn(f.chat, f.store, floor);
+        const reason = floor % 50 === 0 ? 'new long memory' : floor % 5 === 0 ? 'new checkpoint' : 'new summary';
+        const previous = f.store.injectionSnapshot;
+        if (floor % 5 === 0 || expected.has(floor)) prepareShortSources(f);
+        refreshSnapshot(f.store, f.settings, reason);
+        if (floor % 5 !== 0) assert.equal(f.store.injectionSnapshot, previous);
+        if (!expected.has(floor)) continue;
+        const [coverage, tail, raw] = expected.get(floor);
+        const pending = { name: '旅人', is_user: true, mes: '本轮输入', send_date: 'pending' };
+        f.chat.push(pending);
+        const original = structuredClone({ chat: f.chat, store: f.store });
+        const result = sendShort(f), blocks = storyBlocks(f.store);
+        assert.deepEqual(rawFloors(result), raw, `floor ${floor}`);
+        assert.deepEqual(tailFloors(result), tail, `floor ${floor}`);
+        assert.equal(Math.max(0, ...blocks.map(block => block.endFloor)), coverage);
+        assert.equal(result.messages.filter(row => row.is_user).length, 4);
+        assert.equal(result.messages.at(-1).mes, '本轮输入');
+        assert.equal(result.messages.some(row => row.mes === '初始背景'), floor < 10);
+        assert.doesNotMatch(f.store.injectionSnapshot.value, /\[SUMMARY_STORY_/);
+        assert.deepEqual(result.retainedOlderFloors, []);
+        for (let n = 1; n <= floor; n++) assert.equal(Number(raw.includes(n)) + Number(tail.includes(n))
+            + blocks.filter(block => block.startFloor <= n && block.endFloor >= n).length, 1);
+        if (floor >= 120) assert.deepEqual(blocks.filter(block => block.type === 'long-story').map(block => block.endFloor), [50, 100]);
+        assert.deepEqual({ chat: f.chat, store: f.store }, original);
+        f.chat.pop();
+    }
+});
+
+test('checkpoint short history keeps missing, failed or unverified floors and protects regeneration, opening and latest user', () => {
+    const f = fixture(11, { injectionMode: shortMode });
+    prepareShortSources(f);
+    refreshSnapshot(f.store, f.settings, 'settings changed');
+    const frozen = structuredClone(f.store.injectionSnapshot);
+    for (const type of ['swipe', 'regenerate', 'continue', 'normal']) {
+        const core = structuredClone(f.chat);
+        if (['swipe', 'regenerate'].includes(type)) core.splice(core.findIndex(row => row.send_date === 'a11'), 1);
+        core.push({ is_system: true, mes: '系统' }, { name: '守卫', mes: '工具', extra: { tool_invocations: [] } });
+        const result = sendShort(f, core, type);
+        assert.deepEqual(rawFloors(result), ['swipe', 'regenerate'].includes(type) ? [8, 9, 10] : [9, 10, 11]);
+        assert.equal(result.messages.filter(row => row.is_system || row.extra?.tool_invocations).length, 2);
+        assert.ok(result.messages.some(row => row.mes === '本轮输入'));
+    }
+    const entry = floor => getAssistantMessages(f.chat).find(row => row.floor === floor);
+    delete f.store.summaries[entry(2).messageId];
+    f.store.summaries[entry(6).messageId].status = 'failed';
+    f.store.summaries[entry(7).messageId].sourceContentFingerprint = 'wrong body';
+    f.store.summaries[entry(3).messageId].event = '更新后的旧楼层事实';
+    f.chat[0].mes = '开场白已更换';
+    const result = sendShort(f);
+    assert.deepEqual(rawFloors(result), [2, 6, 7, 9, 10, 11]);
+    assert.deepEqual(tailFloors(result), [3, 8]);
+    assert.deepEqual(result.retainedOlderFloors, [2, 6, 7]);
+    assert.equal(result.messages[0].mes, '开场白已更换');
+    assert.deepEqual(f.store.injectionSnapshot, frozen);
+    assert.equal(sendShort(f, structuredClone(f.chat), 'normal', 'different prefix').removed, 0);
+    f.settings.recentRawFloors = 1;
+    assert.deepEqual(rawFloors(sendShort(f)), [2, 6, 7, 11]);
+    assert.deepEqual(f.store.injectionSnapshot, frozen);
+});
 
 test('default rolling publication has exactly one story source per floor for 105 turns, three raw floors and CP/Long replacements', () => {
     const f = fixture(0); f.chat.pop();

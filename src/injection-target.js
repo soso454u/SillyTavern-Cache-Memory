@@ -36,6 +36,17 @@ export class CacheMemoryInjectionPublisher {
         return { target: 'legacy-relative-prompt', fallback: true };
     }
 
+    supportsHistoryPlacement(type = 'normal') {
+        const manager = this.getPromptManager?.();
+        if (!manager || manager !== this.manager || manager.getPromptCollection !== this.wrapper) return false;
+        const marker = manager.getPromptById?.(CHAT_HISTORY_MARKER_IDENTIFIER);
+        if (marker?.identifier !== CHAT_HISTORY_MARKER_IDENTIFIER || marker.marker !== true) return false;
+        const order = manager.getPromptOrderForCharacter?.(manager.activeCharacter);
+        return Boolean(Array.isArray(order) && order.some(entry => entry?.identifier === CHAT_HISTORY_MARKER_IDENTIFIER && entry.enabled)
+            && (typeof manager.shouldTrigger !== 'function' || manager.shouldTrigger(marker, type))
+            && !manager.isPromptDisabledForActiveCharacter?.(CACHE_MEMORY_MARKER_IDENTIFIER));
+    }
+
     ensureHook(forceRelocate = false) {
         const manager = this.getPromptManager?.();
         const usable = manager && typeof manager.getPromptCollection === 'function' && typeof manager.preparePrompt === 'function';

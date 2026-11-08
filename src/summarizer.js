@@ -1,11 +1,11 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.16';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.17';
-import { generationPrompt } from './generation-prompts.js?v=1.27.16';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.18';
+import { generationPrompt } from './generation-prompts.js?v=1.27.18';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.16';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource } from './summary-source.js?v=1.27.16';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource } from './summary-source.js?v=1.27.18';
 import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.16';
 import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.16';
 import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, stateId } from './active-state.js?v=1.27.16';

@@ -2,10 +2,10 @@ import { normalizeCharacterTables } from './character-tables.js?v=1.27.16';
 import { normalizeThemeMode } from './ui-theme.js?v=1.27.16';
 import { ENSEMBLE_PROMPTS } from './ensemble-prompts.js?v=1.27.16';
 export { ENSEMBLE_PROMPTS };
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.16';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.17';
 
-export const PLUGIN_VERSION = '1.27.17';
+export const PLUGIN_VERSION = '1.27.18';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -66,6 +66,7 @@ export const INJECTION_MODES = Object.freeze({
     NONE: 'none',
     ROLLING: 'rolling',
     CHECKPOINT_BOUNDARY: 'checkpoint_boundary',
+    CHECKPOINT_SHORT_HISTORY: 'checkpoint_short_history',
     LONG_BOUNDARY: 'long_boundary',
     LONG: 'long',
     LONG_CHECKPOINT: 'long_checkpoint',
