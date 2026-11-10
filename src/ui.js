@@ -1,17 +1,17 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.21';
+import { generationPrompt } from './generation-prompts.js?v=1.27.22';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.21';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.21';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.22';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.22';
 import { HistoryBackfill } from './history-backfill.js?v=1.27.16';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.16';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.17';
-import { parseFloorSummary } from './summarizer.js?v=1.27.21';
+import { parseFloorSummary } from './summarizer.js?v=1.27.22';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.16';
 
 import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.16';
@@ -464,13 +464,13 @@ export function configTemplate() {
                             <label>API 密钥<input type="password" data-api-key autocomplete="off" placeholder="未配置"></label>
                             <label>摘要模型<input type="text" data-setting="model" placeholder="可手动填写模型名称"><select data-model-list data-model-select aria-label="从完整模型列表选择"><option value="">获取列表后可在此选择模型</option></select></label>
                             <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
-                            <label class="cache-memory-toggle"><span><strong>手动限制输出 token</strong><small>默认由模型接口决定输出上限</small></span><input type="checkbox" data-setting="limitOutputTokens"></label>
-                            <label data-manual-token-limit>小总结 max tokens<input type="number" min="32" data-setting="summaryMaxTokens"></label>
-                            <label data-manual-token-limit>Checkpoint max tokens<input type="number" min="32" data-setting="checkpointMaxTokens"></label>
-                            <label data-manual-token-limit>Long Memory max tokens<input type="number" min="32" data-setting="longMemoryMaxTokens"></label>
-                            <label data-manual-token-limit>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
+                            <label>输出上限<select data-setting="limitOutputTokens"><option value="false">由模型接口决定（默认）</option><option value="true">手动设置</option></select></label>
                             <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
                             <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
+                            <label data-manual-token-limit hidden>小总结 max tokens<input type="number" min="32" data-setting="summaryMaxTokens"></label>
+                            <label data-manual-token-limit hidden>Checkpoint max tokens<input type="number" min="32" data-setting="checkpointMaxTokens"></label>
+                            <label data-manual-token-limit hidden>Long Memory max tokens<input type="number" min="32" data-setting="longMemoryMaxTokens"></label>
+                            <label data-manual-token-limit hidden>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
                         </div>
                         <div class="cache-memory-actions">
                             <button type="button" class="menu_button cache-memory-primary" data-list-models><i class="fa-solid fa-arrows-rotate"></i> 刷新模型列表</button>
@@ -840,6 +840,7 @@ export class CacheMemoryUI {
                 if (element === this.pendingSettingInput) continue;
                 const key = element.dataset.setting;
                 if (element.type === 'checkbox') element.checked = Boolean(settings[key]);
+                else if (key === 'limitOutputTokens') element.value = String(settings.limitOutputTokens === true);
                 else element.value = settings[key] ?? '';
                 if (['strictCacheMode', 'historyHandoff'].includes(key)) element.disabled = rolling || shortHistory;
                 if (key === 'recentRawFloors') element.disabled = !rolling && !shortHistory;
@@ -1086,7 +1087,9 @@ export class CacheMemoryUI {
             if (!element) return;
             const key = element.dataset.setting;
             const numeric = ['recentRawFloors', 'checkpointInterval', 'longMemoryInterval', 'summaryMaxLength', 'checkpointMaxLength', 'longMemoryMaxLength', 'recentSummaryCount', 'recentCheckpointCount', 'temperature', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens'];
-            const value = element.type === 'checkbox' ? element.checked : numeric.includes(key) ? Number(element.value) : element.value;
+            const value = key === 'limitOutputTokens' ? element.value === 'true'
+                : element.type === 'checkbox' ? element.checked
+                : numeric.includes(key) ? Number(element.value) : element.value;
             const previousApiBaseUrl = this.getSettings().apiBaseUrl;
             if (key === 'apiBaseUrl') {
                 if (previousApiBaseUrl.trim()) void this.saveInputApiKey(root);
