@@ -473,7 +473,7 @@ test('model listing uses the SillyTavern proxy first without a browser cross-ori
 
 test('normal generation switches to max_completion_tokens when max_tokens is explicitly rejected', async () => {
     const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
-    const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x' });
+    const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x', limitOutputTokens: true });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
     const originalFetch = globalThis.fetch;
     const originalParent = globalThis.parent;

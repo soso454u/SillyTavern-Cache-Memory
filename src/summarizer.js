@@ -1,7 +1,8 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
+import { isOutputTruncated } from './api-client.js?v=1.27.21';
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.16';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.20';
-import { generationPrompt } from './generation-prompts.js?v=1.27.20';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.21';
+import { generationPrompt } from './generation-prompts.js?v=1.27.21';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.16';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
@@ -182,6 +183,9 @@ export class MemorySummarizer {
         const result = await retryOperation(async () => {
             const response = await this.apiClient.complete(request);
             assertActive();
+            if (isOutputTruncated(response.finishReason)) {
+                throw Object.assign(new Error('模型接口报告输出达到 token 上限，已停止处理截断的记忆结果'), { code: 'OUTPUT_TRUNCATED' });
+            }
             return validate(response);
         }, { signal: request.signal, assertActive, delay: retryDelay,
             onRetry: info => {
@@ -392,7 +396,6 @@ export class MemorySummarizer {
             };
             responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);
             const parsed = await this.completeWithRetry(request, assertContext, responseKey, { retryDelay, onRetry, validate: result => {
-                if (result.finishReason === 'length') throw new Error('模型输出达到 token 上限，请提高最大输出长度后重试');
                 const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: evidenceSource, prompt: settings.prompts.summary });
                 return parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
             } });
@@ -851,7 +854,6 @@ export class MemorySummarizer {
             const request = { systemPrompt, userContent, maxTokens: settings.checkpointMaxTokens, signal };
             responseKey = JSON.stringify(['checkpoint', chatId, revision, expectedTargets, request]);
             const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { validate: result => {
-                if (result.finishReason === 'length') throw new Error('Checkpoint 输出达到 token 上限，请提高最大输出长度后重试');
                 return prepareMemoryResponse(result.content, 'Checkpoint', { source: userContent, prompt: settings.prompts.checkpoint });
             } });
             assertSources();
@@ -988,7 +990,6 @@ export class MemorySummarizer {
             const request = { systemPrompt, userContent, maxTokens: settings.longMemoryMaxTokens, signal };
             responseKey = JSON.stringify(['long', chatId, revision, expectedTargets, request]);
             const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { validate: result => {
-                if (result.finishReason === 'length') throw new Error('长期事实输出达到 token 上限，请提高最大输出长度后重试');
                 return prepareMemoryResponse(result.content, 'Long Memory', { source: userContent, prompt: settings.prompts.longMemory });
             } });
             assertSources();

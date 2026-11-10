@@ -2,7 +2,9 @@
 
 面向长篇 RP 的剧情记忆扩展。默认只发送最近 **3 层正常 char 正文＋每层更新的历史记忆**；更早剧情由楼层摘要、阶段总结（CP）和长期总结（Long）接管。历史原始记忆和聊天正文保留。
 
-当前版本 **v1.27.20**。
+当前版本 **v1.27.21**。
+
+v1.27.21 默认由模型接口决定独立记忆请求的输出上限。Summary、Checkpoint、Long Memory 和连接测试均采用此设置。需要固定额度时，可在「模型接口」为当前配置开启「手动限制输出 token」。旧配置中的额度数值会保留。
 
 v1.27.20 将「最近正文＋每层更新记忆」中的 char 楼层数作为请求上限。旧楼层由已注入记忆接续，覆盖未核实时提示楼层和原因。开场仍按首段覆盖规则处理。
 
@@ -387,7 +389,7 @@ Summary、Checkpoint 与 Long Memory 统一通过 SillyTavern 同源后端的 `P
 - 批次结束或取消后，对已成功补齐的摘要统一检查一次 Checkpoint／Long Memory。切换聊天或卸载时取消批次，迟到的成功与失败响应都不会写入新聊天。
 - 补齐只写插件元数据，聊天正文和消息顺序保持不变。严格缓存模式下，批量补齐或强制替换单层摘要不刷新主 Prompt；新的 Checkpoint／Long Memory 边界成功提交时才更新注入。强制补齐不会自动重写已经冻结的阶段记忆。
 
-默认增量 Summary／Checkpoint／Long Memory 提示词已更新，保留事实因果、人物认知差、稳定 KEEP／fact ID 和逐字证据规则。旧默认模板会迁移；自定义模板保留，也可在提示词页点击“恢复默认”。三类任务的默认输出上限分别为 1024／3072／4096 tokens，连接测试使用现有的小总结 token 上限，每次点击仅发送一次请求；思考输出耗尽上限但未生成正文时提示连接成功及截断警告，不自动重试；默认软长度为 350／1000／2200 字。已有自定义值保留。模型请求不再设置插件主动超时，旧 timeoutMs 配置会忽略；手动停止与聊天切换取消仍生效，上游或 ST 代理断开时正常报错。
+默认增量 Summary／Checkpoint／Long Memory 提示词保留事实因果、人物认知差、稳定 KEEP／fact ID 和逐字证据规则。旧默认模板会迁移。自定义模板保留，也可在提示词页点击“恢复默认”。开启手动限制后，三类任务的预设额度分别为 1024／3072／4096 tokens，连接测试使用小总结额度。每次连接测试只发送一次请求。接口报告输出截断时，生成会提示并保留已保存的记忆。提示词的默认软长度为 350／1000／2200 字。手动停止与聊天切换取消继续生效，上游或 ST 代理断开时正常报错。
 
 ## 兼容基线
 
@@ -441,8 +443,8 @@ API 缓存适配器是可选的服务端插件，不包含在浏览器扩展自�
 - models：相对路径 `POST /api/backends/chat-completions/status`；
 - completions：相对路径 `POST /api/backends/chat-completions/generate`；
 - 每次实时复用最上层可访问的 ST 页面 `getContext().getRequestHeaders()`（兼容页面 getter），使用该窗口的 fetch 和同源 cookie；不缓存 headers/token，不伪造 CSRF，不发送仅有 Content-Type 的代理请求；
-- 请求体使用 `chat_completion_source: custom`、保留原路径的 `custom_url`、JSON 格式的 `custom_include_headers`（ST 的 YAML 解析器兼容 JSON），以及 model/messages/temperature/输出上限；`response_format`、thinking 等兼容字段同时通过 `custom_include_body` 交给 ST 服务端合并；测试连接也调用实际生成的 `complete()`；
-- 输出上限参数可选择 `max_tokens` 或 `max_completion_tokens`。收到明确的 max_tokens 参数拒绝时，统一生成函数会改用后者再试一次，不移除输出限制。
+- 请求体包含 `chat_completion_source: custom`、保留原路径的 `custom_url`、JSON 格式的 `custom_include_headers`，以及模型、消息和温度。`response_format`、thinking 等兼容字段通过 `custom_include_body` 交给 ST 服务端合并。
+- 开启手动限制后可选 `max_tokens` 或 `max_completion_tokens`。生成收到明确的 `max_tokens` 参数拒绝时，会用相同额度改发 `max_completion_tokens`。关闭手动限制时由接口决定输出预算。
 
 例如火山 base `https://ark.cn-beijing.volces.com/api/coding/v3` 的目标为 `/api/coding/v3/models` 与 `/api/coding/v3/chat/completions`，不会追加 `/v1`。独立记忆请求不会修改 ST 主聊天的接口配置、模型或历史。
 

@@ -1,4 +1,4 @@
-export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'tokenLimitParameter', 'generationTransport']);
+export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'limitOutputTokens', 'tokenLimitParameter', 'generationTransport']);
 
 export const MODEL_LIST_WARNING = '无法获取模型列表，请手动填写模型名称。';
 const ST_MODELS_PROXY_PATH = '/api/backends/chat-completions/status';
@@ -28,6 +28,10 @@ function chunkParts(payload) {
             ?? choice.reasoning_content ?? choice.reasoning ?? payload?.reasoning_content ?? payload?.reasoning ?? payload?.thinking),
         finishReason: choice.finish_reason,
     };
+}
+
+export function isOutputTruncated(finishReason) {
+    return /^(?:length|max_tokens|max_completion_tokens)$/i.test(String(finishReason ?? '').trim());
 }
 
 function responseContentType(response) {
@@ -359,7 +363,7 @@ export class SummaryApiClient {
         index.activeId = id;
         this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
         this.activeProfileId = id;
-        return this.profileSettings(saved);
+        return { ...this.profileSettings(saved), limitOutputTokens: saved.limitOutputTokens === true };
     }
 
     addProfile(name) {
@@ -367,7 +371,7 @@ export class SummaryApiClient {
         const id = globalThis.crypto?.randomUUID?.() ?? `profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const label = String(name ?? '').trim();
         if (!label) throw new Error('请填写配置名称');
-        this.storage.setItem(`${this.storageKey}:profile:${id}`, JSON.stringify({ ...this.profileSettings(), apiBaseUrl: '', model: '', key: '' }));
+        this.storage.setItem(`${this.storageKey}:profile:${id}`, JSON.stringify({ ...this.profileSettings(), apiBaseUrl: '', model: '', key: '', limitOutputTokens: false }));
         index.profiles.push({ id, name: label });
         this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
         return id;
@@ -528,8 +532,12 @@ export class SummaryApiClient {
         for (const key of CUSTOM_BODY_KEYS) {
             if (compatibility[key] !== undefined) payload[key] = compatibility[key];
         }
-        const tokenParameter = settings.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens';
-        const explicitTokenLimit = request.max_completion_tokens ?? request.max_tokens ?? maxTokens;
+        delete payload.max_tokens;
+        delete payload.max_completion_tokens;
+        if (settings.limitOutputTokens === true) {
+            const tokenParameter = settings.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens';
+            payload[tokenParameter] = Number(request.max_completion_tokens ?? request.max_tokens ?? maxTokens ?? settings.maxTokens);
+        }
         return {
             ...payload,
             model: settings.model,
@@ -538,7 +546,6 @@ export class SummaryApiClient {
                 { role: 'user', content: String(userContent ?? '') },
             ],
             temperature: Number(request.temperature ?? settings.temperature),
-            [tokenParameter]: Number(explicitTokenLimit ?? settings.maxTokens),
             thinking: { type: settings.thinkingMode ?? 'disabled' },
         };
     }
@@ -721,8 +728,8 @@ export class SummaryApiClient {
         const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text
             ?? data?.content?.[0]?.text ?? data?.response ?? '';
         if (!String(content).trim()) {
-            const truncated = /^(?:length|max_tokens|max_completion_tokens)$/i.test(data?.choices?.[0]?.finish_reason ?? '');
-            const error = new Error(truncated ? '模型输出达到 token 上限且没有可用正文，请提高最大输出长度后重试' : 'API 返回成功，但没有可用文本');
+            const truncated = isOutputTruncated(data?.choices?.[0]?.finish_reason);
+            const error = new Error(truncated ? '模型接口报告输出达到 token 上限，尚未返回可用正文' : 'API 返回成功，但没有可用文本');
             error.code = truncated ? 'OUTPUT_TRUNCATED' : 'EMPTY_RESPONSE';
             error.category = 'invalid_response';
             error.status = response.status;
@@ -760,13 +767,13 @@ export class SummaryApiClient {
         const parts = chunkParts(data);
         const content = contentText(parts.content || data?.content || data?.response).trim();
         const reasoning = parts.reasoning.trim();
-        const truncated = /^(?:length|max_tokens|max_completion_tokens)$/i.test(parts.finishReason ?? '');
+        const truncated = isOutputTruncated(parts.finishReason);
         let outcome = 'success';
         let warning = '';
         if (truncated) {
             outcome = reasoning && !content ? 'reasoning_truncated' : 'output_truncated';
             warning = reasoning && !content
-                ? '连接成功，但思考输出达到 token 上限，尚未生成正文。可调高现有小总结 max tokens 后手动重测。'
+                ? '连接成功，接口报告思考输出达到 token 上限，尚未返回正文。'
                 : '连接成功，但输出达到 token 上限，正文可能不完整。';
         } else if (reasoning && !content) {
             outcome = 'reasoning_only';

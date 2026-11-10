@@ -112,6 +112,7 @@ test('thinking truncation, thinking-only output, complete text and empty output 
 test('each diagnostic uses existing token/Thinking/temperature settings and never retries rejected parameters or transport', async t => {
     const { client, root, requests, settings } = fixture(t);
     settings.temperature = 0.7;
+    settings.limitOutputTokens = true;
     settings.tokenLimitParameter = 'max_completion_tokens';
     for (const stream of [true, false]) await client.test({ stream });
     assert.equal(requests.length, 2);

@@ -33,11 +33,12 @@ test('named profiles migrate legacy credentials and all saved URL connections wi
 test('same URL profiles retain independent keys, model and every API parameter across reload', async () => {
     const f = fixture();
     const first = f.client.listProfiles().activeId;
-    f.update({ thinkingMode: 'enabled', generationTransport: 'stream', summaryMaxTokens: 8192 });
+    f.update({ thinkingMode: 'enabled', generationTransport: 'stream', summaryMaxTokens: 8192, limitOutputTokens: true });
     f.client.saveProfileSettings();
     const second = f.client.addProfile('备用');
     f.update(f.client.selectProfile(second));
     assert.equal(f.client.hasApiKey(), false);
+    assert.equal(f.settings.limitOutputTokens, false);
     f.update({ apiBaseUrl: 'https://a.example/v1', model: 'b-model', temperature: 0.8, thinkingMode: 'disabled', generationTransport: 'non-stream', summaryMaxTokens: 1024, checkpointMaxTokens: 2345, longMemoryMaxTokens: 4567, tokenLimitParameter: 'max_completion_tokens' });
     await f.client.saveApiKey('synthetic-b-key');
     f.client.saveProfileSettings();
@@ -49,6 +50,7 @@ test('same URL profiles retain independent keys, model and every API parameter a
     assert.equal(f.settings.temperature, 0.3);
     assert.equal(f.settings.thinkingMode, 'enabled');
     assert.equal(f.settings.summaryMaxTokens, 8192);
+    assert.equal(f.settings.limitOutputTokens, true);
     assert.notEqual(f.client.modelListIdentity(), secondIdentity);
     const reload = new SummaryApiClient({ getSettings: () => f.settings, storage: f.storage, storageKey: 'secret' });
     f.update(reload.selectProfile(second));
@@ -65,6 +67,7 @@ test('same URL profiles retain independent keys, model and every API parameter a
 
 test('switching profiles during a pending request preserves connection and explicit compatibility retry', async () => {
     const f = fixture();
+    f.update({ limitOutputTokens: true });
     f.client.listProfiles();
     const second = f.client.addProfile('第二个');
     const attempts = [];

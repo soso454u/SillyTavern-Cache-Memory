@@ -1,5 +1,5 @@
 import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.27.16';
-import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.20';
+import { withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.21';
 import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.16';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES

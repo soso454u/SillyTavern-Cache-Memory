@@ -43,7 +43,8 @@ test('connection tests preserve the same Thinking and temperature parameters as 
     for (const stream of [true, false]) await f.client.test({ stream });
     await f.client.complete({ systemPrompt: 'ordinary', userContent: 'synthetic', maxTokens: 32 });
     assert.ok(f.requests.every(({ body }) => body.temperature === 1 && body.thinking.type === 'enabled'));
-    assert.ok(f.requests.slice(0, 2).every(({ body }) => body.max_tokens === f.settings.summaryMaxTokens && !body.messages[0].content.includes('ENTITY_OVERFLOW')));
+    assert.ok(f.requests.slice(0, 2).every(({ body }) => body.max_tokens === undefined && body.max_completion_tokens === undefined
+        && !body.messages[0].content.includes('ENTITY_OVERFLOW')));
     assert.equal(f.settings.temperature, 1);
     f.settings.temperature = 0.65;
     f.settings.thinkingMode = 'disabled';

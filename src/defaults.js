@@ -5,7 +5,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.17';
 
-export const PLUGIN_VERSION = '1.27.20';
+export const PLUGIN_VERSION = '1.27.21';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1839,6 +1839,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     checkpointMaxTokens: 3072,
     longMemoryMaxTokens: 4096,
     maxTokens: 4096,
+    limitOutputTokens: false,
     tokenLimitParameter: 'max_tokens',
     generationTransport: GENERATION_TRANSPORTS.AUTO,
     thinkingMode: THINKING_MODES.DISABLED,
@@ -1925,6 +1926,7 @@ export function normalizeSettings(saved = {}) {
         recentSummaryCount: Math.round(number(source.recentSummaryCount, 10, 0, 200)),
         recentCheckpointCount: Math.round(number(source.recentCheckpointCount, 2, 0, 50)),
         temperature: number(source.temperature, 0.2, 0, 2),
+        limitOutputTokens: source.limitOutputTokens === true,
         tokenLimitParameter: source.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens',
         generationTransport,
         thinkingMode,

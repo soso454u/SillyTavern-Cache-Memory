@@ -54,7 +54,7 @@ test('Ark models, test and a real floor summarizer share ST transport, fresh CSR
         assert.equal(body.custom_url, settings.apiBaseUrl);
         assert.equal(body.chat_completion_source, 'custom');
         assert.equal(JSON.parse(body.custom_include_headers).Authorization, 'Bearer private-ark-key');
-        if (index) { assert.equal(body.stream, true); assert.equal(body.model, settings.model); assert.ok(body.messages.length); assert.ok(body.max_tokens > 0); }
+        if (index) { assert.equal(body.stream, true); assert.equal(body.model, settings.model); assert.ok(body.messages.length); }
     });
     assert.doesNotMatch(JSON.stringify(logs), /private-ark-key|csrf-1|csrf-2|csrf-3|正文/);
 });
@@ -91,7 +91,14 @@ test('manual summary, automatic summary, checkpoint and long memory all use the 
         '/api/backends/chat-completions/generate',
         '/api/backends/chat-completions/generate',
     ]);
-    assert.ok(requests.every(({ options }) => JSON.parse(options.body).custom_url === settings.apiBaseUrl));
+    for (const { options } of requests) {
+        const body = JSON.parse(options.body);
+        assert.equal(body.custom_url, settings.apiBaseUrl);
+        for (const key of ['max_tokens', 'max_completion_tokens']) {
+            assert.equal(Object.hasOwn(body, key), false);
+            assert.equal(Object.hasOwn(JSON.parse(body.custom_include_body ?? '{}'), key), false);
+        }
+    }
 });
 
 test('proxy HTTP200 error is a failure, upstream status is not invented, all secret values are redacted', async t => {
@@ -159,6 +166,7 @@ test('hot unload cancellation remains active while reading the response body and
 
 test('a selected max_completion_tokens budget is forwarded by both actual generation and connection test', async t => {
     const { client, settings, requests } = fixture(t);
+    settings.limitOutputTokens = true;
     settings.tokenLimitParameter = 'max_completion_tokens';
     await client.complete({ systemPrompt: 'system', userContent: 'minimal summary', maxTokens: 64 });
     await client.test();
@@ -335,7 +343,7 @@ test('Summary, Checkpoint and Long Memory all consume SSE through the ST backend
         && JSON.parse(JSON.parse(item.options.body).custom_include_body).thinking.type === 'disabled'));
 });
 
-test('streaming and non-streaming connection tests use the configured Summary budget and expose timing plus final text', async t => {
+test('streaming and non-streaming connection tests omit the default cap and expose timing plus final text', async t => {
     const { client, root, requests } = fixture(t);
     root.fetch = async (url, options) => {
         requests.push({ url, options });
@@ -352,10 +360,30 @@ test('streaming and non-streaming connection tests use the configured Summary bu
     assert.equal(typeof streamed.ttfcMs, 'number');
     assert.equal(nonStreamed.ttfcMs, null);
     const bodies = requests.map(item => JSON.parse(item.options.body));
-    assert.ok(bodies.every(body => body.max_tokens === 1024 && body.temperature === 0.2
+    assert.ok(bodies.every(body => body.max_tokens === undefined && body.max_completion_tokens === undefined && body.temperature === 0.2
         && body.thinking.type === 'disabled'
         && JSON.parse(body.custom_include_body).thinking.type === 'disabled'
         && body.messages[0].content === 'Reply with exactly OK.' && body.messages[1].content === 'OK'));
+});
+
+test('Gemini-style truncation of partial text does not save memory or retry the same request', async t => {
+    const { client, root, settings, requests } = fixture(t);
+    settings.model = 'gemini-3.1-pro-preview';
+    root.fetch = async (url, options) => {
+        requests.push({ url, options });
+        return sseResponse(['data: {"choices":[{"delta":{"content":"[SUMMARY]\\n[Event]\\nPartial"},"finish_reason":"MAX_TOKENS"}]}\n\ndata: [DONE]\n\n']);
+    };
+    const chat = [{ mes: 'Synthetic story', gen_started: 'partial' }];
+    const metadata = {};
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'chat-a', saveMetadata() {} });
+    const summarizer = new MemorySummarizer({ store, apiClient: client, getSettings: () => settings, getChat: () => chat,
+        retryDelay: async () => assert.fail('truncation must not retry') });
+    await assert.rejects(summarizer.summarizeEntry(getAssistantMessages(chat)[0]), { code: 'OUTPUT_TRUNCATED' });
+    assert.equal(requests.length, 1);
+    const body = JSON.parse(requests[0].options.body);
+    assert.equal(Object.hasOwn(body, 'max_tokens'), false);
+    assert.equal(Object.hasOwn(body, 'max_completion_tokens'), false);
+    assert.ok(Object.values(store.current().summaries).every(record => record.status !== 'frozen'));
 });
 
 for (const truncated of [false, true]) test(`empty successful API output retries unless the output budget was exhausted (truncated=${truncated})`, async t => {
