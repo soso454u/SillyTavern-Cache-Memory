@@ -108,6 +108,41 @@ test('non-strict injection deduplicates exact Long Facts, KEEP and checkpoint fa
     assert.equal(value.split(fact).length - 1, 1); assert.match(value, /医师知道/); assert.deepEqual(store, before);
 });
 
+test('exact projections remove duplicate facts while a quoted denial cannot hide a confirmed milestone', () => {
+    const store = createEmptyStore('continuity-dedup');
+    const milestone = { kind: 'state', entity: '医师', key: '徽章·已交付', value: '已交付给守卫',
+        category: 'milestone', status: 'active', evidence: '医师亲手把徽章交给守卫' };
+    const duplicate = '医师 · 徽章·已交付：已交付给守卫';
+    store.summaries.m1 = summary(1, [milestone]);
+    store.checkpoints.push(cp(1, `[Stage Story]\n- 守卫否认“${duplicate}”，医师质疑他的说法。\n- 邻居亲眼见到交接。`));
+    store.keepRegistry['KEEP-0001'] = { text: duplicate, sourceFloor: 1, status: 'active' };
+    const settings = normalizeSettings({ strictCacheMode: false, injectionMode: 'checkpoint_boundary' });
+    const output = buildInjection(store, settings);
+    assert.match(output, /守卫否认/);
+    assert.match(output, /邻居亲眼见到交接/);
+    assert.ok(output.includes(`[CONFIRMED_HISTORY | 已确认经历，缺记不等于未发生]\n- ${duplicate}`));
+    assert.doesNotMatch(output, /\[KEEP\]/);
+    store.checkpoints[0].content += `\n- ${duplicate}`;
+    const deduped = buildInjection(store, settings);
+    assert.doesNotMatch(deduped, /\[CONFIRMED_HISTORY|\[KEEP\]/);
+});
+
+test('staffing projections remove only the exact role and preserve compound history and separate teams', () => {
+    const store = createEmptyStore('staffing-dedup');
+    const staff = { kind: 'state', entity: '桥工家', key: '护理员·实际到岗', value: '4人全部到岗',
+        category: 'staffing', status: 'active', evidence: '四个护理员全部到岗' };
+    store.summaries.m1 = summary(1, [{ ...staff, value: '2人已到岗' }]);
+    store.summaries.m3 = summary(3, [staff]);
+    const independent = '桥工家 · 钟点工·实际到岗：2人已到岗';
+    const cause = '桥工家 · 护理员·实际到岗：2人已到岗，先接管夜班以免照护中断';
+    store.checkpoints.push(cp(1, `[Story So Far]\n- ${cause}\n[Current State]\n- 桥工家 · 护理员·实际到岗：2人已到岗\n- ${independent}`));
+    store.keepRegistry['KEEP-0001'] = { text: '守卫不知道夜班调整', sourceFloor: 1, status: 'active' };
+    const settings = normalizeSettings({ strictCacheMode: false, injectionMode: 'checkpoint_boundary' });
+    const output = buildInjection(store, settings);
+    for (const text of [independent, cause, '守卫不知道夜班调整', '护理员·实际到岗：4人全部到岗']) assert.ok(output.includes(text));
+    assert.doesNotMatch(output, /- 桥工家 · 护理员·实际到岗：2人已到岗$/mu);
+});
+
 test('identical Long/CP blocks and short exact facts are sent once while all originals stay saved', () => {
     const store = createEmptyStore('a'), fact = '甲持有戒指';
     const first = long(1, [{ action: 'add', id: 'fact-ring', text: fact }]);

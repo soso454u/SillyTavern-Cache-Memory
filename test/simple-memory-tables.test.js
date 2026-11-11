@@ -46,7 +46,8 @@ test('actual Summary prompt includes the configured total budget, key actions an
     const prompt = replacePromptVariables(generationPrompt(memoryGenerationSettings(settings), 'summary'), { maxLength: 350 });
     assert.match(prompt, /350 字/); assert.match(prompt, /15%/); assert.match(prompt, /关键动作/); assert.match(prompt, /关键台词自然放进 Event/);
     assert.match(prompt, /承诺、拒绝、威胁、秘密揭露、关键否认/);
-    assert.doesNotMatch(prompt, /\[Changes\]|\[CURRENT_TRACKED_STATE\]/);
+    assert.match(prompt, /\[Changes\][\s\S]*milestone[\s\S]*staffing/);
+    assert.doesNotMatch(prompt, /【角色表格/);
     assert.doesNotMatch(DEFAULT_PROMPTS.summary, /\[State\]|\[Open\]|\[Quote\]/);
 });
 
@@ -58,11 +59,15 @@ test('old official long templates migrate, user custom story templates survive b
     assert.match(generationPrompt(advanced, 'summary'), /普通摘要总字数预算/);
 });
 
-test('all four tables can be independently selected; choosing none disables delta extraction', () => {
+test('all four tables can be independently selected; choosing none leaves only continuity extraction', () => {
     assert.deepEqual(normalizeCharacterTables({ characters: false, knowledge: true }), { characters: false, relationships: false, knowledge: true, tasks: false });
     assert.equal(tableForRecord(relation), 'relationships'); assert.equal(tableForRecord(knowledge), 'knowledge'); assert.equal(tableForRecord(task), 'tasks');
     const empty = memoryGenerationSettings({ ...settings, characterTables: Object.fromEntries(Object.keys(allTables).map(key => [key, false])) }, 'advanced');
-    assert.equal(empty.activeStateEnabled, false); assert.doesNotMatch(generationPrompt(empty, 'summary'), /\[Changes\]/);
+    assert.equal(empty.activeStateEnabled, false);
+    assert.match(generationPrompt(empty, 'summary'), /\[Changes\][\s\S]*milestone/);
+    assert.doesNotMatch(generationPrompt(empty, 'summary'), /【角色表格/);
+    const disabled = memoryGenerationSettings({ ...settings, activeStateEnabled: false }, 'advanced');
+    assert.doesNotMatch(generationPrompt(disabled, 'summary'), /\[Changes\]/);
 });
 
 test('ordinary Summary makes one existing request, keeps actions and a key quote, and stores no optional table delta', async () => {

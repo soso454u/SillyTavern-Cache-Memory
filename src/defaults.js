@@ -5,7 +5,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.17';
 
-export const PLUGIN_VERSION = '1.27.22';
+export const PLUGIN_VERSION = '1.27.23';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1800,6 +1800,7 @@ export function memoryGenerationSettings(settings, mode = 'normal') {
     // Keep former ensemble settings saved for compatibility, but never let
     // enabling tables replace story prompts or silently expand story budgets.
     return { ...settings, memoryStrategy: 'incremental', summaryMode, characterTables, activeStateEnabled,
+        continuityEnabled: settings.activeStateEnabled !== false,
         prompts: { ...DEFAULT_PROMPTS, ...settings.prompts } };
 }
 

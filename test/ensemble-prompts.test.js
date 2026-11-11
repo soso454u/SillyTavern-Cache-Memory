@@ -20,8 +20,9 @@ test('plain Summary has a total budget and optional table extraction appears onl
     const settings = normalizeSettings({ globalPromptMode: 'blank' });
     const normal = memoryGenerationSettings(settings, 'normal'), group = memoryGenerationSettings(settings, 'advanced');
     assert.match(generationPrompt(normal, 'summary'), /普通摘要总字数预算/);
-    assert.doesNotMatch(generationPrompt(normal, 'summary'), /\[Changes\]/);
-    assert.match(generationPrompt(group, 'summary'), /\[Changes\]/);
+    assert.match(generationPrompt(normal, 'summary'), /\[Changes\][\s\S]*milestone/);
+    assert.doesNotMatch(generationPrompt(normal, 'summary'), /【角色表格/);
+    assert.match(generationPrompt(group, 'summary'), /【角色表格/);
     assert.equal(generationPrompt(group, 'checkpoint'), generationPrompt(normal, 'checkpoint'));
 });
 

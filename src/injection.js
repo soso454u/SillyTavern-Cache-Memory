@@ -1,12 +1,12 @@
 import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.16';
-import { INJECTION_MODES } from './defaults.js?v=1.27.22';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.16';
+import { INJECTION_MODES } from './defaults.js?v=1.27.23';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.23';
 import { stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { hasLastingResult, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.16';
-import { historyPublicationLimit } from './history-handoff.js?v=1.27.20';
+import { hasLastingResult, isContinuityChange, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.23';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.23';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
 import { summaryStoryBlock } from './summary-source.js?v=1.27.18';
-import { aggregateVersion } from './memory-store.js?v=1.27.16';
+import { aggregateVersion } from './memory-store.js?v=1.27.23';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
@@ -118,7 +118,7 @@ export function relevantSnapshotRows(store, throughFloor) {
     const important = /(?:伤|疾病|毒|昏迷|限制|禁令|身份|关系|认知|秘密|调查|证据|能力|技能|等级|积分|点数|余额|股份|股权|债务|契约|承诺|禁忌|任务|计划|线索|物品归属|监控|药效|影响|危险|异能)/u;
     const trivialDone = /(?:行李箱密码|便签位置|便利贴位置|临时站位|当前姿势|普通衣着|已成功开箱|已收拾完毕)/u;
     return projectActiveState(store, throughFloor).filter(item => {
-        if (item.needsReview || !isTrackedActive(item) || item.category === 'history') return false;
+        if (item.needsReview || !isTrackedActive(item) || item.category === 'history' || isContinuityChange(item)) return false;
         if (item.kind === 'thread') return !/^(?:普通消息|随手问候|等待回复)$/u.test(item.key);
         if (trivialDone.test(item.key + item.value) && item.lifetime === 'temporary') return false;
         return durable.test(item.category ?? '') || important.test(item.key + ' ' + item.value);
@@ -211,9 +211,24 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
     const seen = new Set(printed.split('\n').map(canonical));
     const uncovered = text => {
         const key = canonical(text);
-        if (!key || seen.has(key) || canonical(printed).includes(key)) return false;
+        if (!key || seen.has(key)) return false;
         seen.add(key); return true;
     };
+    const tracked = projectActiveState(store, through);
+    const continuity = tracked.filter(row => isContinuityChange(row) && !row.needsReview && isTrackedActive(row));
+    for (const [historical, id, heading] of [
+        [true, 'continuity:history', '[CONFIRMED_HISTORY | 已确认经历，缺记不等于未发生]'],
+        [false, 'continuity:current', '[CURRENT_CONTINUITY | 截至此处的实际人员配置与物品归属]'],
+    ]) {
+        const lines = continuity.filter(row => (row.category === 'milestone') === historical)
+            .map(row => `${row.entity} · ${row.key}：${row.value}`).filter(line => {
+                // An identical value in dated history does not say it is still current.
+                const newText = uncovered(line);
+                return !historical || newText;
+            });
+        if (lines.length) blocks.push({ id, type: 'continuity', startFloor: through, endFloor: through,
+            text: heading + '\n' + lines.map(line => '- ' + line).join('\n') });
+    }
     const projection = projectLongFacts(store, through, { includeTracked: 'existing' });
     const facts = projection.facts.filter(row => row.status === 'active'
         || row.status === 'superseded' && /(?:永久|不可逆|终身|失去.{0,8}(?:右臂|左臂|双腿|视力)|摧毁|重大损失|重大债务)/u.test(row.text))
@@ -222,7 +237,7 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         for (const text of checkpointHistoricalFacts(store, through, printed)) if (uncovered(text)) facts.push('- ' + text);
         // Preserve lasting settlement results once when separating legacy CP
         // history from its current fields; ordinary finished actions stay out.
-        for (const row of projectActiveState(store, through).filter(row => !row.needsReview && !isTrackedActive(row) && hasLastingResult(row))) {
+        for (const row of tracked.filter(row => !row.needsReview && !isTrackedActive(row) && hasLastingResult(row))) {
             const text = `${row.entity} · ${row.key}：${row.value}`;
             if (uncovered(text)) facts.push(`- ${text}（已结束，长期结果）`);
         }

@@ -8,6 +8,7 @@ import { createEmptyStore, MemoryStore } from '../src/memory-store.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { getAssistantMessages } from '../src/utils.js';
 import { readSection } from '../src/continuity.js';
+import { refreshSnapshot } from '../src/cache-control.js';
 import { SUMMARY_SECTION_NAMES } from '../src/summary-format.js';
 
 const row = (key, value, extra = {}) => ({ kind: 'state', entity: '修桥工乙', key, value, category: 'knowledge', status: 'active',
@@ -107,6 +108,62 @@ function fixture(mode = 'normal', count = 5) {
         apiClient: { complete: async request => { requests.push(request); return { content: '[CHECKPOINT]\n[Story So Far]\n修桥工乙守桥的起因\n[Open Threads]\n无' }; } } });
     return { chat, metadata, requests, store, summarizer };
 }
+
+for (const mode of ['normal', 'ensemble']) test(`confirmed milestones and actual staffing survive the Summary → CP → Long projection (${mode})`, async () => {
+    const f = fixture(mode);
+    const coat = row('纪念外套·已试穿', '已试穿纪念外套', { category: 'milestone', evidence: '修桥工乙当场试穿了纪念外套' });
+    const staff = row('护理员·实际到岗', '2人已到岗', { entity: '桥工家', category: 'staffing', evidence: '两个护理员已经到岗' });
+    const staff4 = { ...staff, value: '4人全部到岗', evidence: '四个护理员与三个住家阿姨均到岗' };
+    const helpers = { ...staff4, key: '住家阿姨·实际到岗', value: '3人全部到岗' };
+    const denial = { ...coat, value: '从未穿过外套', evidence: '修桥工乙说自己从未穿过外套' };
+    const plan = { ...staff, value: '6人到岗', evidence: '计划下周请六个护理员上岗' };
+    const flashback = { ...staff, evidence: '原先只有两个护理员到岗' };
+    const later = { ...staff4, value: '3人在岗', evidence: '一位护理员已离职，目前剩三人在岗' };
+    const owner = row('归属', '修桥工乙', { entity: '纪念外套', category: 'ownership', evidence: '纪念外套正式送给修桥工乙' });
+    const returned = { ...owner, value: '医生丙', evidence: '双方明确把纪念外套归还给医生丙' };
+    const proposed = [[coat, staff, owner], [denial, plan], [staff4, helpers], [flashback], [later, returned]];
+    for (const [i, changes] of proposed.entries()) f.chat[i].mes = [...new Set(changes.map(change => change.evidence))].join('。') || '医生带着药箱经过桥头。';
+    const entries = getAssistantMessages(f.chat);
+    const memory = f.store.current();
+    const settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
+    const original = structuredClone(memory.injectionSnapshot);
+    f.summarizer.apiClient.complete = async request => {
+        f.requests.push(request);
+        const changes = proposed[f.requests.length - 1];
+        return { content: `[SUMMARY]\n[Title]\n桥头\n[Event]\n本层有独立剧情。\n[Changes]\n${JSON.stringify(changes)}` };
+    };
+    for (const entry of entries) await f.summarizer.summarizeEntry(entry, { deferAggregates: true });
+    assert.equal(f.requests.length, 5);
+    assert.match(f.requests[0].systemPrompt, /milestone[\s\S]*staffing/);
+    assert.match(f.requests[1].userContent, /CURRENT_TRACKED_STATE[\s\S]*已试穿纪念外套/);
+    assert.deepEqual(memory.injectionSnapshot, original);
+    const atFour = projectActiveState(memory, 4);
+    assert.equal(atFour.find(change => change.key === coat.key).sourceFloor, 1);
+    assert.equal(atFour.find(change => change.key === staff.key).value, staff4.value);
+    assert.equal(atFour.find(change => change.key === helpers.key).value, helpers.value);
+    assert.equal(projectActiveState(memory).find(change => change.key === staff.key).value, later.value);
+
+    const compactStory = '[Stage Story]\n- 医生带着药箱经过桥头，帮修桥工止血。';
+    f.summarizer.apiClient.complete = async request => {
+        f.requests.push(request);
+        return { content: request.userContent.includes('[CHECKPOINT_STATE]')
+            ? '[STORY_ARC]\n- 医生在桥头帮修桥工止血。\n[LONG_MEMORY]\n无'
+            : '[CHECKPOINT]\n' + compactStory };
+    };
+    const cp = await f.summarizer.generateCheckpoint(1, 5);
+    assert.match(f.requests.at(-1).userContent, /CURRENT_TRACKED_STATE[\s\S]*已试穿纪念外套/);
+    const first = refreshSnapshot(memory, settings, 'new checkpoint').value;
+    await f.summarizer.generateLongMemory([cp]);
+    const value = refreshSnapshot(memory, settings, 'new long memory').value;
+    for (const rendered of [first, value]) {
+        assert.match(rendered, /已试穿纪念外套/);
+        assert.match(rendered, /护理员·实际到岗：3人在岗/);
+        assert.match(rendered, /住家阿姨·实际到岗：3人全部到岗/);
+        assert.match(rendered, /纪念外套 · 归属：医生丙/);
+        assert.doesNotMatch(rendered, /从未穿过外套|2人已到岗|4人全部到岗|6人到岗/);
+    }
+    assert.equal(f.requests.length, 7);
+});
 
 for (const mode of ['normal', 'ensemble']) test(`real Summary pipeline selects normal deltas only in its own mode and keeps one existing request (${mode})`, async () => {
     const f = fixture(mode), entry = getAssistantMessages(f.chat)[0];

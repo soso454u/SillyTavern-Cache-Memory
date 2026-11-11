@@ -3,6 +3,7 @@ import { fnv1a } from './utils.js?v=1.27.16';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
+export const isContinuityChange = item => item.kind === 'state' && ['milestone', 'staffing', 'ownership'].includes(item.category);
 const clean = value => String(value ?? '').trim();
 const validSummary = item => item && item.frozen !== false && item.status !== 'failed';
 
@@ -19,6 +20,21 @@ const subjectKey = item => item.kind === 'thread' ? threadKey(item.key)
     : item.category === 'attribute' ? attributeKey(item.key) : clean(item.key);
 const sameSubject = (a, b) => a.kind === b.kind && a.entity === b.entity
     && subjectKey(a) === subjectKey({ ...b, category: b.category || a.category });
+
+function confirmedContinuityChange(change) {
+    if (change.status !== 'active') return false;
+    if (change.category === 'milestone') {
+        // Completed facts are positive claims. A new plan, refusal or denial
+        // cannot become a historical milestone, even with a verbatim quote.
+        const unrealized = /(?:从未|未曾|尚未|还没|没(?:有)?(?:穿|试|用|交|还|收|买|送)过|准备(?:要)?|打算|计划|\b(?:never|not yet|plans? to|intends? to)\b)/iu;
+        return !unrealized.test(change.value) && !unrealized.test(change.evidence);
+    }
+    // Reject common prospective phrasing even when the model marks it confirmed.
+    const prospective = /(?:计划|暂定|拟(?:聘|请|招|安排)|想(?:请|招|找)|打算|准备|预计|将于|将到岗|约定.{0,12}上岗|(?:明天|下周|下月).{0,12}(?:到岗|上岗)|\b(?:planned|plans? to|expected to|will|scheduled to)\b)/iu;
+    const retrospective = /(?:曾经|原先|起初|原本|\b(?:formerly|used to have)\b)/iu;
+    return !prospective.test(change.value) && !prospective.test(change.evidence)
+        && !retrospective.test(change.value) && !retrospective.test(change.evidence);
+}
 
 export function stateId(item) {
     return `${item.kind === 'thread' ? 'thread' : 'state'}-${fnv1a(JSON.stringify([clean(item.entity), subjectKey(item)]))}`;
@@ -50,10 +66,13 @@ export function parseStateChanges(text, source, known = [], { advanced = false }
                 || !/(?:任务.{0,12}(?:已完成|完成了|完成[，。！!；;]|结算完成)|已完成|已结算|结算完成|已领取|领取了)/u.test(evidence)
                 || /(?:未|没有|尚未|还没)(?:完成|结算|领取)/u.test(evidence)) return [];
         }
-        return [{ id, kind: row.kind, entity, key, value, evidence, status,
+        const change = { id, kind: row.kind, entity, key, value, evidence, status,
             actors: Array.isArray(row.actors) ? row.actors.map(clean).filter(Boolean) : [entity],
             category: clean(row.category || byId.get(id)?.category), acquisition: ['pending', 'obtained'].includes(row.acquisition) ? row.acquisition : byId.get(id)?.acquisition ?? (row.category === 'reward' ? 'pending' : 'obtained'),
-            condition: clean(row.condition), lifetime: ['temporary', 'permanent'].includes(row.lifetime) ? row.lifetime : byId.get(id)?.lifetime ?? 'permanent' }];
+            condition: clean(row.condition), lifetime: ['temporary', 'permanent'].includes(row.lifetime) ? row.lifetime : byId.get(id)?.lifetime ?? 'permanent' };
+        if (!isContinuityChange(change)) return [change];
+        if (!confirmedContinuityChange(change)) return [];
+        return [{ ...change, lifetime: 'permanent' }];
     });
 }
 
@@ -110,7 +129,7 @@ function checkpointResolutions(checkpoint, summaries, known) {
     const source = summaries.filter(row => validSummary(row) && row.floor <= checkpoint.endFloor).map(summaryResultText).join('\n');
     return parseStateChanges(text, source, known, { advanced: true }).filter(row => {
         const old = known.find(item => item.id === row.id);
-        return old && !old.manual && summaries.some(summary => validSummary(summary) && summary.floor >= old.sourceFloor
+        return old && !old.manual && !isContinuityChange(old) && !isContinuityChange(row) && summaries.some(summary => validSummary(summary) && summary.floor >= old.sourceFloor
             && summary.floor <= checkpoint.endFloor && summaryResultText(summary).includes(row.evidence)) && (row.status === 'expired' || row.kind === 'thread' && !isTrackedActive(row)
             || row.status === 'active');
     });
@@ -120,6 +139,8 @@ export function projectActiveState(store, throughFloor = Infinity) {
     const records = new Map();
     const replay = (change, source) => {
         if (!change?.id || !['thread', 'state'].includes(change.kind)) return;
+        if (isContinuityChange(change) && !change.manual
+            && (!change.evidence || !confirmedContinuityChange(change))) return;
         if (change.kind === 'state' && !change.manual && change.status === 'active' && change.lifetime === 'temporary'
             && change.category === 'history' && /^(?:已成功开箱|已实际抵达|已抵达|已完成|已兑现|已执行完毕)/u.test(change.value)
             && !unresolved.test(change.value)) change = { ...change, status: 'expired', derived: true };
@@ -134,6 +155,7 @@ export function projectActiveState(store, throughFloor = Infinity) {
         if (source.aggregate && old && !old.needsReview && (old.manual || !isTrackedActive(old))) return;
         if (!change.manual && old && !old.needsReview) {
             if (source.needsReview) return;
+            if (old.category === 'milestone' || (isContinuityChange(old) && change.category !== old.category)) return;
             if (old.kind === 'thread' && (old.status === 'completed' && change.status !== 'completed'
                 || !isTrackedActive(old) && isTrackedActive(change))) return;
         }
@@ -236,6 +258,7 @@ export function isAtomicTrackedEntry(text, item) {
     if (/^已结束\s/u.test(body)) return false;
     const value = body.match(/[：:】]([^：:】]+)$/u)?.[1]?.trim();
     if (!value) return false;
+    if (item.category === 'staffing') return /^(?:\d+|[零〇一二两三四五六七八九十百]+)(?:人|名|个)?(?:已|均|全部|均已|全部已)?(?:到岗|在岗)?$/u.test(value);
     return item.kind === 'thread' ? !/[，,；;。\n]/u.test(value)
         : /^(?:Lv\.?\s*\d+|\d+(?:\.\d+)?(?:点|级|枚|个|金币|银币|%|％)?)$/i.test(value);
 }
@@ -243,7 +266,8 @@ export function isAtomicTrackedEntry(text, item) {
 export function reconcileTrackedCheckpoint(content, store, throughFloor, startFloor = 1) {
     let result = String(content);
     const rows = projectActiveState(store, throughFloor).filter(item => !item.needsReview);
-    const sectionFor = item => item.kind === 'thread' ? 'Open Threads' : item.category === 'knowledge' ? 'Secrets & Knowledge'
+    const sectionFor = item => isContinuityChange(item) ? null
+        : item.kind === 'thread' ? 'Open Threads' : item.category === 'knowledge' ? 'Secrets & Knowledge'
         : item.category === 'identity' ? 'Characters' : item.category === 'history' ? 'Story So Far' : 'Current State';
     // Reconcile only current-state sections. Historical causes and relationship
     // events in Story So Far must survive a later change of value.
