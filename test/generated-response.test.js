@@ -121,13 +121,13 @@ test('ordinary custom prompts survive while advanced requests use independent fu
     assert.match(f.requests.at(-1).systemPrompt, /角色表格/);
     assert.doesNotMatch(f.requests.at(-1).userContent, /EXISTING_LONG_FACTS/);
     assert.match(f.requests.at(-1).systemPrompt, /普通摘要总字数预算/);
-    assert.equal(f.requests.at(-1).maxTokens, f.settings.summaryMaxTokens + 384);
+    assert.equal(f.requests.at(-1).maxTokens, f.settings.summaryMaxTokens);
     assert.equal(f.settings.prompts.summary, '用户自定义：仍用 [SUMMARY] / [Event] 结构');
     f.summarizer.apiClient.complete = async request => { f.requests.push(request); return { content: request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? long : cp }; };
     await f.summarizer.generateCheckpoint(1, 1);
     await f.summarizer.generateLongMemory(f.store.current().checkpoints);
     assert.equal(f.requests.length, 4);
-    for (const [index, length, tokens] of [[2, 1000, 3072], [3, 2200, 4096]]) {
+    for (const [index, length, tokens] of [[2, 1000, null], [3, 2200, null]]) {
         assert.match(f.requests[index].systemPrompt, new RegExp(`目标约?\\s*${length}`));
         assert.equal(f.requests[index].maxTokens, tokens);
         assert.doesNotMatch(f.requests[index].systemPrompt, /{{maxLength}}/);

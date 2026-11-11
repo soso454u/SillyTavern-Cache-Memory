@@ -17,7 +17,7 @@ test('official narrative templates upgrade by stage while custom prompts and bud
         for (const mode of ['normal', 'advanced']) {
             const actual = memoryGenerationSettings(config, mode);
             assert.deepEqual([actual.summaryMaxLength, actual.checkpointMaxLength, actual.longMemoryMaxLength], [350, 1000, 2200]);
-            assert.deepEqual([actual.summaryMaxTokens, actual.checkpointMaxTokens, actual.longMemoryMaxTokens], [1024, 3072, 4096]);
+            assert.deepEqual([actual.summaryMaxTokens, actual.checkpointMaxTokens, actual.longMemoryMaxTokens], [null, null, null]);
         }
         for (const stage of ['summary', 'checkpoint', 'longMemory']) {
             const custom = previous[stage] + '\n我的专属要求';
@@ -79,7 +79,7 @@ test('a rich single-floor narrative is saved and projected whole with both quote
     const summarizer = new MemorySummarizer({ store, getSettings: () => config, getChat: () => chat,
         apiClient: { complete: async request => { requests.push(request); return { content: response }; } } });
     await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
-    assert.equal(requests.length, 1); assert.equal(requests[0].maxTokens, 1024);
+    assert.equal(requests.length, 1); assert.equal(requests[0].maxTokens, null);
     assert.match(requests[0].systemPrompt, /一段连贯叙述/);
     const data = store.current(), record = Object.values(data.summaries)[0];
     assert.equal(record.event, event); assert.equal(record.quote, '');

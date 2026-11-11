@@ -358,8 +358,8 @@ test('default prompts adopt user-provided formats, new budgets apply and custom 
     const settings = normalizeSettings();
     assert.equal(PLUGIN_VERSION, JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url))).version);
     assert.equal(Object.hasOwn(settings, 'timeoutMs'), false);
-    assert.equal(settings.maxTokens, 4096);
-    assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [1024, 3072, 4096]);
+    assert.equal(settings.maxTokens, null);
+    assert.deepEqual([settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens], [null, null, null]);
     assert.deepEqual([settings.summaryMaxLength, settings.checkpointMaxLength, settings.longMemoryMaxLength], [350, 1000, 2200]);
     assert.match(DEFAULT_PROMPTS.summary, /\[Event\]/);
     assert.doesNotMatch(DEFAULT_PROMPTS.summary, /\[State\]|\[Open\]/);

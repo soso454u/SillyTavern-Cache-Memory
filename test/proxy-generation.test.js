@@ -167,6 +167,7 @@ test('hot unload cancellation remains active while reading the response body and
 test('a selected max_completion_tokens budget is forwarded by both actual generation and connection test', async t => {
     const { client, settings, requests } = fixture(t);
     settings.limitOutputTokens = true;
+    settings.summaryMaxTokens = 128;
     settings.tokenLimitParameter = 'max_completion_tokens';
     await client.complete({ systemPrompt: 'system', userContent: 'minimal summary', maxTokens: 64 });
     await client.test();
@@ -174,6 +175,19 @@ test('a selected max_completion_tokens budget is forwarded by both actual genera
     assert.equal(bodies[0].max_completion_tokens, 64);
     assert.equal(bodies[1].max_completion_tokens, settings.summaryMaxTokens);
     assert.ok(bodies.every(body => !Object.hasOwn(body, 'max_tokens')));
+});
+
+test('manual blank output fields omit both parameters and do not inherit the Long budget', async t => {
+    const { client, settings, requests } = fixture(t);
+    settings.limitOutputTokens = true;
+    settings.longMemoryMaxTokens = settings.maxTokens = 48000;
+    await client.complete({ userContent: 'Summary', maxTokens: settings.summaryMaxTokens });
+    await client.complete({ userContent: 'Checkpoint', maxTokens: settings.checkpointMaxTokens });
+    await client.test();
+    await client.complete({ userContent: 'Long Memory', maxTokens: settings.longMemoryMaxTokens });
+    const bodies = requests.map(item => JSON.parse(item.options.body));
+    assert.ok(bodies.slice(0, 3).every(body => !Object.hasOwn(body, 'max_tokens') && !Object.hasOwn(body, 'max_completion_tokens')));
+    assert.equal(bodies[3].max_tokens, 48000);
 });
 
 test('OpenAI-compatible response_format and the configured thinking mode reach the ST transport', async t => {

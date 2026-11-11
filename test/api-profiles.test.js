@@ -39,6 +39,7 @@ test('same URL profiles retain independent keys, model and every API parameter a
     f.update(f.client.selectProfile(second));
     assert.equal(f.client.hasApiKey(), false);
     assert.equal(f.settings.limitOutputTokens, false);
+    assert.equal(f.settings.summaryMaxTokens, null);
     f.update({ apiBaseUrl: 'https://a.example/v1', model: 'b-model', temperature: 0.8, thinkingMode: 'disabled', generationTransport: 'non-stream', summaryMaxTokens: 1024, checkpointMaxTokens: 2345, longMemoryMaxTokens: 4567, tokenLimitParameter: 'max_completion_tokens' });
     await f.client.saveApiKey('synthetic-b-key');
     f.client.saveProfileSettings();
@@ -65,6 +66,23 @@ test('same URL profiles retain independent keys, model and every API parameter a
     assert.throws(() => reload.deleteProfile(first), /至少保留/);
 });
 
+test('old output defaults are cleared when switching profiles, with other manual values preserved', () => {
+    const f = fixture();
+    const id = f.client.listProfiles().activeId;
+    const key = 'secret:profile:' + id;
+    const old = JSON.parse(f.values.get(key));
+    delete old.outputLimitVersion;
+    f.values.set(key, JSON.stringify({ ...old, summaryMaxTokens: 1024, checkpointMaxTokens: 5000,
+        longMemoryMaxTokens: 4096, maxTokens: 4096, limitOutputTokens: true }));
+    f.update(f.client.selectProfile(id));
+    assert.deepEqual([f.settings.summaryMaxTokens, f.settings.checkpointMaxTokens, f.settings.longMemoryMaxTokens], [null, 5000, null]);
+    assert.equal(f.settings.limitOutputTokens, true);
+    f.update({ summaryMaxTokens: 1024 });
+    f.client.saveProfileSettings();
+    f.update(f.client.selectProfile(id));
+    assert.equal(f.settings.summaryMaxTokens, 1024);
+});
+
 test('switching profiles during a pending request preserves connection and explicit compatibility retry', async () => {
     const f = fixture();
     f.update({ limitOutputTokens: true });
@@ -77,7 +95,7 @@ test('switching profiles during a pending request preserves connection and expli
         if (attempts.length === 1) return new Promise((_, reject) => { rejectFirst = reject; });
         return { data: { choices: [{ message: { content: '合成输出' } }] }, response: { status: 200 }, diagnostics: {}, source: 'proxy' };
     };
-    const pending = f.client.complete({ systemPrompt: '合成', userContent: '测试' });
+    const pending = f.client.complete({ systemPrompt: '合成', userContent: '测试', maxTokens: 2048 });
     f.update(f.client.selectProfile(second));
     f.update({ apiBaseUrl: 'https://b.example/v1', model: 'b-model', temperature: 0.9 });
     await f.client.saveApiKey('synthetic-b-key');

@@ -1,17 +1,17 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.23';
+import { generationPrompt } from './generation-prompts.js?v=1.27.24';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.23';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.23';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.24';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.24';
 import { HistoryBackfill } from './history-backfill.js?v=1.27.16';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.23';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.17';
-import { parseFloorSummary } from './summarizer.js?v=1.27.23';
+import { parseFloorSummary } from './summarizer.js?v=1.27.24';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.23';
 
 import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.23';
@@ -467,9 +467,9 @@ export function configTemplate() {
                             <label>输出上限<select data-setting="limitOutputTokens"><option value="false">由模型接口决定（默认）</option><option value="true">手动设置</option></select></label>
                             <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
                             <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
-                            <label data-manual-token-limit hidden>小总结 max tokens<input type="number" min="32" data-setting="summaryMaxTokens"></label>
-                            <label data-manual-token-limit hidden>Checkpoint max tokens<input type="number" min="32" data-setting="checkpointMaxTokens"></label>
-                            <label data-manual-token-limit hidden>Long Memory max tokens<input type="number" min="32" data-setting="longMemoryMaxTokens"></label>
+                            <label data-manual-token-limit hidden>小总结 max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="summaryMaxTokens"></label>
+                            <label data-manual-token-limit hidden>Checkpoint max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="checkpointMaxTokens"></label>
+                            <label data-manual-token-limit hidden>Long Memory max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="longMemoryMaxTokens"></label>
                             <label data-manual-token-limit hidden>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
                         </div>
                         <div class="cache-memory-actions">

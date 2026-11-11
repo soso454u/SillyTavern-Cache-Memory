@@ -23,7 +23,7 @@ test('official aggregate templates upgrade, custom prompts and existing length/t
         assert.equal(actual.prompts.checkpoint, custom.checkpoint); assert.equal(actual.prompts.longMemory, custom.longMemory);
     }
     assert.equal(normalizeSettings().longMemoryMaxLength, 2200);
-    assert.equal(normalizeSettings().longMemoryMaxTokens, 4096);
+    assert.equal(normalizeSettings().longMemoryMaxTokens, null);
     assert.notEqual(DEFAULT_PROMPTS.summary, V1270_DEFAULT_PROMPTS.summary);
 });
 

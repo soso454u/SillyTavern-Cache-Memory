@@ -1,8 +1,8 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.21';
+import { isOutputTruncated } from './api-client.js?v=1.27.24';
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.23';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.23';
-import { generationPrompt } from './generation-prompts.js?v=1.27.23';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.24';
+import { generationPrompt } from './generation-prompts.js?v=1.27.24';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.23';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
@@ -394,10 +394,7 @@ export class MemorySummarizer {
                     + formatSummaryUserSource(userSource)
                     + priorNormalContext(this.generationStore(), settings, entry.floor)
                     + (trackChanges ? trackedContext(generationTrackedRows(projectActiveState(this.generationStore(), entry.floor - 1), settings)) : ''),
-                // Reserve output only for selected table deltas; the story's visible
-                // character budget is unchanged and this is still one request.
-                maxTokens: Math.min(32000, settings.summaryMaxTokens + (settings.activeStateEnabled
-                    ? 384 * Object.values(settings.characterTables).filter(Boolean).length : 0)),
+                maxTokens: settings.summaryMaxTokens,
                 signal,
             };
             responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);

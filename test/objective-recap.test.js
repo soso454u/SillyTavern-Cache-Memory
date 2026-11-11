@@ -39,6 +39,7 @@ test('all prompts stay objective while Summary uses narrative and aggregates kee
             assert.match(prompt, /同一事实只出现一次/); assert.match(prompt, /不能自动当作事实/);
             assert.match(prompt, /不能拼接或删掉否定、条件、对象/);
             assert.match(prompt, /不设最低字数/); assert.doesNotMatch(prompt, /约70%–100%|尽量接近|应接近/);
+            assert.match(prompt, /标题和可见总结正文不用破折号[\s\S]*禁止“不是……是……”[\s\S]*逐字证据照原格式保留/);
         }
     }
 });
@@ -64,7 +65,7 @@ for (const mode of ['normal', 'advanced']) test(`summary → CP → Long keeps r
     } } });
     await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
     assert.equal(requests.length, 3);
-    assert.deepEqual(requests.map(row => row.maxTokens), [settings.summaryMaxTokens + (mode === 'advanced' ? 384 : 0), settings.checkpointMaxTokens, settings.longMemoryMaxTokens]);
+    assert.deepEqual(requests.map(row => row.maxTokens), [settings.summaryMaxTokens, settings.checkpointMaxTokens, settings.longMemoryMaxTokens]);
     for (const [index, request] of requests.entries()) {
         assert.ok(request.systemPrompt.includes(index === 0 ? OBJECTIVE_SUMMARY_RULES : OBJECTIVE_RECAP_RULES));
         assert.ok(request.systemPrompt.includes(LAYERED_MEMORY_RULES[['summary', 'checkpoint', 'longMemory'][index]]));

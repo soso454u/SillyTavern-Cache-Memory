@@ -1,4 +1,6 @@
-export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'limitOutputTokens', 'tokenLimitParameter', 'generationTransport']);
+import { normalizeOutputLimits, normalizeOutputTokenLimit } from './defaults.js?v=1.27.24';
+
+export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'outputLimitVersion', 'limitOutputTokens', 'tokenLimitParameter', 'generationTransport']);
 
 export const MODEL_LIST_WARNING = '无法获取模型列表，请手动填写模型名称。';
 const ST_MODELS_PROXY_PATH = '/api/backends/chat-completions/status';
@@ -363,7 +365,7 @@ export class SummaryApiClient {
         index.activeId = id;
         this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
         this.activeProfileId = id;
-        return { ...this.profileSettings(saved), limitOutputTokens: saved.limitOutputTokens === true };
+        return { ...this.profileSettings(saved), ...normalizeOutputLimits(saved), limitOutputTokens: saved.limitOutputTokens === true };
     }
 
     addProfile(name) {
@@ -371,7 +373,7 @@ export class SummaryApiClient {
         const id = globalThis.crypto?.randomUUID?.() ?? `profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const label = String(name ?? '').trim();
         if (!label) throw new Error('请填写配置名称');
-        this.storage.setItem(`${this.storageKey}:profile:${id}`, JSON.stringify({ ...this.profileSettings(), apiBaseUrl: '', model: '', key: '', limitOutputTokens: false }));
+        this.storage.setItem(`${this.storageKey}:profile:${id}`, JSON.stringify({ ...this.profileSettings(), ...normalizeOutputLimits({}), apiBaseUrl: '', model: '', key: '', limitOutputTokens: false }));
         index.profiles.push({ id, name: label });
         this.storage.setItem(`${this.storageKey}:profiles`, JSON.stringify(index));
         return id;
@@ -534,9 +536,10 @@ export class SummaryApiClient {
         }
         delete payload.max_tokens;
         delete payload.max_completion_tokens;
-        if (settings.limitOutputTokens === true) {
+        const limit = normalizeOutputTokenLimit(request.max_completion_tokens ?? request.max_tokens ?? maxTokens);
+        if (settings.limitOutputTokens === true && limit !== null) {
             const tokenParameter = settings.tokenLimitParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens';
-            payload[tokenParameter] = Number(request.max_completion_tokens ?? request.max_tokens ?? maxTokens ?? settings.maxTokens);
+            payload[tokenParameter] = limit;
         }
         return {
             ...payload,
@@ -761,7 +764,7 @@ export class SummaryApiClient {
         // One click, one request: do not retry a paid diagnostic with other parameters.
         const payload = this.buildPayload({
             systemPrompt: 'Reply with exactly OK.', userContent: 'OK',
-            maxTokens: settings.summaryMaxTokens ?? settings.maxTokens ?? 1024,
+            maxTokens: settings.summaryMaxTokens,
         }, settings);
         const { data, response, diagnostics, source } = await this.requestOpenAICompatible({ payload: { ...payload, stream }, connection });
         const parts = chunkParts(data);

@@ -1,5 +1,5 @@
 import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.27.16';
-import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.23';
+import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.24';
 import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.23';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
@@ -18,6 +18,7 @@ export const SUMMARY_TURN_SOURCE_RULES = `
 PRIOR_MEMORY_CONTEXT、EXISTING_KEEP 和 CURRENT_TRACKED_STATE 仅作旧背景，不能冒充本层新证据。逐字证据可摘录本次 user 原文或 assistant 原文，不能拼接不同消息或借用旧摘要。`;
 
 const CONTINUITY_SOURCE_RULES = '写清重要物品何人取得、已经试穿／使用／交付／归还等实际动作，和仍有效的归属或约定。不能把已做过写成喜欢或打算。只凭缺记或后文一句“第一次／从未”不能改写已确认经历。人员安排须区分计划、签约和实际到岗，人数变化标明当时及最终结果，按职责分组并逐人归属，不补造姓名或合并近似称呼。';
+const RECAP_PROSE_STYLE = '\n【总结行文】用平实句子直接叙述。标题和可见总结正文不用破折号，改用逗号或分句。禁止“不是……是……”“不是……而是……”“并非……而是……”一类先否定再转折的句式，直接陈述发生的事实。剧情中的否认、未完成等有意义的信息仍须明确保留。原话若含这些写法，改为准确转述。结构标记、列表符和逐字证据照原格式保留。';
 const CONTINUITY_CHANGES = `
 有新增的重要物品经历、归属或实际人员配置时，附 [Changes] JSON 数组（有角色表格时共用该数组）。每项写 kind:"state", entity, key, value, category, status:"active", evidence, confirmed:true；更新复用已知 id，新增省略 id。evidence 引本层连续原文至少4字，必须支持对象与结果。日常衣着和无后续作用的物品省略。
 - milestone：重要物品每个已发生的节点单独用稳定 key（如“纪念外套·已试穿”），entity 用完整人物身份。后续归还或再使用可以留下新的经历，不覆盖之前发生的事。没有确认或和既有证据冲突时不写变更。
@@ -41,9 +42,10 @@ ${STATE_EXTRACTION_RULES.replace('沿用 Summary 的 Open 和 State 叙述，在
         const official = prompt === DEFAULT_PROMPTS.summary;
         const changes = settings.continuityEnabled && (official || tableRules || prompt.includes('[Changes]')) ? CONTINUITY_CHANGES : '';
         return withGlobalPrompt(settings, prompt + (prompt.includes(NORMAL_SUMMARY_LENGTH_RULES) ? '' : `\n${NORMAL_SUMMARY_LENGTH_RULES}`)
-            + SUMMARY_TURN_SOURCE_RULES + (official ? `\n${CONTINUITY_SOURCE_RULES}` : '') + tableRules + changes);
+            + SUMMARY_TURN_SOURCE_RULES + (official ? `\n${CONTINUITY_SOURCE_RULES}` : '') + tableRules + changes + RECAP_PROSE_STYLE);
     }
     // Narrative aggregates never expand into the optional role tables.
-    return withGlobalPrompt(settings, prompt === DEFAULT_PROMPTS[stage] ? prompt + `\n${CONTINUITY_SOURCE_RULES}
-把同一事件的动作、回应和结果放在同一条。只在新近发生或对解释本段因果有用时提到已确认的事实；事实增量已单独保存，勿在额外档案重复列出。区分历史上的人数与当前到岗结果，不把早期数字写成当前。` : prompt);
+    const continuity = prompt === DEFAULT_PROMPTS[stage] ? `\n${CONTINUITY_SOURCE_RULES}
+把同一事件的动作、回应和结果放在同一条。只在新近发生或对解释本段因果有用时提到已确认的事实；事实增量已单独保存，勿在额外档案重复列出。区分历史上的人数与当前到岗结果，不把早期数字写成当前。` : '';
+    return withGlobalPrompt(settings, prompt + continuity + RECAP_PROSE_STYLE);
 }

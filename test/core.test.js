@@ -254,9 +254,7 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
     assert.equal(memory.checkpoints.length, 2);
     assert.equal(memory.longMemories.length, 1);
     assert.equal(memory.longMemories[0].status, 'frozen');
-    assert.equal(budgets.filter(value => value === 1024).length, 4);
-    assert.equal(budgets.filter(value => value === 3072).length, 2);
-    assert.equal(budgets.filter(value => value === 4096).length, 1);
+    assert.deepEqual(budgets, Array(7).fill(null));
     assert.deepEqual(chat.map(item => item.mes), originalBodies);
 
     const firstTitle = Object.values(memory.summaries).find(item => item.floor === 1).title;
@@ -473,7 +471,7 @@ test('model listing uses the SillyTavern proxy first without a browser cross-ori
 
 test('normal generation switches to max_completion_tokens when max_tokens is explicitly rejected', async () => {
     const storage = { getItem: () => 'saved-key', setItem: () => {}, removeItem: () => {} };
-    const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x', limitOutputTokens: true });
+    const settings = normalizeSettings({ apiBaseUrl: 'https://example.com', model: 'model-x', limitOutputTokens: true, summaryMaxTokens: 2048 });
     const client = new SummaryApiClient({ getSettings: () => settings, storage, storageKey: 'key' });
     const originalFetch = globalThis.fetch;
     const originalParent = globalThis.parent;

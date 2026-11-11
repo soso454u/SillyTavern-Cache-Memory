@@ -5,7 +5,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.17';
 
-export const PLUGIN_VERSION = '1.27.23';
+export const PLUGIN_VERSION = '1.27.24';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1787,10 +1787,26 @@ function promptFingerprint(value) {
 
 export const ENSEMBLE_GENERATION = Object.freeze({
     summaryMaxLength: 800, checkpointMaxLength: 2000, longMemoryMaxLength: 3500,
-    summaryMaxTokens: 4096, checkpointMaxTokens: 8192, longMemoryMaxTokens: 12288,
+    summaryMaxTokens: null, checkpointMaxTokens: null, longMemoryMaxTokens: null,
 });
 
 export function modePromptDefaults() { return DEFAULT_PROMPTS; }
+
+export function normalizeOutputTokenLimit(value) {
+    const limit = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+    return Number.isSafeInteger(limit) && limit > 0 ? limit : null;
+}
+
+export function normalizeOutputLimits(source) {
+    const previousDefaults = { summaryMaxTokens: 1024, checkpointMaxTokens: 3072, longMemoryMaxTokens: 4096 };
+    const legacy = source.outputLimitVersion !== 1;
+    const legacyLimit = legacy && Number(source.maxTokens) !== 4096 ? normalizeOutputTokenLimit(source.maxTokens) : null;
+    const limits = Object.fromEntries(Object.entries(previousDefaults).map(([key, previousDefault]) => {
+        const value = normalizeOutputTokenLimit(source[key]);
+        return [key, legacy && value === previousDefault ? null : value ?? (source[key] === undefined ? legacyLimit : null)];
+    }));
+    return { ...limits, maxTokens: limits.longMemoryMaxTokens, outputLimitVersion: 1 };
+}
 
 export function memoryGenerationSettings(settings, mode = 'normal') {
     const summaryMode = ['advanced', 'ensemble'].includes(mode) ? 'ensemble' : 'normal';
@@ -1836,10 +1852,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     apiBaseUrl: '',
     model: '',
     temperature: 0.2,
-    summaryMaxTokens: 1024,
-    checkpointMaxTokens: 3072,
-    longMemoryMaxTokens: 4096,
-    maxTokens: 4096,
+    ...normalizeOutputLimits({}),
     limitOutputTokens: false,
     tokenLimitParameter: 'max_tokens',
     generationTransport: GENERATION_TRANSPORTS.AUTO,
@@ -1889,15 +1902,10 @@ export function normalizeSettings(saved = {}) {
         ? source.summaryFilterMode
         : SUMMARY_FILTER_MODES.DEFAULT;
 
-    const legacyMaxTokens = Math.round(number(source.maxTokens, 4096, 32, 32000));
-    const customizedLegacyTokens = source.maxTokens !== undefined && Number(source.maxTokens) !== 4096;
     const migratedLength = (value, oldDefault, nextDefault, min, max) => {
         if (value === undefined || value === null || value === '' || Number(value) === oldDefault) return nextDefault;
         return Math.round(number(value, nextDefault, min, max));
     };
-    const summaryMaxTokens = Math.round(number(source.summaryMaxTokens, customizedLegacyTokens ? legacyMaxTokens : 1024, 32, 32000));
-    const checkpointMaxTokens = Math.round(number(source.checkpointMaxTokens, customizedLegacyTokens ? legacyMaxTokens : 3072, 32, 32000));
-    const longMemoryMaxTokens = Math.round(number(source.longMemoryMaxTokens, customizedLegacyTokens ? legacyMaxTokens : 4096, 32, 32000));
 
     return {
         ...DEFAULT_SETTINGS,
@@ -1935,10 +1943,7 @@ export function normalizeSettings(saved = {}) {
         globalPromptCustom: String(source.globalPromptCustom ?? ''),
         summaryFilterMode,
         summaryFilterTags: String(source.summaryFilterTags ?? DEFAULT_SETTINGS.summaryFilterTags),
-        summaryMaxTokens,
-        checkpointMaxTokens,
-        longMemoryMaxTokens,
-        maxTokens: longMemoryMaxTokens,
+        ...normalizeOutputLimits(source),
         provider,
         injectionMode,
         prompts,
@@ -1947,7 +1952,8 @@ export function normalizeSettings(saved = {}) {
             [key, typeof source.ensemblePrompts?.[key] === 'string' ? source.ensemblePrompts[key] : fallback])),
             state: typeof source.ensemblePrompts?.state === 'string' ? source.ensemblePrompts.state : IMPORTANT_STATE_PROMPT },
         ensembleGeneration: Object.fromEntries(Object.entries(ENSEMBLE_GENERATION).map(([key, fallback]) =>
-            [key, Math.round(number(source.ensembleGeneration?.[key], fallback, key.endsWith('Tokens') ? 32 : 50, key.endsWith('Tokens') ? 32000 : key.startsWith('summary') ? 5000 : key.startsWith('checkpoint') ? 12000 : 24000))])),
+            [key, key.endsWith('Tokens') ? normalizeOutputTokenLimit(source.ensembleGeneration?.[key])
+                : Math.round(number(source.ensembleGeneration?.[key], fallback, 50, key.startsWith('summary') ? 5000 : key.startsWith('checkpoint') ? 12000 : 24000))])),
     };
 }
 

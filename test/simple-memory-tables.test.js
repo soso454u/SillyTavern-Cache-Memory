@@ -55,7 +55,7 @@ test('old official long templates migrate, user custom story templates survive b
     assert.deepEqual(normalizeSettings({ prompts: V12423_DEFAULT_PROMPTS }).prompts, DEFAULT_PROMPTS);
     const config = normalizeSettings({ prompts: { summary: '自定义故事模板' }, ensembleGeneration: { summaryMaxLength: 3000, summaryMaxTokens: 20000 } });
     const advanced = memoryGenerationSettings(config, 'advanced');
-    assert.equal(advanced.prompts.summary, '自定义故事模板'); assert.equal(advanced.summaryMaxLength, 350); assert.equal(advanced.summaryMaxTokens, 1024);
+    assert.equal(advanced.prompts.summary, '自定义故事模板'); assert.equal(advanced.summaryMaxLength, 350); assert.equal(advanced.summaryMaxTokens, null);
     assert.match(generationPrompt(advanced, 'summary'), /普通摘要总字数预算/);
 });
 
@@ -110,7 +110,7 @@ for (const [selection, expected] of [[{ characters: true }, ['identity']], [{ ch
         const f = fixture('advanced', selection); const before = structuredClone(f.store.current().injectionSnapshot);
         const saved = await f.summarizer.summarizeEntry(getAssistantMessages(f.chat)[0], { deferAggregates: true });
         assert.equal(f.requests.length, 1); assert.deepEqual(saved.stateChanges.map(row => row.category), expected);
-        assert.equal(f.requests[0].maxTokens, f.config.summaryMaxTokens + 384);
+        assert.equal(f.requests[0].maxTokens, f.config.summaryMaxTokens);
         assert.doesNotMatch(saved.raw, /confirmed|\[Changes\]/); assert.match(saved.event, /天亮前回来/);
         assert.deepEqual(f.store.current().injectionSnapshot, before);
     });

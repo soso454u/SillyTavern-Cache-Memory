@@ -49,7 +49,7 @@ test('one existing Summary call receives user facts and the filtered assistant, 
         { is_user: true, mes: user }, { mes: `<context>HIDDEN_SENTINEL</context><content>${reply}</content>`, gen_started: 'new' },
         { is_user: true, mes: 'FUTURE_USER_SENTINEL' }]);
     const original = structuredClone(f.chat), row = await f.summarizer.summarizeMessage(f.entry().messageId, { deferAggregates: true });
-    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].maxTokens, 1024);
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].maxTokens, null);
     assert.ok(f.calls[0].userContent.startsWith(reply)); assert.match(f.calls[0].userContent, /\[CURRENT_USER_INPUT\]/);
     assert.ok(f.calls[0].userContent.includes(user)); assert.doesNotMatch(f.calls[0].userContent, /OLD_USER_SENTINEL|HIDDEN_SENTINEL|FUTURE_USER_SENTINEL/);
     assert.equal(row.event, event); assert.equal(row.userSourceFingerprint, summaryUserSource(f.chat, f.entry()).fingerprint);
@@ -162,7 +162,7 @@ test('changed user facts pass through the same Summary→CP→Long chain without
     const original = structuredClone(f.chat);
     await f.summarizer.summarizeMessage(f.entry().messageId);
     assert.equal(f.calls.length, 3); assert.equal(Object.keys(f.store.current().summaries).length, 1);
-    assert.deepEqual(f.calls.map(call => call.maxTokens), [1024, 3072, 4096]);
+    assert.deepEqual(f.calls.map(call => call.maxTokens), [null, null, null]);
     assert.ok(f.store.current().checkpoints[0].content.includes(event));
     assert.ok(f.store.current().longMemories[0].content.includes(event));
     assert.deepEqual(f.chat, original);
