@@ -1,6 +1,6 @@
-import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.27.23';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.23';
-import { projectLongFacts } from './continuity.js?v=1.27.23';
+import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.27.25';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.25';
+import { projectLongFacts } from './continuity.js?v=1.27.25';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
@@ -38,6 +38,10 @@ export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
             if (row.previousCheckpointId != null && typeof row.previousCheckpointId !== 'string') throw new Error(`${row.id} 前序身份格式错误`);
             if (row.openingContentFingerprint != null && typeof row.openingContentFingerprint !== 'string') throw new Error(`${row.id} 开场来源格式错误`);
             if (row.factUpdates != null && (!Array.isArray(row.factUpdates) || row.factUpdates.some(update => !object(update) || !['add', 'update', 'replace', 'retire'].includes(update.action) || typeof update.id !== 'string'))) throw new Error(`${row.id} 长期事实格式错误`);
+            if (row.stateChanges != null && (!Array.isArray(row.stateChanges) || row.stateChanges.some(change =>
+                !object(change) || !['thread', 'state'].includes(change.kind) || !['summary', 'checkpoint'].includes(change.evidenceSourceKind)
+                || ['id', 'entity', 'key', 'value', 'evidence', 'evidenceSourceId', 'evidenceFingerprint'].some(key => typeof change[key] !== 'string' || !change[key]))))
+                throw new Error(`${row.id} 的状态变化或证据来源格式错误`);
             if (row.summaryIds != null && (!Array.isArray(row.summaryIds) || row.summaryIds.some(id => typeof id !== 'string'))) throw new Error(`${row.id} 摘要关联格式错误`);
             if (row.checkpointVersions != null && (!object(row.checkpointVersions) || Object.values(row.checkpointVersions).some(value => typeof value !== 'string'))) throw new Error(`${row.id} Checkpoint 版本格式错误`);
             if (row.sourceVersions != null && (!object(row.sourceVersions) || Object.values(row.sourceVersions).some(value => typeof value !== 'string'))) throw new Error(`${row.id} 来源版本格式错误`);

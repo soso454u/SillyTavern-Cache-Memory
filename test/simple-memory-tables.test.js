@@ -174,9 +174,12 @@ for (const tables of [false, true]) test(`55-floor end-to-end story pipeline kee
     if (tables) store.setSummaryMode('advanced');
     const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => config, apiClient: { complete: async request => {
         requests.push(request);
-        if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) return { content: '[STORY_ARC]\n医师在旧城调查期间拒收纸包，向守卫澄清只在大堂见过送信人。\n[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' };
+        if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) {
+            assert.equal(request.userContent.includes('[CURRENT_TRACKED_STATE]'), tables);
+            return { content: '[STORY_ARC]\n医师在旧城调查期间拒收纸包，向守卫澄清只在大堂见过送信人。\n[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' };
+        }
         if (request.userContent.startsWith('[PREVIOUS_CONTEXT]')) {
-            assert.doesNotMatch(request.userContent, /CURRENT_TRACKED_STATE|SUMMARY_RESULTS/);
+            assert.equal(request.userContent.includes('[CURRENT_TRACKED_STATE]'), tables);
             return { content: '[CHECKPOINT]\n[Stage Story]\n医师拒收纸包，并当众澄清与送信人仅在大堂见过。' };
         }
         return { content: `[SUMMARY]\n[Title]\n拒收纸包\n[Characters]\n医师\n[Event]\n医师当众拒收纸包，澄清：“我只在大堂见过他。”\n[Changes]\n${JSON.stringify([identity])}` };

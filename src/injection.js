@@ -1,12 +1,12 @@
 import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.16';
-import { INJECTION_MODES } from './defaults.js?v=1.27.24';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.23';
+import { INJECTION_MODES } from './defaults.js?v=1.27.25';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.25';
 import { stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { hasLastingResult, isContinuityChange, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.23';
-import { historyPublicationLimit } from './history-handoff.js?v=1.27.23';
+import { hasLastingResult, isContinuityChange, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.25';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.25';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
 import { summaryStoryBlock } from './summary-source.js?v=1.27.18';
-import { aggregateVersion } from './memory-store.js?v=1.27.23';
+import { aggregateVersion } from './memory-store.js?v=1.27.25';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 

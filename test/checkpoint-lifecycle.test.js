@@ -8,6 +8,7 @@ import { refreshSnapshot } from '../src/cache-control.js';
 import { normalizeSettings } from '../src/defaults.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { getAssistantMessages } from '../src/utils.js';
+import { inspectMemoryImport } from '../src/memory-import.js';
 
 const settings = normalizeSettings({ injectionMode: 'checkpoint_boundary' });
 const state = (key, value, extra = {}) => ({ kind: 'state', entity: '旅人', key, value, category: 'effect',
@@ -103,6 +104,75 @@ test('new CP requests produce narrative without a second role sheet or a new sta
     const cp = await summarizer.generateCheckpoint(1, 5); assert.equal(calls, 1);
     assert.doesNotMatch(cp.content, /Current State|state-|伤势：/);
     assert.deepEqual(store.current().summaries, before.summaries); assert.deepEqual(store.current().stateOverrides, before.stateOverrides);
+});
+
+test('advanced Summary, CP and Long share evidence-ordered state, with CP and Long filling omissions in their own requests', async () => {
+    const metadata = {}, chat = Array.from({ length: 10 }, (_, i) => ({ name: '旅人', mes: `正文${i}`, gen_started: `g${i}` }));
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'three-layers', saveMetadata() {} });
+    store.setSummaryMode('advanced');
+    const initial = state('护理员·实际到岗', '2人已到岗', { entity: '旅人家', category: 'staffing', lifetime: 'permanent', evidence: '两位护理员已经到岗' });
+    chat[0].mes = initial.evidence;
+    const entries = getAssistantMessages(chat), requests = [];
+    const four = { ...initial, id: stateId(initial), value: '4人全部到岗', evidence: '四位护理员已经全部到岗', source: 3, confirmed: true };
+    const injury = state('行走限制', '暂时无法下楼', { evidence: '旅人暂时无法下楼' });
+    const expired = { ...injury, id: stateId(injury), status: 'expired', value: '已恢复下楼', evidence: '医生确认旅人恢复下楼', source: 7, confirmed: true };
+    const milestone = state('纪念外套·已试穿', '当场试穿', { category: 'milestone', lifetime: 'permanent', evidence: '旅人当场试穿了纪念外套', confirmed: true });
+    const identity = state('职务', '渡口值班医师', { entity: '医师', category: 'identity', lifetime: 'permanent', evidence: '医师确认自己负责渡口夜间值班', source: 9, confirmed: true });
+    const uncertain = { ...four, source: 10, value: '5人已到岗', evidence: '另一份尚未核对的记录称五位护理员已到岗', reviewOnly: true };
+    const responses = [
+        `[SUMMARY]\n[Event]\n两位护理员已经到岗。\n[Changes]\n${JSON.stringify([{ ...initial, confirmed: true }])}`,
+        `[CHECKPOINT]\n[Stage Story]\n两位护理员已经到岗，负责开初的夜班。另有当期记录称三位护理员已经到岗。\n[STATE_RESOLUTIONS]\n${JSON.stringify([four, { ...identity, source: 3 }])}`,
+        `[CHECKPOINT]\n[Stage Story]\n旅人当场试穿了纪念外套。\n[STATE_RESOLUTIONS]\n${JSON.stringify([expired])}`,
+        null,
+        '[CHECKPOINT]\n[Stage Story]\n两位护理员已经到岗，负责开初的夜班。另有当期记录称三位护理员已经到岗。\n[STATE_RESOLUTIONS]\n[]',
+    ];
+    const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => settings, apiClient: { complete: async request => {
+        requests.push(request);
+        return { content: responses[requests.length - 1] };
+    } } });
+    await summarizer.summarizeEntry(entries[0], { deferAggregates: true });
+    for (const entry of entries.slice(1)) {
+        const event = { 3: four.evidence, 7: expired.evidence, 9: identity.evidence, 10: uncertain.evidence }[entry.floor] ?? '发生本层独立剧情';
+        store.addSummary({ messageId: entry.messageId, floor: entry.floor, event, status: 'frozen',
+            stateChanges: entry.floor === 6 ? [{ ...injury, id: stateId(injury) }] : [] });
+    }
+    const beforeSummaries = structuredClone(store.current().summaries);
+    const before = projectActiveState(store.current()).find(row => row.key === initial.key);
+    assert.equal(before.value, initial.value);
+    const first = await summarizer.generateCheckpoint(1, 5);
+    const second = await summarizer.generateCheckpoint(6, 10);
+    assert.equal(first.stateChanges.length, 1);
+    assert.match(requests[1].systemPrompt, /STATE_RESOLUTIONS[\s\S]*NEW_SUMMARIES/);
+    assert.match(requests[2].userContent, /CURRENT_TRACKED_STATE[\s\S]*4人全部到岗/);
+    assert.equal(projectActiveState(store.current()).find(row => row.key === injury.key).status, 'expired');
+    responses[3] = `[STORY_ARC]\n旅人因照护安排得以出门，医师在渡口值班。\n[LONG_MEMORY]\n- 旅人家 · 护理员·实际到岗：2人已到岗\n[STATE_RESOLUTIONS]\n${JSON.stringify([
+        { ...initial, id: stateId(initial), value: '3人已到岗', evidence: '三位护理员已经到岗', confirmed: true, source: first.id },
+        { ...milestone, source: second.id.toUpperCase() }, identity, uncertain,
+    ])}`;
+    const long = await summarizer.generateLongMemory([first, second]);
+    assert.match(requests[3].systemPrompt, /CHECKPOINT_STATE/);
+    assert.equal(requests.length, 4);
+    assert.doesNotMatch(long.content, /STATE_RESOLUTIONS/);
+    const rows = projectActiveState(store.current());
+    assert.deepEqual(rows.filter(row => row.key === initial.key).map(row => [row.value, row.sourceFloor]), [[four.value, 3]]);
+    assert.ok(rows.find(row => row.key === initial.key).history.some(old => old.value === initial.value));
+    assert.deepEqual(rows.find(row => row.key === initial.key).reviewConflicts.map(row => row.value), ['3人已到岗', '5人已到岗']);
+    assert.equal(rows.find(row => row.key === milestone.key).value, milestone.value);
+    assert.equal(rows.find(row => row.key === identity.key).value, identity.value);
+    assert.equal(projectActiveState(store.current(), 9).some(row => row.key === milestone.key), false);
+    const output = refreshSnapshot(store.current(), settings, 'new long memory').value;
+    assert.equal(output.split('护理员·实际到岗：4人全部到岗').length - 1, 1);
+    assert.doesNotMatch(output, /[235]人已到岗|STATE_RESOLUTIONS|evidenceFingerprint|暂时无法下楼/);
+    assert.match(output, /纪念外套·已试穿/);
+    const reloaded = inspectMemoryImport(JSON.parse(JSON.stringify(store.current())), 'three-layers').store;
+    assert.deepEqual(projectActiveState(reloaded), rows);
+    const changed = structuredClone(reloaded);
+    changed.summaries[entries[2].messageId].event = '四人仍在面试，只有两人实际到岗';
+    assert.equal(projectActiveState(changed).find(row => row.key === initial.key).value, initial.value);
+    const regenerated = await summarizer.generateCheckpoint(1, 5, { overwrite: true });
+    assert.deepEqual(regenerated.stateChanges, first.stateChanges);
+    assert.deepEqual(store.current().summaries, beforeSummaries);
+    assert.deepEqual(store.current().stateOverrides, {});
 });
 
 test('role UI renders completed transient states in a separate history group instead of the current character table', async () => {

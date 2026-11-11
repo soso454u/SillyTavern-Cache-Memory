@@ -1,4 +1,4 @@
-import { parseStructuredSummary } from './summary-format.js?v=1.27.16';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
 import { fnv1a } from './utils.js?v=1.27.16';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
@@ -22,12 +22,11 @@ const sameSubject = (a, b) => a.kind === b.kind && a.entity === b.entity
     && subjectKey(a) === subjectKey({ ...b, category: b.category || a.category });
 
 function confirmedContinuityChange(change) {
-    if (change.status !== 'active') return false;
     if (change.category === 'milestone') {
         // Completed facts are positive claims. A new plan, refusal or denial
         // cannot become a historical milestone, even with a verbatim quote.
         const unrealized = /(?:从未|未曾|尚未|还没|没(?:有)?(?:穿|试|用|交|还|收|买|送)过|准备(?:要)?|打算|计划|\b(?:never|not yet|plans? to|intends? to)\b)/iu;
-        return !unrealized.test(change.value) && !unrealized.test(change.evidence);
+        return change.status === 'active' && !unrealized.test(change.value) && !unrealized.test(change.evidence);
     }
     // Reject common prospective phrasing even when the model marks it confirmed.
     const prospective = /(?:计划|暂定|拟(?:聘|请|招|安排)|想(?:请|招|找)|打算|准备|预计|将于|将到岗|约定.{0,12}上岗|(?:明天|下周|下月).{0,12}(?:到岗|上岗)|\b(?:planned|plans? to|expected to|will|scheduled to)\b)/iu;
@@ -120,14 +119,48 @@ export function stateSummaryResults(store, throughFloor) {
         .sort((a, b) => a.floor - b.floor).map(summary => `[第${summary.floor}层]\n${summaryResultText(summary)}`).join('\n\n') || '无';
 }
 
-// Existing CP generation can reconcile semantic changes in its SAME request.
-// Persist the evidence rows inside the new CP content; validate on every replay.
-// No mutation of Summary, no stateOverrides write and no new model request.
+function resolutionRows(text) {
+    try {
+        const rows = JSON.parse(clean(text).replace(/^```(?:json)?\s*|\s*```$/g, ''));
+        return Array.isArray(rows) ? rows.slice(0, 96).filter(row => row && typeof row === 'object') : [];
+    } catch { return []; }
+}
+
+export function checkpointEvidenceText(checkpoint) {
+    return stripStructuredSections(checkpoint.content, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STATE_RESOLUTIONS']);
+}
+
+function aggregateEvidence(record, kind) {
+    const fields = kind === 'summary' && record.format === 'structured' ? parseStructuredSummary(record.raw) ?? record : null;
+    const sections = kind !== 'summary' ? [checkpointEvidenceText(record)]
+        : fields ? [fields.event, fields.state, fields.open].filter(Boolean) : [String(record.event ?? '')];
+    return { sections, kind, id: kind === 'summary' ? record.messageId : record.id,
+        startFloor: kind === 'summary' ? record.floor : record.startFloor,
+        floor: kind === 'summary' ? record.floor : record.endFloor, fingerprint: fnv1a(JSON.stringify(sections)) };
+}
+
+export function parseAggregateStateChanges(text, summaries, checkpoints, known) {
+    const sources = new Map();
+    for (const summary of summaries) sources.set(String(summary.floor), aggregateEvidence(summary, 'summary'));
+    for (const checkpoint of checkpoints) sources.set(checkpoint.id.toLowerCase(), aggregateEvidence(checkpoint, 'checkpoint'));
+    return resolutionRows(text).flatMap(row => {
+        if (typeof row.source !== 'string' && !Number.isInteger(row.source)) return [];
+        const source = sources.get(clean(row.source).toLowerCase());
+        const section = source?.sections.find(text => text.includes(clean(row.evidence)));
+        if (!section) return [];
+        return parseStateChanges(JSON.stringify([row]), section, known, { advanced: true }).map(change => ({
+            ...change, evidenceSourceId: source.id, evidenceSourceKind: source.kind, evidenceFingerprint: source.fingerprint,
+            ...(row.reviewOnly === true ? { reviewOnly: true } : {}),
+        }));
+    });
+}
+
 function checkpointResolutions(checkpoint, summaries, known) {
     const text = String(checkpoint.content ?? '').match(/(?:^|\n)\[STATE_RESOLUTIONS\]\s*\n([\s\S]*?)(?=\n\[[^\]\n]+\]|$)/u)?.[1];
-    if (!text) return [];
+    const rows = resolutionRows(text).filter(row => !Object.hasOwn(row, 'source'));
+    if (!rows.length) return [];
     const source = summaries.filter(row => validSummary(row) && row.floor <= checkpoint.endFloor).map(summaryResultText).join('\n');
-    return parseStateChanges(text, source, known, { advanced: true }).filter(row => {
+    return parseStateChanges(JSON.stringify(rows), source, known, { advanced: true }).filter(row => {
         const old = known.find(item => item.id === row.id);
         return old && !old.manual && !isContinuityChange(old) && !isContinuityChange(row) && summaries.some(summary => validSummary(summary) && summary.floor >= old.sourceFloor
             && summary.floor <= checkpoint.endFloor && summaryResultText(summary).includes(row.evidence)) && (row.status === 'expired' || row.kind === 'thread' && !isTrackedActive(row)
@@ -152,19 +185,56 @@ export function projectActiveState(store, throughFloor = Infinity) {
         // A frozen Long may retain an explicit settlement absent from the
         // Summary records. Use its explicit structured result only as
         // a fallback, preserving a real Summary result and manual correction.
-        if (source.aggregate && old && !old.needsReview && (old.manual || !isTrackedActive(old))) return;
+        if (source.aggregate && old && !old.needsReview) {
+            if (old.manual || source.evidenceStartFloor === undefined && !isTrackedActive(old)) return;
+            if (source.evidenceStartFloor !== undefined && (change.reviewOnly || old.sourceFloor >= source.evidenceStartFloor)) {
+                if (![old, ...old.history].some(item => item.value === change.value && item.status === change.status)) {
+                    const conflicts = old.reviewConflicts ?? [];
+                    if (!conflicts.some(item => item.sourceId === source.sourceId && item.evidence === change.evidence))
+                        records.set(recordKey, { ...old, reviewConflicts: [...conflicts, {
+                            sourceId: source.sourceId, sourceFloor: source.sourceFloor, value: change.value, evidence: change.evidence,
+                        }] });
+                }
+                return;
+            }
+        }
+        if (source.evidenceStartFloor !== undefined && change.reviewOnly) return;
         if (!change.manual && old && !old.needsReview) {
             if (source.needsReview) return;
-            if (old.category === 'milestone' || (isContinuityChange(old) && change.category !== old.category)) return;
+            if (old.category === 'milestone' || (isContinuityChange(old) && change.category !== old.category)
+                || (old.category === 'history' && old.lifetime === 'permanent' && source.evidenceStartFloor !== undefined)) return;
             if (old.kind === 'thread' && (old.status === 'completed' && change.status !== 'completed'
                 || !isTrackedActive(old) && isTrackedActive(change))) return;
         }
         const history = old ? [...old.history, { key: old.key, value: old.value, status: old.status, condition: old.condition, acquisition: old.acquisition, sourceId: old.sourceId, sourceFloor: old.sourceFloor }] : [];
-        records.set(recordKey, { ...old, ...change, manual: Boolean(change.manual), id: old?.id ?? change.id, ...source, history, originSourceId: change.manual ? change.sourceId : source.aggregate ? source.sourceId : old?.originSourceId ?? source.sourceId,
+        records.set(recordKey, { ...old, ...change, manual: Boolean(change.manual), id: old?.id ?? change.id, ...source, history,
+            reviewConflicts: undefined,
+            evidenceStartFloor: source.evidenceStartFloor, originSourceId: change.manual ? change.sourceId : source.aggregate ? source.sourceId : old?.originSourceId ?? source.sourceId,
             condition: change.condition || old?.condition || '', actors: change.actors?.length ? change.actors : old?.actors ?? [] });
     };
     const events = [];
     const summaries = Object.values(store.summaries ?? {}).filter(item => item.floor <= throughFloor);
+    const summarySources = new Map(summaries.filter(validSummary).map(item => [item.messageId, item]));
+    const checkpoints = (store.checkpoints ?? []).filter(item => validSummary(item) && item.endFloor <= throughFloor);
+    const checkpointSources = new Map(checkpoints.map(item => [item.id, item]));
+    const evidenceCache = new Map();
+    const appendVerified = (memory, useCheckpoints) => {
+        if (!Array.isArray(memory.stateChanges)) return;
+        for (const change of memory.stateChanges) {
+            if (!change || change.manual || typeof change.evidence !== 'string' || change.evidence.length < 4) continue;
+            const kind = change.evidenceSourceKind;
+            const record = kind === 'summary' ? summarySources.get(change.evidenceSourceId)
+                : kind === 'checkpoint' && useCheckpoints ? checkpointSources.get(change.evidenceSourceId) : null;
+            if (!record) continue;
+            if (!evidenceCache.has(record)) evidenceCache.set(record, aggregateEvidence(record, kind));
+            const proof = evidenceCache.get(record);
+            if (proof.startFloor < memory.startFloor || proof.floor > memory.endFloor
+                || change.evidenceFingerprint !== proof.fingerprint || !proof.sections.some(text => text.includes(change.evidence))) continue;
+            events.push({ change, floor: proof.floor, sequence: useCheckpoints ? 0.7 : 0.6, source: {
+                sourceId: memory.id, sourceFloor: proof.floor, evidenceStartFloor: proof.startFloor, needsReview: false, aggregate: true,
+            } });
+        }
+    };
     for (const summary of summaries) {
         for (const change of summary.stateChanges ?? []) events.push({ change, floor: summary.floor, sequence: 0, source: {
             sourceId: summary.messageId, sourceFloor: summary.floor, sourceFingerprint: summary.sourceFingerprint,
@@ -179,6 +249,7 @@ export function projectActiveState(store, throughFloor = Infinity) {
     for (const memory of store.longMemories ?? []) {
         if (!validSummary(memory) || !['frozen', 'manual-edited', 'stale', 'orphaned'].includes(memory.status ?? 'frozen')
             || !(memory.endFloor <= throughFloor)) continue;
+        appendVerified(memory, true);
         for (const line of String(memory.continuityState ?? '').split('\n')) {
             const match = line.match(/^\s*-\s*已结束\s+([^·\n]+)\s·\s((?:(?:新手|突发)?任务\s*[:：]\s*)?[^：:\n]+)[：:]\s*(.+)\s\((completed|failed|cancelled)，(?:仅作)?历史结果\)\s*$/u);
             if (!match) continue;
@@ -189,8 +260,8 @@ export function projectActiveState(store, throughFloor = Infinity) {
         }
     }
     for (const summary of summaries.filter(validSummary)) events.push({ summary, floor: summary.floor, sequence: 0.5 });
-    for (const checkpoint of store.checkpoints ?? []) {
-        if (!validSummary(checkpoint) || checkpoint.endFloor > throughFloor) continue;
+    for (const checkpoint of checkpoints) {
+        appendVerified(checkpoint, false);
         events.push({ checkpoint, floor: checkpoint.endFloor, sequence: 0.75 });
     }
     events.sort((a, b) => a.floor - b.floor || a.sequence - b.sequence);
@@ -218,7 +289,8 @@ export function stateContext(store, throughFloor = Infinity) {
 
 export function activeStateVersion(store, throughFloor) {
     return fnv1a(JSON.stringify(projectActiveState(store, throughFloor).sort((a, b) => a.id.localeCompare(b.id))
-        .map(item => [item.id, item.entity, item.key, item.value, item.status, item.condition, item.lifetime, item.acquisition, item.needsReview])));
+        .map(item => [item.id, item.entity, item.key, item.value, item.status, item.condition, item.lifetime, item.acquisition, item.needsReview,
+            item.sourceFloor, item.sourceId, item.evidence, item.manual])));
 }
 
 export function trackedLines(store, throughFloor, kind) {

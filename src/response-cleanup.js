@@ -1,5 +1,5 @@
 import { parseStructuredSummary, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.16';
-import { readSection } from './continuity.js?v=1.27.23';
+import { readSection } from './continuity.js?v=1.27.25';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
 const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
@@ -57,7 +57,7 @@ export function cleanGeneratedResponse(value, source = '') {
 // Tolerate presentation-only deviations in known labels, not arbitrary prose.
 function normalizeMemoryMarkers(text) {
     const names = [...SUMMARY_SECTION_NAMES, 'Changes', 'SUMMARY', 'CHECKPOINT', ...CHECKPOINT_FIELDS,
-        'KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STORY_ARC', 'LONG_MEMORY', 'UPDATED_FACTS', 'RETIRED_FACTS'];
+        'KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STORY_ARC', 'LONG_MEMORY', 'UPDATED_FACTS', 'RETIRED_FACTS', 'STATE_RESOLUTIONS'];
     const canonical = new Map(names.map(name => [name.toLowerCase(), name]));
     return text.split('\n').map(line => {
         const match = line.match(/^\s*(?:#{1,6}\s+)?(?:\*\*|__)?[\[【［]([^\]】］]+)[\]】］](?:\*\*|__)?[ \t]*[:：]?[ \t]*(.*)$/);

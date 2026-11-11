@@ -1,16 +1,16 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.24';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.23';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.24';
-import { generationPrompt } from './generation-prompts.js?v=1.27.24';
+import { isOutputTruncated } from './api-client.js?v=1.27.25';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.25';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.25';
+import { generationPrompt } from './generation-prompts.js?v=1.27.25';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.23';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.25';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
 import { extractSummarySource, summaryUserSource, formatSummaryUserSource } from './summary-source.js?v=1.27.18';
 import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.16';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.23';
-import { parseStateChanges, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.23';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.23';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.25';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.25';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.25';
 import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.16';
 import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.16';
 
@@ -20,8 +20,9 @@ function pad(value) {
 
 function trackedContext(rows) {
     const context = rows.filter(item => !item.needsReview)
-        .map(({ id, kind, entity, key, value, status, category, condition, lifetime, acquisition, sourceFloor }) =>
-            JSON.stringify({ id, kind, entity, key, value, status, category, condition, lifetime, acquisition, sourceFloor })).join('\n');
+        .map(({ id, kind, entity, key, value, status, category, condition, lifetime, acquisition, sourceFloor, evidenceStartFloor }) =>
+            JSON.stringify({ id, kind, entity, key, value, status, category, condition, lifetime, acquisition, sourceFloor,
+                ...(evidenceStartFloor < sourceFloor ? { evidenceStartFloor } : {}) })).join('\n');
     return context ? `\n\n[CURRENT_TRACKED_STATE]\n${context}` : '';
 }
 
@@ -29,6 +30,19 @@ function generationTrackedRows(rows, settings) {
     const continuity = settings.continuityEnabled ? rows.filter(isContinuityChange) : [];
     const tables = settings.activeStateEnabled ? selectedTableRecords(rows.filter(row => !isContinuityChange(row)), settings) : [];
     return [...continuity, ...tables];
+}
+
+function aggregateChanges(content, summaries, checkpoints, known, settings, existing) {
+    if (!settings.activeStateEnabled) return existing?.stateChanges;
+    const proposed = parseAggregateStateChanges(readSection(content, 'STATE_RESOLUTIONS'), summaries, checkpoints, known);
+    // A regeneration that returns [] can still be reusing a confirmed row.
+    // Keep its backing evidence. Projection will revalidate the actual source.
+    const rows = new Map((existing?.stateChanges ?? []).map(row => [JSON.stringify([row.id, row.evidenceSourceId, row.evidenceFingerprint]), row]));
+    for (const row of generationTrackedRows(proposed, settings)) {
+        const key = JSON.stringify([row.id, row.evidenceSourceId, row.evidenceFingerprint]);
+        if (!rows.has(key) && selectNormalChanges([row], known).length) rows.set(key, row);
+    }
+    return rows.size ? [...rows.values()] : undefined;
 }
 
 function priorNormalContext(store, settings, floor) {
@@ -850,7 +864,8 @@ export class MemorySummarizer {
                 throw Object.assign(new Error('聚合期间来源已改变，未提交过期 Checkpoint'), { code: 'SOURCE_CHANGED' });
             }
         };
-        const continuity = settings.continuityEnabled ? trackedContext(projectActiveState(this.generationStore(), endFloor).filter(isContinuityChange)) : '';
+        const known = trackedStateVersion ? projectActiveState(this.generationStore(), endFloor) : [];
+        const continuity = trackedContext(generationTrackedRows(known, settings));
         const userContent = `[PREVIOUS_CONTEXT]\n${state.content}\n\n[LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.generationStore(), startFloor - 1))}\n\n[ACTIVE_KEEP]\n${formatKeepItems(keeps)}${continuity}\n\n[NEW_SUMMARIES]\n${newSummaries}`;
         const systemPrompt = replacePromptVariables(generationPrompt(settings, 'checkpoint'), {
             startFloor,
@@ -865,6 +880,7 @@ export class MemorySummarizer {
                 return prepareMemoryResponse(result.content, 'Checkpoint', { source: userContent, prompt: settings.prompts.checkpoint });
             } });
             assertSources();
+            const stateChanges = aggregateChanges(cleaned, summaries, [], known, settings, existing);
             const record = {
                 id,
                 startFloor,
@@ -872,7 +888,9 @@ export class MemorySummarizer {
                 ...storyMetadata,
                 sourceVersions, checkpointVersions, ...(trackedStateVersion ? { trackedStateVersion } : {}),
                 ...(opening ? { openingContentFingerprint: opening.contentFingerprint } : {}),
-                content: incremental ? stripStructuredSections(cleaned, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP']) : cleaned,
+                content: incremental ? stripStructuredSections(cleaned, ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP',
+                    ...(settings.activeStateEnabled ? ['STATE_RESOLUTIONS'] : [])]) : cleaned,
+                ...(stateChanges ? { stateChanges } : {}),
                 ...(incremental ? {
                     memoryKind: 'state', previousCheckpointId: state.id,
                     summaryIds: summaries.map(item => item.messageId),
@@ -964,11 +982,16 @@ export class MemorySummarizer {
         }) + (openingContentFingerprint ? '\n首段阶段记忆已包含第0层开场事实。本次长期剧情必须继续压缩并继承这些必要初始事实，与后续事件合并，不新增独立常驻开场块。' : '');
         const incremental = settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy';
         const projection = projectLongFacts(this.generationStore(), startFloor - 1);
-        const newSummaries = this.store.currentSummaries(this.getChat())
-            .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor)
-            .sort((a, b) => a.floor - b.floor).map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
-        const sourceSummaries = this.store.currentSummaries(this.getChat())
-            .filter(item => isUsableMemory(item) && item.floor >= startFloor && item.floor <= endFloor);
+        const sourceChat = this.getChat();
+        const entries = new Map(getAssistantMessages(sourceChat).map(entry => [entry.floor, entry]));
+        const sourceSummaries = this.store.currentSummaries(sourceChat)
+            .filter(item => {
+                if (!isUsableMemory(item) || item.floor < startFloor || item.floor > endFloor) return false;
+                const entry = entries.get(item.floor);
+                return !entry || !this.summaryNeedsUpdate(entry, item, sourceChat);
+            })
+            .sort((a, b) => a.floor - b.floor);
+        const newSummaries = sourceSummaries.map(item => `[第${item.floor}层]\n${summaryText(item)}`).join('\n\n');
         const storyMetadata = storyMetadataRange([...sourceSummaries, ...sorted]);
         // A manual rewrite can use CPs while floor sources are unloaded. Keep
         // known range dates when the available sources provide no replacement.
@@ -991,8 +1014,9 @@ export class MemorySummarizer {
                 throw Object.assign(new Error('聚合期间来源已改变，未提交过期 Long Memory'), { code: 'SOURCE_CHANGED' });
             }
         };
-        const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${stageStartLabel(item)}-${item.endFloor}层]\n${item.content}`).join('\n\n');
-        const continuity = settings.continuityEnabled ? trackedContext(projectActiveState(this.generationStore(), endFloor).filter(isContinuityChange)) : '';
+        const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${stageStartLabel(item)}-${item.endFloor}层]\n${checkpointEvidenceText(item)}`).join('\n\n');
+        const known = trackedStateVersion ? projectActiveState(this.generationStore(), endFloor) : [];
+        const continuity = trackedContext(generationTrackedRows(known, settings));
         const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}${continuity}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
         let responseKey;
         try {
@@ -1002,6 +1026,7 @@ export class MemorySummarizer {
                 return prepareMemoryResponse(result.content, 'Long Memory', { source: userContent, prompt: settings.prompts.longMemory });
             } });
             assertSources();
+            const stateChanges = aggregateChanges(cleaned, sourceSummaries, sorted, known, settings, existing);
             const record = {
                 id,
                 startFloor,
@@ -1012,14 +1037,15 @@ export class MemorySummarizer {
                 ...(openingContentFingerprint ? { openingContentFingerprint } : {}),
                 sourceVersions, ...(trackedStateVersion ? { trackedStateVersion } : {}),
                 checkpointVersions: Object.fromEntries(sorted.map(cp => [cp.id, aggregateVersion(cp)])),
-                content: cleaned,
-                ...(incremental ? { memoryKind: 'facts', factUpdates: parseFactUpdates(cleaned, projection, newSummaries) } : {}),
+                content: settings.activeStateEnabled ? stripStructuredSections(cleaned, ['STATE_RESOLUTIONS']) : cleaned,
+                ...(stateChanges ? { stateChanges } : {}),
+                ...(incremental ? { memoryKind: 'facts' } : {}),
                 createdAt: new Date().toISOString(),
                 frozen: true,
                 manualEdited: false,
                 status: 'frozen',
             };
-            if (incremental) record.factUpdates = selectNormalFactUpdates(record.factUpdates, projection.facts);
+            if (incremental) record.factUpdates = selectNormalFactUpdates(parseFactUpdates(record.content, projection, newSummaries), projection.facts);
             await this.commitMemory(() => this.store.addLongMemory(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) }), assertSources);
             this.unsavedResponses.delete(responseKey);
             return record;

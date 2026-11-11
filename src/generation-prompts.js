@@ -1,6 +1,6 @@
 import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.27.16';
-import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.24';
-import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.23';
+import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.25';
+import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.25';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
     .replace('category(skill/attribute/reward/item/identity/knowledge/effect)',
@@ -31,7 +31,8 @@ const CONTINUITY_CHANGES = `
 export function generationPrompt(settings, stage) {
     const prompt = settings.prompts[stage] ?? '';
     const selected = CHARACTER_TABLES.filter(table => normalizeCharacterTables(settings.characterTables)[table.key]);
-    const tableRules = ['advanced', 'ensemble'].includes(settings.summaryMode) && settings.activeStateEnabled && selected.length
+    const enabled = settings.activeStateEnabled && selected.length > 0 && ['advanced', 'ensemble'].includes(settings.summaryMode);
+    const tableRules = enabled
         ? `\n【角色表格，仅更新已勾选项目】\n${selected.map(table => `${table.label}：${table.description}；${({ characters: 'state 类别 identity/skill/attribute/item/effect/history/personality/preference', relationships: 'state 类别 relationship', knowledge: 'state 类别 knowledge，entity 必须是知情者', tasks: '任务或承诺用 kind:thread，计划可用 state 类别 plan' })[table.key]}`).join('\n')}
 只维护这些表，其他表不要输出。${settings.prompts.state ?? ''}
 ${STATE_EXTRACTION_RULES.replace('沿用 Summary 的 Open 和 State 叙述，在最后可附 [Changes]，值为 JSON 数组，无变化写 []。', '在简短事件之后附 [Changes]，值为 JSON 数组，无变化写 []。不另写 Open 或 State 叙述。')}
@@ -44,8 +45,15 @@ ${STATE_EXTRACTION_RULES.replace('沿用 Summary 的 Open 和 State 叙述，在
         return withGlobalPrompt(settings, prompt + (prompt.includes(NORMAL_SUMMARY_LENGTH_RULES) ? '' : `\n${NORMAL_SUMMARY_LENGTH_RULES}`)
             + SUMMARY_TURN_SOURCE_RULES + (official ? `\n${CONTINUITY_SOURCE_RULES}` : '') + tableRules + changes + RECAP_PROSE_STYLE);
     }
-    // Narrative aggregates never expand into the optional role tables.
+    // The aggregate still writes its normal story, with only a small delta.
     const continuity = prompt === DEFAULT_PROMPTS[stage] ? `\n${CONTINUITY_SOURCE_RULES}
 把同一事件的动作、回应和结果放在同一条。只在新近发生或对解释本段因果有用时提到已确认的事实；事实增量已单独保存，勿在额外档案重复列出。区分历史上的人数与当前到岗结果，不把早期数字写成当前。` : '';
-    return withGlobalPrompt(settings, prompt + continuity + RECAP_PROSE_STYLE);
+    const source = stage === 'longMemory'
+        ? '优先引用 NEW_SUMMARIES 中的楼层摘要，source 填数字楼层。楼层摘要没有该事实时，可引用 CHECKPOINT_STATE 中的对应阶段，source 填其 Checkpoint ID。阶段来源时间只能确定到区间，若与同区间更精确的楼层状态冲突，保留待核对。'
+        : '只引用本段 NEW_SUMMARIES 中的楼层摘要，source 填数字楼层。';
+    const reconciliation = enabled ? `
+【持续事实核对】
+按原格式完成总结后附 [STATE_RESOLUTIONS]，值为 JSON 数组，无新增或变更写 []。核对并补充勾选的表（${selected.map(table => table.label).join('、')}）和重要物品经历、归属、人员配置。沿用 Changes 的 kind、entity、key、value、status、category、evidence、confirmed:true，加 source；已有事项复用 id，新增省略 id。可写 lifetime、condition、acquisition。任务完成／失败／取消用 completed／failed／cancelled，状态明确失效用 expired，已发生的 milestone 不删除、不改写。
+${source} evidence 连续逐字摘录至少4字，须明确支持对象、结果与变化；CURRENT_TRACKED_STATE、既有长期事实及此前背景仅用于核对和复用 ID。按证据发生顺序处理，只写可证实的新项、替代或失效。有可引用的冲突但无法确认变化时，复用该项 ID 并标 reviewOnly:true，留待核对。只提到旧计划、久未登场或省略时保留现状。重要的已完成经历用 milestone，人员实际配置用 staffing，物品当前归属用 ownership。角色分别记录身份和知情范围，不回显整表，不在长期事实增量中重复列出同一项。` : '';
+    return withGlobalPrompt(settings, prompt + continuity + RECAP_PROSE_STYLE + reconciliation);
 }

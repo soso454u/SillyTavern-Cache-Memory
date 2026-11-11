@@ -1,7 +1,7 @@
 import { fnv1a } from './utils.js?v=1.27.16';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
 import { storyTimeForEvidence } from './story-metadata.js?v=1.27.16';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.23';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.25';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
@@ -176,19 +176,24 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
     }
     // A terminal transient must also retire an old typed Long entry in the
     // projection, even though temporary states never create new Long facts.
-    for (const item of projectActiveState(store, throughFloor).filter(row => !row.needsReview && !isTrackedActive(row))) {
+    const tracked = projectActiveState(store, throughFloor).filter(row => !row.needsReview);
+    const exact = (fact, item) => fact.stateId === item.id
+        || [...item.history, item].some(old => matchesTrackedValue(fact.text, item, old.value, old.key));
+    // New verified rows have an evidence date. An exact copy of one of their
+    // values in a later-written Long has no separate evidence of a transition.
+    const factIsNewer = (fact, item) => fact.floor > item.sourceFloor
+        && !(item.evidenceStartFloor !== undefined && exact(fact, item));
+    for (const item of tracked.filter(row => !isTrackedActive(row))) {
         for (const fact of facts.values()) {
-            if (fact.status !== 'active' || fact.floor > item.sourceFloor) continue;
-            if (fact.stateId === item.id || isAtomicTrackedEntry(fact.text, item)
-                || [...item.history, item].some(old => matchesTrackedValue(fact.text, item, old.value, old.key)))
+            if (fact.status !== 'active' || factIsNewer(fact, item)) continue;
+            if (exact(fact, item) || isAtomicTrackedEntry(fact.text, item))
                 facts.set(fact.id, { ...fact, status: 'retired', reason: item.value, evidence: item.evidence });
         }
     }
     if (includeTracked) {
-        for (const item of projectActiveState(store, throughFloor).filter(row => row.kind === 'state' && !row.needsReview && row.lifetime !== 'temporary' && row.acquisition !== 'pending')) {
-            const matches = [...facts.values()].filter(fact => fact.status === 'active' && (fact.stateId === item.id
-                || isAtomicTrackedEntry(fact.text, item) || [...item.history, item].some(old => matchesTrackedValue(fact.text, item, old.value, old.key))));
-            if (matches.some(fact => fact.floor > item.sourceFloor)) continue;
+        for (const item of tracked.filter(row => row.kind === 'state' && row.lifetime !== 'temporary' && row.acquisition !== 'pending')) {
+            const matches = [...facts.values()].filter(fact => fact.status === 'active' && (exact(fact, item) || isAtomicTrackedEntry(fact.text, item)));
+            if (matches.some(fact => factIsNewer(fact, item))) continue;
             if (includeTracked === 'existing' && !matches.length) continue;
             const id = matches[0]?.id ?? item.id;
             for (const duplicate of matches.slice(1)) facts.set(duplicate.id, { ...duplicate, status: 'superseded' });

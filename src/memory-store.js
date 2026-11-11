@@ -1,6 +1,6 @@
 import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages } from './utils.js?v=1.27.16';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.23';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.23';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.25';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.25';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -491,6 +491,7 @@ export class MemoryStore {
         item.manual = true; item.evidence = '用户手动确认';
         item.sequence = Math.max(0, ...Object.values(store.stateOverrides).map(row => Number(row.sequence) || 0)) + 1;
         delete item.history;
+        delete item.reviewConflicts;
         store.stateOverrides[`${item.id}:${item.sequence}`] = item;
         for (const aggregate of [...store.checkpoints, ...store.longMemories]) {
             if (aggregate.endFloor < source.floor) continue;
@@ -748,7 +749,8 @@ export const summaryVersion = item => `s2:${fnv1a(JSON.stringify(stableClone([..
     ...(item && Object.hasOwn(item, 'userSourceFingerprint') ? [item.userSourceFingerprint] : [])])))}`;
 export const summaryVersionMatches = (item, version) => summaryVersion(item) === version || (!String(version).startsWith('s2:') && fnv1a(JSON.stringify(summaryFields(item))) === version);
 export const aggregateVersion = item => item ? fnv1a(JSON.stringify(stableClone([item.id, item.startFloor, item.endFloor, item.content, item.factUpdates, item.continuityState,
-    ...(item.openingContentFingerprint ? [item.openingContentFingerprint] : [])]))) : '';
+    ...(item.openingContentFingerprint ? [item.openingContentFingerprint] : []),
+    ...(item.stateChanges?.length ? [item.stateChanges] : [])]))) : '';
 export function memoryHealth(item) {
     if (!item) return { code: 'missing', label: '尚未生成 / 记录不存在' };
     if (item.status === 'failed') return { code: 'failed', label: `生成失败：${item.error || '未提供错误'}` };

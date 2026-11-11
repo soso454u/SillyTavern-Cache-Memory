@@ -23,7 +23,12 @@ test('plain Summary has a total budget and optional table extraction appears onl
     assert.match(generationPrompt(normal, 'summary'), /\[Changes\][\s\S]*milestone/);
     assert.doesNotMatch(generationPrompt(normal, 'summary'), /【角色表格/);
     assert.match(generationPrompt(group, 'summary'), /【角色表格/);
-    assert.equal(generationPrompt(group, 'checkpoint'), generationPrompt(normal, 'checkpoint'));
+    for (const stage of ['checkpoint', 'longMemory']) {
+        const narrative = generationPrompt(normal, stage);
+        assert.doesNotMatch(narrative, /\[STATE_RESOLUTIONS\]/);
+        assert.ok(generationPrompt(group, stage).startsWith(narrative));
+        assert.match(generationPrompt(group, stage), /\[STATE_RESOLUTIONS\]/);
+    }
 });
 
 test('mode controls are click buttons above the main menus, and both pages share the same selection', () => {

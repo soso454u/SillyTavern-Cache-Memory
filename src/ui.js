@@ -1,21 +1,21 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.24';
+import { generationPrompt } from './generation-prompts.js?v=1.27.25';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.24';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.24';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.25';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.25';
 import { HistoryBackfill } from './history-backfill.js?v=1.27.16';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.23';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.25';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.18';
 import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.17';
-import { parseFloorSummary } from './summarizer.js?v=1.27.24';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.23';
+import { parseFloorSummary } from './summarizer.js?v=1.27.25';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.25';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.23';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.23';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.25';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.25';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -2072,7 +2072,7 @@ export class CacheMemoryUI {
         }
         root.append(choices);
         if (!enabled) {
-            root.append(this.element('p', '', '角色表格当前关闭，仍可查看和手动编辑已有资料。开启后，才随新剧情维护勾选的表。'));
+            root.append(this.element('p', '', '角色表格当前关闭，仍可查看和手动编辑已有资料。开启后，小总结、阶段总结和长期总结会在各自生成时更新勾选的表。'));
             const button = this.element('button', 'menu_button', '开启角色表格'); button.dataset.enableCharacterTables = 'true'; root.append(button);
         }
         if (enabled && !Object.values(selected).some(Boolean)) root.append(this.element('p', '', '目前未启用任何表，不会提取或注入表格内容；已有资料照常可看。'));
@@ -2140,21 +2140,25 @@ export class CacheMemoryUI {
         for (const [sectionTitle, items] of [['当前记录', active], ['已结束 / 历史结果', archived], ['待核对', review]]) {
             if (!advanced) root.append(this.element('h4', '', `${sectionTitle} · ${items.length}`));
             for (const item of items) {
+                const sourceLabel = item.evidenceStartFloor < item.sourceFloor
+                    ? `第 ${item.evidenceStartFloor} 至 ${item.sourceFloor} 层` : `第 ${item.sourceFloor} 层`;
                 const card = this.element('details', 'cache-memory-card');
                 card.append(this.element('summary', '', `${item.needsReview ? '⚠ 待核对 · ' : ''}${item.entity} · ${item.key} · ${item.value}`));
-                card.append(this.element('p', '', `${item.id} · 来源第 ${item.sourceFloor} 层 · ${trackedStatusLabel(item.status)} · ${item.lifetime === 'temporary' ? '临时' : '长期'}`));
+                card.append(this.element('p', '', `${item.id} · 来源${sourceLabel} · ${trackedStatusLabel(item.status)} · ${item.lifetime === 'temporary' ? '临时' : '长期'}`));
                 card.append(this.element('p', '', `证据：${item.evidence || '用户确认'}；条件：${item.condition || '未提供'}`));
                 for (const prior of item.history) card.append(this.element('small', 'cache-memory-state-history', `第 ${prior.sourceFloor} 层：${prior.value} (${prior.status})`));
+                for (const conflict of item.reviewConflicts ?? []) card.append(this.element('small', 'cache-memory-state-history',
+                    `待核对 · ${conflict.sourceId}（截至第 ${conflict.sourceFloor} 层）：${conflict.value}。证据：${conflict.evidence}`));
                 card.append(formFor(item));
                 if (advanced) {
                     const row = this.element('tr');
                     const detail = this.element('td');
-                    const title = `${item.needsReview ? '⚠ 待核对 · ' : ''}${item.key}`;
+                    const title = `${item.needsReview || item.reviewConflicts?.length ? '⚠ 待核对 · ' : ''}${item.key}`;
                     card.querySelector('summary').textContent = title;
                     const button = this.element('button', 'cache-memory-person-field', title);
                     button.type = 'button'; button.dataset.personField = item.id; button.setAttribute('aria-expanded', 'false');
                     detail.append(button);
-                    row.append(detail, this.element('td', '', item.value), this.element('td', '', `第 ${item.sourceFloor} 层 · ${trackedStatusLabel(item.status)}`));
+                    row.append(detail, this.element('td', '', item.value), this.element('td', '', `${sourceLabel} · ${trackedStatusLabel(item.status)}`));
                     const editorRow = this.element('tr'); editorRow.hidden = true;
                     const editorCell = this.element('td'); editorCell.colSpan = 3; editorCell.append(card); editorRow.append(editorCell);
                     button.addEventListener('click', () => { editorRow.hidden = false; card.open = !card.open; this.resizeTextareas(card); }, { signal: this.controller.signal });
