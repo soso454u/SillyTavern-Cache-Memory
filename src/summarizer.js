@@ -1,16 +1,16 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.30';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.30';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.30';
-import { generationPrompt } from './generation-prompts.js?v=1.27.30';
+import { isOutputTruncated } from './api-client.js?v=1.27.31';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.31';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.31';
+import { generationPrompt } from './generation-prompts.js?v=1.27.31';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.30';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.31';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.30';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.30';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.30';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.30';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.30';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.31';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.31';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.31';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.31';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.31';
 import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.16';
 import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.16';
 
@@ -199,7 +199,7 @@ export class MemorySummarizer {
         return recovery.promise;
     }
 
-    async completeWithRetry(request, assertActive, key, { label, retryDelay = this.retryDelay, onRetry = () => {}, validate = result => result } = {}) {
+    async completeWithRetry(request, assertActive, key, { label, retryDelay = this.retryDelay, onRetry = () => {}, validate = result => result, formatRetry = '' } = {}) {
         assertActive();
         if (this.unsavedResponses.has(key)) return this.unsavedResponses.get(key);
         const chatId = this.store.current().chatId, revision = this.contextRevision;
@@ -207,10 +207,12 @@ export class MemorySummarizer {
             if (chatId !== this.store.current().chatId || revision !== this.contextRevision) return;
             try { this.onGeneration({ ...event, label, chatId }); } catch { /* Logging is observational. */ }
         };
+        let needsFormatReminder = false;
         // Cache only validated responses. Network and content failures share one budget.
         const result = await retryOperation(async () => {
             report({ type: 'start' });
-            const response = await this.apiClient.complete({ ...request, onGeneration: report });
+            const response = await this.apiClient.complete({ ...request, onGeneration: report,
+                systemPrompt: needsFormatReminder ? request.systemPrompt + formatRetry : request.systemPrompt });
             assertActive();
             if (isOutputTruncated(response.finishReason)) {
                 throw Object.assign(new Error('模型接口报告输出达到 token 上限，已停止处理截断的记忆结果'), { code: 'OUTPUT_TRUNCATED' });
@@ -220,8 +222,9 @@ export class MemorySummarizer {
             return validated;
         }, { signal: request.signal, assertActive, delay: retryDelay,
             onRetry: info => {
+                needsFormatReminder ||= Boolean(formatRetry && info.error.code === 'INVALID_MEMORY_RESPONSE');
                 report({ type: 'retry', waitMs: info.waitMs, attempt: info.attempt, maxRetries: info.maxRetries });
-                this.onStatus('busy', `生成请求失败，${info.waitMs / 1000} 秒后自动重试 ${info.attempt}/${info.maxRetries}：${info.error.message}`);
+                this.onStatus('busy', `${label}：${info.error.message}；${info.waitMs / 1000} 秒后重试（${info.attempt}/${info.maxRetries}）`);
                 onRetry(info);
             } }).catch(error => {
                 report({ type: 'failed' });
@@ -439,10 +442,12 @@ export class MemorySummarizer {
                 signal,
             };
             responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);
-            const parsed = await this.completeWithRetry(request, assertContext, responseKey, { label: `小总结 · 第 ${entry.floor} 层`, retryDelay, onRetry, validate: result => {
-                const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: evidenceSource, prompt: settings.prompts.summary });
-                return parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
-            } });
+            const parsed = await this.completeWithRetry(request, assertContext, responseKey, { label: `小总结 · 第 ${entry.floor} 层`, retryDelay, onRetry,
+                formatRetry: summaryRetryInstruction(settings.prompts.summary),
+                validate: result => {
+                    const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: evidenceSource, prompt: settings.prompts.summary });
+                    return parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
+                } });
             parsed.storyTime = sourceMetadata.storyTime;
             parsed.location = sourceMetadata.location || locationFromNarration(parsed.location, sourceMetadata.locationSource);
             if (parsed.format === 'structured') parsed.raw = buildStructuredSummary(parsed);
@@ -539,7 +544,8 @@ export class MemorySummarizer {
                 errorCode: error.code,
                 errorDiagnostics: error.diagnostics,
             }, { overwrite: true });
-            this.onStatus('error', `第 ${entry.floor} 层摘要失败：${error.message}`, error);
+            const hint = error.code === 'INVALID_MEMORY_RESPONSE' ? '。可在「模型接口 → 高级生成设置 → 生成日志」查看模型输出。' : '';
+            this.onStatus('error', `第 ${entry.floor} 层摘要失败：${error.message}${hint}`, error);
             throw error;
         } finally {
             this.inFlight.delete(flightKey);

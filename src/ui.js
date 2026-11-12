@@ -1,21 +1,21 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.30';
+import { generationPrompt } from './generation-prompts.js?v=1.27.31';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.30';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.30';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.31';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.31';
 import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.27';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.30';
-import { cleanGeneratedResponse } from './response-cleanup.js?v=1.27.30';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.31';
+import { cleanGeneratedResponse } from './response-cleanup.js?v=1.27.31';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.30';
-import { parseFloorSummary } from './summarizer.js?v=1.27.30';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.30';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.31';
+import { parseFloorSummary } from './summarizer.js?v=1.27.31';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.31';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.30';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.30';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.31';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.31';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -646,7 +646,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.30', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.31', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();

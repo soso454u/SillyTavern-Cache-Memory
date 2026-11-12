@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MemorySummarizer } from '../src/summarizer.js';
+import { MemorySummarizer, parseFloorSummary } from '../src/summarizer.js';
 import { MemoryStore } from '../src/memory-store.js';
 import { normalizeSettings } from '../src/defaults.js';
 import { getAssistantMessages } from '../src/utils.js';
@@ -73,6 +73,59 @@ test('minor marker deviations keep real events without another request', () => {
     for (const text of ['[Event]: 无', '**[Event]**: I cannot generate the requested content.', '[Event]: <think>只有思考</think>', '[Title]: 只有标题']) {
         assert.throws(() => prepareMemoryResponse(text, 'Summary', { prompt: '[SUMMARY]\n[Event]' }), { code: 'INVALID_MEMORY_RESPONSE' });
     }
+});
+
+test('translated and Markdown Summary headings recover only explicitly labelled plot', () => {
+    const prompt = '[SUMMARY]\n[Event]';
+    for (const text of [
+        '## 楼层摘要\n标题：交信\n**剧情梗概：** 医师收下信件。\n### 未解决事项\n寄信人仍不明。',
+        '[SUMMARY]\r[Title] 交信\r**[Event]:** 医师收下信件。\r[Open] 寄信人仍不明。',
+        '### Summary\n__Title: 交信__\n### Event\n医师收下信件。\nOpen: 寄信人仍不明。',
+    ]) {
+        const record = parseFloorSummary(prepareMemoryResponse(text, 'Summary', { prompt }));
+        assert.equal(record.title, '交信');
+        assert.equal(record.event, '医师收下信件。');
+        assert.equal(record.open, '寄信人仍不明。');
+    }
+    for (const text of ['医师收下信件。', '标题：交信', '剧情：暂无\n**状态增量：** []', '[Event]\n[STATE_RESOLUTIONS]\n[]',
+        '### Event\n抱歉，我无法完成此请求。', '[Event]\n**暂无**']) {
+        assert.throws(() => prepareMemoryResponse(text, 'Summary', { prompt }), { code: 'INVALID_MEMORY_RESPONSE' });
+    }
+    const narrative = '医师收下信件。\n时间：信上写着明天见。';
+    assert.equal(parseFloorSummary(prepareMemoryResponse(`[SUMMARY]\n[Event]\n${narrative}`, 'Summary', { prompt })).event, narrative);
+    assert.equal(prepareMemoryResponse('标题：交信\n剧情：医师收下信件。', 'Summary', { prompt: '输出两行纯文本' }), '标题：交信\n剧情：医师收下信件。');
+});
+
+test('a Summary format error changes the next prompt, preserving the source and retry budget', async () => {
+    const f = fixture(), requests = [];
+    f.summarizer.apiClient.complete = async request => {
+        requests.push(request);
+        if (requests.length === 1) throw Object.assign(new Error('HTTP 503'), { status: 503 });
+        if (requests.length === 2) return { content: '[SUMMARY]\n[Title]\n只有标题' };
+        assert.match(request.systemPrompt, /小总结输出格式重试.*\[Event\]/);
+        return { content: summary };
+    };
+    const entry = getAssistantMessages(f.chat)[0];
+    const record = await f.summarizer.summarizeMessage(entry.messageId, { deferAggregates: true });
+    assert.equal(record.event, '信使把信交给医师，两人约定天亮前见面。');
+    assert.equal(requests[0].systemPrompt, requests[1].systemPrompt);
+    assert.ok(requests[2].systemPrompt.startsWith(requests[1].systemPrompt));
+    assert.ok(requests.every(request => request.userContent === requests[0].userContent && request.maxTokens === requests[0].maxTokens));
+    assert.deepEqual(f.waits, RETRY_DELAYS.slice(0, 2));
+    assert.ok(f.statuses.some(([state, message]) => state === 'busy' && /第 1 层.*缺少可识别的剧情栏/.test(message)));
+});
+
+test('persistent format failures retain existing memory and point to the generation log', async () => {
+    const f = fixture(); f.seedSummaries();
+    const entry = getAssistantMessages(f.chat)[0], before = structuredClone(f.store.getSummary(entry.messageId));
+    const requests = [];
+    f.summarizer.apiClient.complete = async request => { requests.push(request); return { content: '[Event]\n无' }; };
+    await assert.rejects(f.summarizer.summarizeMessage(entry.messageId, { overwrite: true, deferAggregates: true }), { code: 'INVALID_MEMORY_RESPONSE' });
+    assert.deepEqual(f.store.getSummary(entry.messageId), before);
+    assert.deepEqual(f.waits, RETRY_DELAYS);
+    assert.equal(requests.length, 4);
+    assert.ok(requests.slice(1).every(request => request.systemPrompt === requests[1].systemPrompt));
+    assert.ok(f.statuses.some(([state, message]) => state === 'error' && /第 1 层.*占位词.*生成日志/.test(message)));
 });
 
 function screenshotFixture() {

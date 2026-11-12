@@ -1,5 +1,5 @@
 import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { playerCorrectionEvidence } from './summary-source.js?v=1.27.30';
+import { playerCorrectionEvidence } from './summary-source.js?v=1.27.31';
 import { fnv1a } from './utils.js?v=1.27.16';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
