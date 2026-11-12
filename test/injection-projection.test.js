@@ -12,6 +12,31 @@ const summary = (floor, changes) => ({ messageId: `m${floor}`, floor, event: '�
 const cp = (n, content) => ({ id: `checkpoint-${n}`, startFloor: n * 5 - 4, endFloor: n * 5, memoryKind: 'state', content, status: 'frozen', frozen: true });
 const long = (n, updates, continuityState = '') => ({ id: `long-${n}`, startFloor: n * 50 - 49, endFloor: n * 50, memoryKind: 'facts', content: '完整原始模型输出', factUpdates: updates, continuityState, status: 'frozen', frozen: true });
 
+test('new named staffing evidence replaces a legacy pending status while preserving old terms and durable history', () => {
+    const store = createEmptyStore('projection');
+    const appointment = '陈姨来家做住家管事已经约定，尚未到岗；工钱由主人付。';
+    const other = '李姨来家做住家管事已经约定，尚未到岗。';
+    store.longMemories.push(long(1, [
+        { action: 'add', id: 'pending-job', text: appointment }, { action: 'add', id: 'other-job', text: other },
+        { action: 'add', id: 'past-plan', text: '前一晚的一次性晚餐安排仍有效。' },
+    ]));
+    store.checkpoints.push(cp(11, '[Stage Story]\n- 入住后众人安排了照料。'));
+    const milestone = { ...skill, category: 'milestone', entity: '遥控车', key: '已交付', value: '已经交给修理师；拨片未扳' };
+    const provisional = { ...milestone, entity: '夜灯', key: '安装·方案已定', value: '已提出，选用旧灯待取' };
+    const staff = { ...skill, category: 'staffing', entity: '陈姨', key: '任职·住家管事', value: '已入住一楼', evidence: '陈姨住在一楼' };
+    store.summaries.m20 = summary(20, [milestone, provisional]);
+    store.summaries.m53 = summary(53, [staff]);
+    const before = structuredClone(store);
+    const value = buildInjection(store, normalizeSettings({ injectionMode: 'long_checkpoint', strictCacheMode: false }));
+    assert.match(value, /陈姨 · 任职·住家管事：已入住一楼/);
+    assert.match(value, /工钱由主人付/);
+    assert.doesNotMatch(value, /陈姨[^\n]*尚未到岗|拨片未扳|旧灯待取/);
+    assert.match(value, /截至第50层：李姨[^\n]*尚未到岗/);
+    assert.match(value, /截至第50层：前一晚的一次性晚餐安排仍有效/);
+    assert.match(value, /遥控车 · 已交付：已经交给修理师/);
+    assert.deepEqual(store, before);
+});
+
 test('normal memory reading rules distinguish timelines, knowledge and settled tasks in strict and non-strict injection without altering stored facts', () => {
     const store = createEmptyStore('reading-rules');
     store.checkpoints.push(cp(1, '[Story So Far]\n- 旧记录：医生在未来预演里离开，当前尚未发生\n[Secrets & Knowledge]\n- 医生已读信，守卫未读\n[Open Threads]\n- 已结束 医生 · 送信：已完成，奖励未领取 (completed，历史结果)'));

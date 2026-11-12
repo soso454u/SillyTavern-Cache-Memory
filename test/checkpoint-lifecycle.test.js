@@ -97,7 +97,8 @@ test('new CP requests produce narrative without a second role sheet or a new sta
     for (const entry of entries) store.addSummary({ messageId: entry.messageId, floor: entry.floor, event: '旅人在暴雨中救出村民', status: 'frozen', stateChanges: entry.floor === 1 ? [{ ...injury, id: stateId(injury) }] : [] });
     const before = structuredClone(store.current()); let calls = 0;
     const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => settings, apiClient: { complete: async request => {
-        calls++; assert.doesNotMatch(request.systemPrompt, /STATE_RESOLUTIONS|CURRENT_TRACKED_STATE/);
+        calls++; assert.match(request.systemPrompt, /STATE_RESOLUTIONS/);
+        assert.doesNotMatch(request.systemPrompt, /勾选的表/);
         assert.doesNotMatch(request.userContent, /CURRENT_TRACKED_STATE|SUMMARY_RESULTS/);
         return { content: '[CHECKPOINT]\n[Stage Story]\n旅人在暴雨中救出村民，左腿受伤。' };
     } } });

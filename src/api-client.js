@@ -1,4 +1,4 @@
-import { normalizeOutputLimits, normalizeOutputTokenLimit } from './defaults.js?v=1.27.25';
+import { normalizeOutputLimits, normalizeOutputTokenLimit } from './defaults.js?v=1.27.26';
 
 export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'outputLimitVersion', 'limitOutputTokens', 'tokenLimitParameter', 'generationTransport']);
 

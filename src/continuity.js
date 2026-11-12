@@ -1,7 +1,7 @@
 import { fnv1a } from './utils.js?v=1.27.16';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.27.16';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.25';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.27.26';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.26';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
@@ -22,11 +22,13 @@ function lines(text) {
         .filter(line => line && !/^(无|暂无|none|\[none\])。?$/i.test(line));
 }
 
-export function summaryText(item) {
+export function summaryText(item, { includeTransitionEvidence = false } = {}) {
     // Manual edits and legacy XML records use their current visible fields.
-    return item.format === 'structured'
+    const text = item.format === 'structured'
         ? buildStructuredSummary(parseStructuredSummary(item.raw) ?? item)
         : `${item.title}\n人物：${item.characters}\n事件：${item.event}`;
+    return includeTransitionEvidence && item.transitionEvidence
+        ? `${text}\n[TURN_FACTS]\n${JSON.stringify(item.transitionEvidence)}` : text;
 }
 
 export function normalizeKeepText(value) {
@@ -151,6 +153,24 @@ export function previousState(store, startFloor) {
     };
 }
 
+function reconcileLegacyAppointment(fact, tracked) {
+    const pending = fact.text.match(/^(.+?)[，,]\s*(?:尚未|还未|未)(?:到岗|上岗|入住)(?=[；;。]|$)(.*)$/u);
+    if (!pending) return fact;
+    const [, proposal, rest] = pending;
+    const newer = tracked.find(item => {
+        if (item.category !== 'staffing') return false;
+        const role = item.key.match(/^任职[·：:]([^；：:\n]+)$/u)?.[1];
+        if (!role) return false;
+        // Match an old appointment for this named person in the same role.
+        const suffix = proposal.startsWith(item.entity) ? proposal.slice(item.entity.length) : '';
+        const arrived = /(?:已经?\s*(?:到岗|上岗|入住)|住在|住进|现住)/u;
+        return /^(?:来家|来做|受聘|获聘|被聘|应聘|入职|担任|任职)/u.test(suffix) && suffix.includes(role)
+            && [item, ...item.history].some(row => row.status === 'active' && row.sourceFloor > fact.floor
+                && row.evidence?.includes(item.entity) && arrived.test(row.evidence) && arrived.test(row.value));
+    });
+    return newer ? { ...fact, text: `第${fact.floor}层的原安排：${proposal}${rest}`, asOfFloor: fact.floor } : fact;
+}
+
 export function projectLongFacts(store, throughFloor = Infinity, { includeTracked = false } = {}) {
     const facts = new Map();
     const legacy = [];
@@ -177,6 +197,11 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
     // A terminal transient must also retire an old typed Long entry in the
     // projection, even though temporary states never create new Long facts.
     const tracked = projectActiveState(store, throughFloor).filter(row => !row.needsReview);
+    for (const fact of facts.values()) {
+        if (fact.status !== 'active' || fact.stateId) continue;
+        const projected = reconcileLegacyAppointment(fact, tracked);
+        if (projected !== fact) facts.set(fact.id, projected);
+    }
     const exact = (fact, item) => fact.stateId === item.id
         || [...item.history, item].some(old => matchesTrackedValue(fact.text, item, old.value, old.key));
     // New verified rows have an evidence date. An exact copy of one of their

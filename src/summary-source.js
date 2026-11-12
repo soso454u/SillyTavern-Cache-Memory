@@ -70,6 +70,19 @@ export function formatSummaryUserSource(source) {
     return source.messages.length ? `\n\n[CURRENT_USER_INPUT]\n${JSON.stringify(source.messages)}` : '';
 }
 
+export function timeJumpEvidence(source) {
+    const jump = /^(?:(?:(?:时间)?(?:过去了?|转眼(?:就)?过了?))?[零〇一二两三四五六七八九十百\d]+(?:个)?(?:年|月|周|天)(?:过去了?|以后|后)|(?:时间)?(?:过去了?|转眼(?:就)?过了?)[零〇一二两三四五六七八九十百\d]+(?:个)?(?:年|月|周|天)|(?:one|two|three|a|an|\d+) (?:years?|months?|weeks?|days?) (?:later|(?:has |have )?passed))(?=[\s,，。.!！:：]|$)/iu;
+    for (const { text } of source.messages) {
+        const line = text.trim().split(/\r?\n/u)[0];
+        if (!jump.test(line)) continue;
+        const beforeScene = line.split(/[,，。；;]\s*(?=今天|此刻|眼下|镜头|[Tt]oday\b|[Rr]ight now\b)/u, 1)[0];
+        if (beforeScene.length <= 360) return beforeScene;
+        const window = beforeScene.slice(0, 360);
+        return window.slice(0, Math.max(window.lastIndexOf('。'), window.lastIndexOf('，'), window.lastIndexOf(';'), window.lastIndexOf('.')) + 1) || line.match(jump)[0];
+    }
+    return '';
+}
+
 export function summaryStoryBlock(row) {
     const fields = { ...(parseStructuredSummary(row.raw) ?? {}), ...row };
     const meaningful = text => text && !/^(?:无|none)[。.]?$/iu.test(String(text).trim());

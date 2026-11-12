@@ -1,6 +1,6 @@
-import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.27.25';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.25';
-import { projectLongFacts } from './continuity.js?v=1.27.25';
+import { normalizeStore, STORE_VERSION, mergeMemoryStores, applyMemoryTombstones } from './memory-store.js?v=1.27.26';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.26';
+import { projectLongFacts } from './continuity.js?v=1.27.26';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
@@ -26,7 +26,7 @@ export function inspectMemoryImport(data, chatId, { assistants = [] } = {}) {
     const warnings = legacyIdentity ? ['旧版文件的聊天名和全部摘要来源已与当前聊天核对'] : [];
     for (const [id, row] of Object.entries(data.summaries)) {
         if (!object(row) || row.messageId !== id || !Number.isInteger(row.floor) || row.floor < 1) throw new Error(`Summary ${id} 身份或楼层格式错误`);
-        for (const field of ['raw', 'event', 'state', 'open', 'keep', 'quote', 'title', 'characters', 'sourceFingerprint', 'sourceContentFingerprint']) if (row[field] != null && typeof row[field] !== 'string') throw new Error(`Summary ${id} 的 ${field} 格式错误`);
+        for (const field of ['raw', 'event', 'state', 'open', 'keep', 'quote', 'title', 'characters', 'sourceFingerprint', 'sourceContentFingerprint', 'transitionEvidence']) if (row[field] != null && typeof row[field] !== 'string') throw new Error(`Summary ${id} 的 ${field} 格式错误`);
         if (row.stateChanges != null && (!Array.isArray(row.stateChanges) || row.stateChanges.some(change => !object(change) || !change.id || !['thread', 'state'].includes(change.kind) || typeof change.entity !== 'string' || typeof change.key !== 'string' || typeof change.value !== 'string'))) throw new Error(`Summary ${id} 的状态变化格式错误`);
     }
     for (const section of ['checkpoints', 'longMemories']) {

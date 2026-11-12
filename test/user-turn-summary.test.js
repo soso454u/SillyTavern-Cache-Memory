@@ -8,6 +8,7 @@ import { generationPrompt } from '../src/generation-prompts.js';
 import { getAssistantMessages } from '../src/utils.js';
 import { refreshSnapshot } from '../src/cache-control.js';
 import { filterCoveredHistory } from '../src/history-handoff.js';
+import { projectActiveState } from '../src/active-state.js';
 
 const user = '两年过去，林舟三十岁，许岚二十二岁。林舟这两个月才意识到自己喜欢许岚；许岚仍只把她当作欣赏的前辈，并不知道她已动心。林舟长期留在研究所，许岚经常外出交流，仍主要与林舟合作。';
 const reply = '许岚走进研究室，笑问：“今天怎么破例？”林舟回答：“这次就算了。”';
@@ -80,6 +81,41 @@ test('explicit user time/place fills missing reply metadata, and the reply’s e
     f.chat[1].mes = '<time>2031/05/06 11:45</time><location>会议室</location><content>会议已经结束。</content>';
     row = await f.summarizer.summarizeMessage(f.entry().messageId, { overwrite: true, deferAggregates: true });
     assert.equal(row.storyTime, '2031/05/06 11:45'); assert.equal(row.location, '会议室');
+});
+
+test('Normal preserves bounded time-jump evidence and later stages recover important omitted changes in their own calls', async () => {
+    const advance = '过去了一年，小宁三岁半了，大家都长了一岁，小宁活泼许多，会叫叔叔和阿姨，话也多了。陈姨住在一楼，腿伤好转。今天大家一起吃饭。';
+    const raw = '<content>办公室很安静，阿妍十三岁了，正翻开一本书。她把便条夹进账本。</content>'
+        + '<choices>下一幕去学校食堂。</choices><location>学校食堂</location>';
+    const f = fixture([{ mes: '这是开场白。' }, { is_user: true, mes: advance }, { mes: raw, gen_started: 'jump' }]);
+    const row = (entity, key, value, evidence, category = 'profile') => ({ kind: 'state', entity, key, value, evidence, category, confirmed: true, status: 'active', source: 1 });
+    const age = row('阿妍', '年龄', '十三岁', '阿妍十三岁了');
+    const wrongAge = row('阿妍', '年龄', '三岁', '阿妍十三岁了');
+    const inventedTrait = row('阿妍', '性格', '凡事都记成账', '她把便条夹进账本');
+    const language = row('小宁', '语言能力', '会叫叔叔和阿姨，话多', '会叫叔叔和阿姨，话也多了');
+    const staff = row('陈姨', '任职·住家管事', '已入住一楼', '陈姨住在一楼', 'staffing');
+    f.summarizer.apiClient.complete = async request => {
+        f.calls.push(request);
+        if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) return { content: `[STORY_ARC]\n一年来家中照护安排逐步稳定。\n[LONG_MEMORY]\n无\n[STATE_RESOLUTIONS]\n${JSON.stringify([staff])}` };
+        if (request.userContent.startsWith('[PREVIOUS_CONTEXT]')) return { content: `[CHECKPOINT]\n[Stage Story]\n阿妍在办公室看书。\n[STATE_RESOLUTIONS]\n${JSON.stringify([language])}` };
+        return { content: `[SUMMARY]\n[Location]\n办公室\n[Event]\n阿妍在办公室看书。\n[Changes]\n${JSON.stringify([age, wrongAge, inventedTrait])}` };
+    };
+    const summary = await f.summarizer.summarizeEntry(f.entry(), { deferAggregates: true });
+    assert.equal(summary.location, '办公室');
+    assert.equal(summary.stateChanges.length, 1);
+    assert.equal(summary.transitionEvidence, advance.split('。今天')[0]);
+    assert.match(f.calls[0].userContent, /\[TIME_JUMP\]/);
+    assert.doesNotMatch(f.calls[0].userContent, /学校食堂/);
+    const cp = await f.summarizer.generateCheckpoint(1, 1);
+    await f.summarizer.generateLongMemory([cp]);
+    assert.equal(f.calls.length, 3);
+    assert.ok(f.calls.every(request => request.systemPrompt.includes('实际支出、承担方、付款结果及财务约定')));
+    for (const request of f.calls.slice(1)) {
+        assert.match(request.userContent, /TURN_FACTS[\s\S]*陈姨住在一楼/);
+        assert.doesNotMatch(request.userContent, /今天大家一起吃饭/);
+    }
+    const tracked = projectActiveState(f.store.current());
+    assert.deepEqual(tracked.map(item => item.value), [age.value, language.value, staff.value]);
 });
 
 test('user edits during an in-flight request discard its late response and do not swallow a new summary request', async () => {

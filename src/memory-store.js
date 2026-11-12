@@ -1,6 +1,6 @@
 import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages } from './utils.js?v=1.27.16';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.25';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.25';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.26';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.26';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -746,7 +746,8 @@ export class MemoryStore {
 export const summaryIsCurrent = item => item && item.frozen !== false && item.status !== 'failed';
 const summaryFields = item => [item?.sourceFingerprint, item?.raw, item?.event, item?.state, item?.open, item?.stateChanges, item?.keep];
 export const summaryVersion = item => `s2:${fnv1a(JSON.stringify(stableClone([...summaryFields(item), item?.floor, item?.title, item?.characters, item?.storyTime, item?.location,
-    ...(item && Object.hasOwn(item, 'userSourceFingerprint') ? [item.userSourceFingerprint] : [])])))}`;
+    ...(item && Object.hasOwn(item, 'userSourceFingerprint') ? [item.userSourceFingerprint] : []),
+    ...(item?.transitionEvidence ? [item.transitionEvidence] : [])])))}`;
 export const summaryVersionMatches = (item, version) => summaryVersion(item) === version || (!String(version).startsWith('s2:') && fnv1a(JSON.stringify(summaryFields(item))) === version);
 export const aggregateVersion = item => item ? fnv1a(JSON.stringify(stableClone([item.id, item.startFloor, item.endFloor, item.content, item.factUpdates, item.continuityState,
     ...(item.openingContentFingerprint ? [item.openingContentFingerprint] : []),

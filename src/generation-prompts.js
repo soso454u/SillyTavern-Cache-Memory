@@ -1,6 +1,6 @@
 import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.27.16';
-import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.25';
-import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.25';
+import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.26';
+import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.26';
 
 export const NORMAL_STATE_EXTRACTION_RULES = STATE_EXTRACTION_RULES
     .replace('category(skill/attribute/reward/item/identity/knowledge/effect)',
@@ -19,10 +19,12 @@ PRIOR_MEMORY_CONTEXT、EXISTING_KEEP 和 CURRENT_TRACKED_STATE 仅作旧背景�
 
 const CONTINUITY_SOURCE_RULES = '写清重要物品何人取得、已经试穿／使用／交付／归还等实际动作，和仍有效的归属或约定。不能把已做过写成喜欢或打算。只凭缺记或后文一句“第一次／从未”不能改写已确认经历。人员安排须区分计划、签约和实际到岗，人数变化标明当时及最终结果，按职责分组并逐人归属，不补造姓名或合并近似称呼。';
 const RECAP_PROSE_STYLE = '\n【总结行文】用平实句子直接叙述。标题和可见总结正文不用破折号，改用逗号或分句。禁止“不是……是……”“不是……而是……”“并非……而是……”一类先否定再转折的句式，直接陈述发生的事实。剧情中的否认、未完成等有意义的信息仍须明确保留。原话若含这些写法，改为准确转述。结构标记、列表符和逐字证据照原格式保留。';
+const CHARACTER_MEMORY_RULES = '\n【人物连续性】保留明确的长期特征和各场具体动机。把习惯、玩笑、比喻与单次反应留在各自语境，合并无新增结果的反复描写。实际支出、承担方、付款结果及财务约定按证据保存。角色的好意、感情与选择按当时行为和明示理由记录，避免用同一个习惯解释所有场景，也不把一方的判断写成共同认知。';
 const CONTINUITY_CHANGES = `
-有新增的重要物品经历、归属或实际人员配置时，附 [Changes] JSON 数组（有角色表格时共用该数组）。每项写 kind:"state", entity, key, value, category, status:"active", evidence, confirmed:true；更新复用已知 id，新增省略 id。evidence 引本层连续原文至少4字，必须支持对象与结果。日常衣着和无后续作用的物品省略。
-- milestone：重要物品每个已发生的节点单独用稳定 key（如“纪念外套·已试穿”），entity 用完整人物身份。后续归还或再使用可以留下新的经历，不覆盖之前发生的事。没有确认或和既有证据冲突时不写变更。
-- staffing：总数用家庭或组织为 entity，key 固定为职责加实际字段（如“育儿嫂·实际到岗”），value 写明确到岗数或在岗结果。计划、签约人数留在事件中，其他用工另计。明确身份的成员可用完整身份为 entity、用稳定职责字段分别记录，久未出现不等于离职。
+有跨场景影响的新事实时，附 [Changes] JSON 数组（有角色表格时共用该数组）。每项写 kind:"state", entity, key, value, category, status:"active", evidence, confirmed:true；更新复用已知 id，新增省略 id。evidence 引本层连续原文至少4字，必须支持对象与结果。
+- profile：人物年龄、长期居住、语言能力、明确形成的性格或康复进展，用姓名和稳定字段分别记录。时间跳跃时优先核对用户新设定及正文给出的变化；只记明确年龄，集体长了一岁可保留原设定，未知人物年龄不自行计算。
+- milestone：重要的已完成经历（例如首次完整叫出亲属称呼、重要物品已试穿）使用独立稳定 key。历史节点只记已发生的动作和结果；普通用品组装、待取、未开机等临时进度留在剧情。
+- staffing：总数用家庭或组织为 entity，key 固定为职责加实际字段（如“育儿嫂·实际到岗”）。个人用完整姓名为 entity、用“任职·职责”为 key，明确到岗、实际入住或离职后更新。计划和签约人数留在事件中。
 - ownership：确实影响后续的归属，用同一件物品为 entity、用“归属”为 key；只在明确取得、转让或归还后更新。借用或代管不代表所有权转移。
 只输出新确认或真实变化。CURRENT_TRACKED_STATE 是已知背景，不能当本层证据。`;
 
@@ -43,7 +45,8 @@ ${STATE_EXTRACTION_RULES.replace('沿用 Summary 的 Open 和 State 叙述，在
         const official = prompt === DEFAULT_PROMPTS.summary;
         const changes = settings.continuityEnabled && (official || tableRules || prompt.includes('[Changes]')) ? CONTINUITY_CHANGES : '';
         return withGlobalPrompt(settings, prompt + (prompt.includes(NORMAL_SUMMARY_LENGTH_RULES) ? '' : `\n${NORMAL_SUMMARY_LENGTH_RULES}`)
-            + SUMMARY_TURN_SOURCE_RULES + (official ? `\n${CONTINUITY_SOURCE_RULES}` : '') + tableRules + changes + RECAP_PROSE_STYLE);
+            + SUMMARY_TURN_SOURCE_RULES + (official ? `\n${CONTINUITY_SOURCE_RULES}` : '') + tableRules + changes + CHARACTER_MEMORY_RULES + RECAP_PROSE_STYLE
+            + '\n地点以 SOURCE_METADATA 中已知的主场景为准。地点为空时，可以在 Location 逐字写出当前正文明确出现的主场景名称；选项、设想、往事和不在场人物的位置不作为主场景。无法确定时写无。');
     }
     // The aggregate still writes its normal story, with only a small delta.
     const continuity = prompt === DEFAULT_PROMPTS[stage] ? `\n${CONTINUITY_SOURCE_RULES}
@@ -51,9 +54,9 @@ ${STATE_EXTRACTION_RULES.replace('沿用 Summary 的 Open 和 State 叙述，在
     const source = stage === 'longMemory'
         ? '优先引用 NEW_SUMMARIES 中的楼层摘要，source 填数字楼层。楼层摘要没有该事实时，可引用 CHECKPOINT_STATE 中的对应阶段，source 填其 Checkpoint ID。阶段来源时间只能确定到区间，若与同区间更精确的楼层状态冲突，保留待核对。'
         : '只引用本段 NEW_SUMMARIES 中的楼层摘要，source 填数字楼层。';
-    const reconciliation = enabled ? `
+    const reconciliation = enabled || settings.continuityEnabled ? `
 【持续事实核对】
-按原格式完成总结后附 [STATE_RESOLUTIONS]，值为 JSON 数组，无新增或变更写 []。核对并补充勾选的表（${selected.map(table => table.label).join('、')}）和重要物品经历、归属、人员配置。沿用 Changes 的 kind、entity、key、value、status、category、evidence、confirmed:true，加 source；已有事项复用 id，新增省略 id。可写 lifetime、condition、acquisition。任务完成／失败／取消用 completed／failed／cancelled，状态明确失效用 expired，已发生的 milestone 不删除、不改写。
-${source} evidence 连续逐字摘录至少4字，须明确支持对象、结果与变化；CURRENT_TRACKED_STATE、既有长期事实及此前背景仅用于核对和复用 ID。按证据发生顺序处理，只写可证实的新项、替代或失效。有可引用的冲突但无法确认变化时，复用该项 ID 并标 reviewOnly:true，留待核对。只提到旧计划、久未登场或省略时保留现状。重要的已完成经历用 milestone，人员实际配置用 staffing，物品当前归属用 ownership。角色分别记录身份和知情范围，不回显整表，不在长期事实增量中重复列出同一项。` : '';
-    return withGlobalPrompt(settings, prompt + continuity + RECAP_PROSE_STYLE + reconciliation);
+按原格式完成总结后附 [STATE_RESOLUTIONS]，值为 JSON 数组，无新增或变更写 []。核对重要人物近况（profile）、人员实际配置（staffing）、物品归属（ownership）和已完成的重要经历（milestone）${enabled ? '，以及勾选的表（' + selected.map(table => table.label).join('、') + '）' : ''}。沿用 Changes 的 kind、entity、key、value、status、category、evidence、confirmed:true，加 source；已有事项复用 id，新增省略 id。任务完成／失败／取消用 completed／failed／cancelled，状态明确失效用 expired。
+${source} TURN_FACTS 若存在，是该楼层玩家明确给出的时间跳跃与新设定，可用同一楼层编号引用。evidence 连续逐字摘录至少4字，须支持对象和变化。旧状态只用于核对。按证据发生顺序处理，只写有根据的新项、替代或失效；冲突无法确认时复用 ID 并标 reviewOnly:true。已发生的经历保留，过期短期安排留在历史剧情。不要回显整表或在长期事实重复列出同一项。` : '';
+    return withGlobalPrompt(settings, prompt + continuity + CHARACTER_MEMORY_RULES + RECAP_PROSE_STYLE + reconciliation);
 }

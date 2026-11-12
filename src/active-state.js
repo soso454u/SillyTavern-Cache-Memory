@@ -3,7 +3,7 @@ import { fnv1a } from './utils.js?v=1.27.16';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
-export const isContinuityChange = item => item.kind === 'state' && ['milestone', 'staffing', 'ownership'].includes(item.category);
+export const isContinuityChange = item => item.kind === 'state' && ['milestone', 'staffing', 'ownership', 'profile'].includes(item.category);
 const clean = value => String(value ?? '').trim();
 const validSummary = item => item && item.frozen !== false && item.status !== 'failed';
 
@@ -31,8 +31,17 @@ function confirmedContinuityChange(change) {
     // Reject common prospective phrasing even when the model marks it confirmed.
     const prospective = /(?:计划|暂定|拟(?:聘|请|招|安排)|想(?:请|招|找)|打算|准备|预计|将于|将到岗|约定.{0,12}上岗|(?:明天|下周|下月).{0,12}(?:到岗|上岗)|\b(?:planned|plans? to|expected to|will|scheduled to)\b)/iu;
     const retrospective = /(?:曾经|原先|起初|原本|\b(?:formerly|used to have)\b)/iu;
-    return !prospective.test(change.value) && !prospective.test(change.evidence)
-        && !retrospective.test(change.value) && !retrospective.test(change.evidence);
+    if (prospective.test(change.value) || prospective.test(change.evidence)
+        || retrospective.test(change.value) || retrospective.test(change.evidence)) return false;
+    if (change.category === 'profile' && /^(?:年龄|age)$/iu.test(change.key)) {
+        const ages = /(?:[零〇一二两三四五六七八九十百\d]+岁(?:半)?|\d+(?:\.\d+)?\s+years? old)/giu;
+        const age = change.value.match(ages)?.[0];
+        return Boolean(age && change.evidence.match(ages)?.includes(age));
+    }
+    if (change.category === 'profile' && /(?:性格|习惯|偏好|人格|personality|temperament|habit|preference)/iu.test(change.key)) {
+        return /(?:性格|性子|天性|一贯|向来|平时|习惯|喜欢|偏好|讨厌|变得|话痨|\b(?:personality|by nature|usually|prefers?|habits?|became)\b)/iu.test(change.evidence);
+    }
+    return true;
 }
 
 export function stateId(item) {
@@ -46,10 +55,11 @@ export function parseStateChanges(text, source, known = [], { advanced = false }
     try { rows = JSON.parse(clean(text).replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return []; }
     if (!Array.isArray(rows)) return [];
     const byId = new Map(known.map(item => [item.id, item]));
+    const evidenceSources = Array.isArray(source) ? source : [source];
     return rows.slice(0, advanced ? 96 : 24).flatMap(row => {
         if (!row || !['thread', 'state'].includes(row.kind) || row.confirmed !== true) return [];
         const entity = clean(row.entity), key = clean(row.key), value = clean(row.value), evidence = clean(row.evidence);
-        if (!entity || !key || !value || evidence.length < 4 || !String(source).includes(evidence)) return [];
+        if (!entity || !key || !value || evidence.length < 4 || !evidenceSources.some(text => String(text).includes(evidence))) return [];
         // Stable traits need an explicit statement, not an inferred one-off action.
         if (advanced && ['personality', 'preference', 'clothing'].includes(clean(row.category))
             && !/(?:性格|性子|生性|天性|素来|平时|通常|一贯|向来|总是|喜欢|喜爱|偏好|爱好|讨厌|厌恶|不喜欢|习惯|personality|temperament|by nature|introvert|extrovert|always|usually|prefers?|likes?|loves?|hates?|dislikes?|favourite|favorite)/iu.test(evidence)) return [];
@@ -133,7 +143,7 @@ export function checkpointEvidenceText(checkpoint) {
 function aggregateEvidence(record, kind) {
     const fields = kind === 'summary' && record.format === 'structured' ? parseStructuredSummary(record.raw) ?? record : null;
     const sections = kind !== 'summary' ? [checkpointEvidenceText(record)]
-        : fields ? [fields.event, fields.state, fields.open].filter(Boolean) : [String(record.event ?? '')];
+        : [...(fields ? [fields.event, fields.state, fields.open] : [record.event]), record.transitionEvidence].filter(Boolean);
     return { sections, kind, id: kind === 'summary' ? record.messageId : record.id,
         startFloor: kind === 'summary' ? record.floor : record.startFloor,
         floor: kind === 'summary' ? record.floor : record.endFloor, fingerprint: fnv1a(JSON.stringify(sections)) };
@@ -206,7 +216,7 @@ export function projectActiveState(store, throughFloor = Infinity) {
             if (old.kind === 'thread' && (old.status === 'completed' && change.status !== 'completed'
                 || !isTrackedActive(old) && isTrackedActive(change))) return;
         }
-        const history = old ? [...old.history, { key: old.key, value: old.value, status: old.status, condition: old.condition, acquisition: old.acquisition, sourceId: old.sourceId, sourceFloor: old.sourceFloor }] : [];
+        const history = old ? [...old.history, { key: old.key, value: old.value, status: old.status, condition: old.condition, acquisition: old.acquisition, sourceId: old.sourceId, sourceFloor: old.sourceFloor, evidence: old.evidence }] : [];
         records.set(recordKey, { ...old, ...change, manual: Boolean(change.manual), id: old?.id ?? change.id, ...source, history,
             reviewConflicts: undefined,
             evidenceStartFloor: source.evidenceStartFloor, originSourceId: change.manual ? change.sourceId : source.aggregate ? source.sourceId : old?.originSourceId ?? source.sourceId,

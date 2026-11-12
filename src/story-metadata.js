@@ -81,6 +81,40 @@ export function extractStoryMetadata(message) {
     return { storyTime, location };
 }
 
+// Character panels and proposed next scenes are separate from the scene
+// being summarized. Keep the older header convention for plain messages.
+export function summaryTurnMetadata(message, narration, userText) {
+    const full = String(message ?? '');
+    const ignored = /<(choices|options|prewrite|status|character[-_]status|character[-_]panel)\b[^>]*>[\s\S]*?<\/\1\s*>/giu;
+    const choices = [...full.matchAll(/<(choices|options)\b[^>]*>[\s\S]*?<\/\1\s*>/giu)].at(-1);
+    const cleaned = full.replace(ignored, '');
+    const header = (choices ? full.slice(0, choices.index) : full).replace(ignored, '');
+    const selected = String(narration ?? '');
+    const embedded = [...full.matchAll(/<(content|context)\b[^>]*>([\s\S]*?)<\/\1\s*>/giu)];
+    const content = embedded.filter(block => block[1].toLowerCase() === 'content');
+    const narrativeBlocks = selected !== full ? [selected] : (content.length ? content : embedded).map(block => block[2]);
+    const prose = (narrativeBlocks.join('\n') || header).replace(ignored, '');
+    const locations = new Set(narrativeBlocks.map(block => extractStoryMetadata(block.replace(ignored, '')).location).filter(Boolean));
+    const user = extractStoryMetadata(String(userText ?? '').replace(ignored, ''));
+    const scene = [...header.matchAll(/^\s*\[Scene\]\s*\r?\n\s*([^\n\r<]+)/gim)].at(-1)?.[1] ?? '';
+    const explicitScene = lastTaggedValue(cleaned, ['scene_location', 'scene-location'])
+        || lastBracketValue(cleaned, ['Scene[ _-]?Location', '剧情地点', '故事地点'])
+        || lastLabeledValue(cleaned, ['Scene[ _-]?Location', '剧情地点', '故事地点']);
+    return {
+        storyTime: lastExplicitTime(scene.split(/[|｜]/u)[0])
+            || extractStoryMetadata(full.replace(/<(choices|options|prewrite)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, '')).storyTime || user.storyTime,
+        location: locations.size > 1 ? '' : extractStoryMetadata(prose).location || explicitScene || lastStatusBarLocation(scene)
+            || extractStoryMetadata(header).location || user.location,
+        locationSource: prose,
+    };
+}
+
+export function locationFromNarration(value, narration) {
+    const candidate = cleanValue(value);
+    const text = plainText(narration).replace(/\s+/gu, '');
+    return candidate.length >= 2 && candidate.length <= 100 && text.includes(candidate.replace(/\s+/gu, '')) ? candidate : '';
+}
+
 export function summarySourceWithMetadata(source, metadata) {
     const storyTime = cleanValue(metadata?.storyTime);
     const location = cleanValue(metadata?.location);

@@ -25,9 +25,9 @@ test('plain Summary has a total budget and optional table extraction appears onl
     assert.match(generationPrompt(group, 'summary'), /【角色表格/);
     for (const stage of ['checkpoint', 'longMemory']) {
         const narrative = generationPrompt(normal, stage);
-        assert.doesNotMatch(narrative, /\[STATE_RESOLUTIONS\]/);
-        assert.ok(generationPrompt(group, stage).startsWith(narrative));
-        assert.match(generationPrompt(group, stage), /\[STATE_RESOLUTIONS\]/);
+        assert.match(narrative, /\[STATE_RESOLUTIONS\]/);
+        assert.doesNotMatch(narrative, /勾选的表/);
+        assert.match(generationPrompt(group, stage), /\[STATE_RESOLUTIONS\][\s\S]*勾选的表/);
     }
 });
 

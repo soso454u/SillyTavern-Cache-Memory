@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata } from '../src/story-metadata.js';
+import { extractStoryMetadata, storyMetadataRange, summarySourceWithMetadata, summaryTurnMetadata, locationFromNarration } from '../src/story-metadata.js';
 
 test('extracts only explicit story metadata from the complete assistant message', () => {
     const message = '<context>隐藏资料</context><div>剧情时间：2025/01/02 10:35｜地点：湖畔酒店</div><content>姜梨走进大堂。</content>';
@@ -48,4 +48,21 @@ test('story ranges use the first and last explicit values while leaving missing 
         { floor: 1, storyTime: '09:16', location: '酒店' },
         { floor: 2, storyTime: '', location: '' },
     ]), { storyStartTime: '09:16', storyEndTime: '12:24', currentStoryTime: '12:24', currentLocation: '露台' });
+});
+
+test('scene metadata uses the current narration and rejects locations from choices and the character panel', () => {
+    const prose = '办公室又静下来。助理轻轻关上了门。';
+    const raw = '<prewrite><location>餐厅</location></prewrite>'
+        + `<content>${prose}</content><choices><scene_location>车站</scene_location></choices>`
+        + '<time>2032/01/02 12:10</time><location>学校食堂</location>';
+    for (const source of [prose, raw]) {
+        const metadata = summaryTurnMetadata(raw, source, '');
+        assert.equal(metadata.storyTime, '2032/01/02 12:10');
+        assert.equal(metadata.location, '');
+        assert.equal(locationFromNarration('办公室', metadata.locationSource), '办公室');
+        for (const rejected of ['学校食堂', '餐厅', '车站']) assert.equal(locationFromNarration(rejected, metadata.locationSource), '');
+    }
+    const scene = summaryTurnMetadata('[Scene]\n「2032/01/02 11:50｜总部办公室｜在场人物｜晴」\n' + raw, prose, '');
+    assert.equal(scene.location, '总部办公室');
+    assert.equal(scene.storyTime, '2032/01/02 11:50');
 });
