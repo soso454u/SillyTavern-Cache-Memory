@@ -173,7 +173,7 @@ for (const mode of ['normal', 'ensemble']) test(`real Summary pipeline selects n
     const frozen = structuredClone(f.store.current().injectionSnapshot);
     const saved = await f.summarizer.summarizeEntry(entry, { deferAggregates: true });
     assert.equal(f.requests.length, 1); assert.match(saved.event, /保护村民/); assert.match(saved.state, /坐在窗边/);
-    assert.equal(saved.stateChanges?.length ?? 0, mode === 'normal' ? 0 : 1); // Tables share the meaningful-delta filter; routine posture stays in narrative.
+    assert.equal(saved.stateChanges?.length ?? 0, 1); // Tables share the meaningful-delta filter; routine posture stays in narrative.
     if (mode === 'ensemble') assert.doesNotMatch(f.requests[0].userContent, /PRIOR_MEMORY_CONTEXT|EXISTING_KEEP/);
     assert.deepEqual(f.store.current().injectionSnapshot, frozen);
     const before = structuredClone(f.store.current());
@@ -200,7 +200,7 @@ test('normal Summary receives only three prior summaries and existing KEEP, sett
     const request = f.requests[0];
     assert.match(request.userContent, /PRIOR_MEMORY_CONTEXT[\s\S]*医生丙已读过消息全文/);
     assert.match(request.userContent, /EXISTING_KEEP[\s\S]*KEEP-0001/);
-    assert.doesNotMatch(request.userContent, /CURRENT_TRACKED_STATE/);
+    assert.match(request.userContent, /CURRENT_TRACKED_STATE[\s\S]*送信/);
     assert.doesNotMatch(request.userContent, /旧事1|旧事2|未来层不可读取|未来秘密不可读取/);
     const current = projectActiveState(f.store.current()).find(item => item.id === task.id);
     assert.equal(current.status, 'completed'); assert.equal(current.acquisition, 'pending');

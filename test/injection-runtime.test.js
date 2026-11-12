@@ -39,7 +39,7 @@ async function runtimeFixture(t, { blocked = false, invalid = false, shortHistor
     class UI {
         constructor(options) { this.callbacks = options; }
         setStatus(...args) { statuses.push(args); }
-        cancelMissingCheckpointBackfill() {} mountSettings() { return true; } bindChatActions() {} renderMemorySaveState() {}
+        clearGenerationLog() {} recordGeneration() {} cancelMissingCheckpointBackfill() {} mountSettings() { return true; } bindChatActions() {} renderMemorySaveState() {}
         refreshSummaryMode() {} queueManagerRender() {} queueMessageRender() {} destroy() {}
     }
     class EmptyClient { abortAll() {} install() {} probe() { return Promise.resolve(); } uninstall() {} }

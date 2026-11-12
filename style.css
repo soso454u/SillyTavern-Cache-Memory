@@ -419,6 +419,18 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-status[hidden] { display: none !important; }
 .cache-memory-config-panel [data-memory-id] { scroll-margin-top: 140px; }
 
+.cache-memory-generation-log { grid-column: 1 / -1; }
+.cache-memory-generation-log summary { cursor: pointer; }
+.cache-memory-generation-log pre {
+    max-height: min(320px, 40vh);
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 12px;
+    border: 1px solid currentColor;
+    border-radius: 8px;
+    font-size: 12px;
+}
 .cache-memory-prompt-preview { margin-top: 12px; font-size: 12px; }
 .cache-memory-prompt-preview summary { cursor: pointer; }
 .cache-memory-prompt-preview textarea { width: 100%; box-sizing: border-box; }

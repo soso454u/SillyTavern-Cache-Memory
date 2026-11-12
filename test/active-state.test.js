@@ -79,7 +79,7 @@ test('checkpoint retains quiet active tasks even if model omits them; completed 
     assert.doesNotMatch(reconcileTrackedCheckpoint('[Open Threads]\n林/主角 · 松开的那只手：尚未入睡', store, 51), /尚未入睡/);
 });
 
-test('same Summary request extracts state, no additional calls; disabled mode preserves original request body', async () => {
+test('same Summary request extracts state, no additional calls; disabled mode keeps only the tagged source body', async () => {
     for (const enabled of [true, false]) {
         const settings = normalizeSettings({ activeStateEnabled: enabled, characterTables: { characters: true, relationships: true, knowledge: true, tasks: true } }), metadata = {}, requests = [];
         const chat = [{ name: '林', mes: task.evidence, gen_started: 'one' }];
@@ -90,7 +90,7 @@ test('same Summary request extracts state, no additional calls; disabled mode pr
         if (enabled) store.setSummaryMode('advanced');
         await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
         assert.equal(requests.length, 1); assert.equal(projectActiveState(store.current()).length, enabled ? 1 : 0);
-        assert.equal(requests[0].userContent, task.evidence);
+        assert.equal(requests[0].userContent, `[SUMMARY_SOURCE]\n${task.evidence}`);
         assert.doesNotMatch(store.current().summaries[getAssistantMessages(chat)[0].messageId].keep, /confirmed/);
     }
 });

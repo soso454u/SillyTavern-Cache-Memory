@@ -357,7 +357,7 @@ test('automatic incremental stages feed new facts into the next state and never 
     let factCalls = 0;
     const summarizer = new MemorySummarizer({ store, getSettings: () => normalizeSettings({ checkpointInterval: 2, longMemoryInterval: 2 }), getChat: () => chat,
         apiClient: { complete: async ({ userContent }) => {
-            if (userContent.startsWith('正文')) return { content: `[SUMMARY]\n[Event]\n${userContent}\n[KEEP]\n- 姜梨答应十二月前陪陆雾回巴黎见外婆` };
+            if (userContent.startsWith('[SUMMARY_SOURCE]\n正文')) return { content: `[SUMMARY]\n[Event]\n${userContent.split('\n')[1]}\n[KEEP]\n- 姜梨答应十二月前陪陆雾回巴黎见外婆` };
             if (userContent.startsWith('[EXISTING_LONG_FACTS]')) {
                 factCalls += 1;
                 return { content: factCalls === 1 ? '[STORY_ARC]\n本阶段互动引出了新的旅行约定。\n[LONG_MEMORY]\n- 【姜梨/陆雾｜约定】十二月前去巴黎' : '[STORY_ARC]\n人物在后续阶段继续处理日常与约定。\n[LONG_MEMORY]\n无' };

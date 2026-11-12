@@ -1,4 +1,5 @@
 import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
+import { playerCorrectionEvidence } from './summary-source.js?v=1.27.30';
 import { fnv1a } from './utils.js?v=1.27.16';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
@@ -50,7 +51,7 @@ export function stateId(item) {
 
 // Only a small, evidenced delta is extracted in the existing Summary request.
 // Legacy Open/State prose is retained, never guessed into a completed task.
-export function parseStateChanges(text, source, known = [], { advanced = false } = {}) {
+export function parseStateChanges(text, source, known = [], { advanced = false, corrections = [] } = {}) {
     let rows;
     try { rows = JSON.parse(clean(text).replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { return []; }
     if (!Array.isArray(rows)) return [];
@@ -75,12 +76,15 @@ export function parseStateChanges(text, source, known = [], { advanced = false }
                 || !/(?:任务.{0,12}(?:已完成|完成了|完成[，。！!；;]|结算完成)|已完成|已结算|结算完成|已领取|领取了)/u.test(evidence)
                 || /(?:未|没有|尚未|还没)(?:完成|结算|领取)/u.test(evidence)) return [];
         }
+        const playerCorrection = byId.has(id) && corrections.some(text => text.startsWith(evidence))
+            && playerCorrectionEvidence({ messages: [{ text: evidence }] }).includes(evidence);
         const change = { id, kind: row.kind, entity, key, value, evidence, status,
-            actors: Array.isArray(row.actors) ? row.actors.map(clean).filter(Boolean) : [entity],
+            ...(row.reviewOnly === true ? { reviewOnly: true } : {}), ...(playerCorrection ? { playerCorrection: true } : {}),
+            actors: Array.isArray(row.actors) ? row.actors.map(clean).filter(Boolean) : byId.get(id)?.actors ?? [entity],
             category: clean(row.category || byId.get(id)?.category), acquisition: ['pending', 'obtained'].includes(row.acquisition) ? row.acquisition : byId.get(id)?.acquisition ?? (row.category === 'reward' ? 'pending' : 'obtained'),
-            condition: clean(row.condition), lifetime: ['temporary', 'permanent'].includes(row.lifetime) ? row.lifetime : byId.get(id)?.lifetime ?? 'permanent' };
+            condition: Object.hasOwn(row, 'condition') ? clean(row.condition) : byId.get(id)?.condition ?? '', lifetime: ['temporary', 'permanent'].includes(row.lifetime) ? row.lifetime : byId.get(id)?.lifetime ?? 'permanent' };
         if (!isContinuityChange(change)) return [change];
-        if (!confirmedContinuityChange(change)) return [];
+        if (!change.reviewOnly && !change.playerCorrection && !confirmedContinuityChange(change)) return [];
         return [{ ...change, lifetime: 'permanent' }];
     });
 }
@@ -142,11 +146,14 @@ export function checkpointEvidenceText(checkpoint) {
 
 function aggregateEvidence(record, kind) {
     const fields = kind === 'summary' && record.format === 'structured' ? parseStructuredSummary(record.raw) ?? record : null;
-    const sections = kind !== 'summary' ? [checkpointEvidenceText(record)]
-        : [...(fields ? [fields.event, fields.state, fields.open] : [record.event]), record.transitionEvidence].filter(Boolean);
+    const story = kind !== 'summary' ? [checkpointEvidenceText(record)] : fields ? [fields.event, fields.state, fields.open] : [record.event];
+    const transition = kind === 'summary' ? String(record.transitionEvidence ?? '') : '';
+    const sections = [...story, ...transition.split('\n')].filter(Boolean);
     return { sections, kind, id: kind === 'summary' ? record.messageId : record.id,
+        corrections: playerCorrectionEvidence({ messages: [{ text: transition }] }),
         startFloor: kind === 'summary' ? record.floor : record.startFloor,
-        floor: kind === 'summary' ? record.floor : record.endFloor, fingerprint: fnv1a(JSON.stringify(sections)) };
+        floor: kind === 'summary' ? record.floor : record.endFloor,
+        fingerprint: fnv1a(JSON.stringify(kind === 'summary' ? [...story, transition].filter(Boolean) : story)) };
 }
 
 export function parseAggregateStateChanges(text, summaries, checkpoints, known) {
@@ -158,9 +165,8 @@ export function parseAggregateStateChanges(text, summaries, checkpoints, known) 
         const source = sources.get(clean(row.source).toLowerCase());
         const section = source?.sections.find(text => text.includes(clean(row.evidence)));
         if (!section) return [];
-        return parseStateChanges(JSON.stringify([row]), section, known, { advanced: true }).map(change => ({
+        return parseStateChanges(JSON.stringify([row]), section, known, { advanced: true, corrections: source.corrections }).map(change => ({
             ...change, evidenceSourceId: source.id, evidenceSourceKind: source.kind, evidenceFingerprint: source.fingerprint,
-            ...(row.reviewOnly === true ? { reviewOnly: true } : {}),
         }));
     });
 }
@@ -180,47 +186,51 @@ function checkpointResolutions(checkpoint, summaries, known) {
 
 export function projectActiveState(store, throughFloor = Infinity) {
     const records = new Map();
+    const keysById = new Map();
+    const keysBySubject = new Map();
     const replay = (change, source) => {
         if (!change?.id || !['thread', 'state'].includes(change.kind)) return;
         if (isContinuityChange(change) && !change.manual
-            && (!change.evidence || !confirmedContinuityChange(change))) return;
+            && (!change.evidence || !change.reviewOnly && !change.playerCorrection && !confirmedContinuityChange(change))) return;
         if (change.kind === 'state' && !change.manual && change.status === 'active' && change.lifetime === 'temporary'
             && change.category === 'history' && /^(?:已成功开箱|已实际抵达|已抵达|已完成|已兑现|已执行完毕)/u.test(change.value)
             && !unresolved.test(change.value)) change = { ...change, status: 'expired', derived: true };
         if (change.kind === 'thread' && change.status === 'completed' && change.acquisition === 'pending'
             && /(?:已完成并领取|已领取奖励|奖励[^。；;]*(?:已发放|已到账)|(?:积分|命运点)[^。；;]*到账)/u.test(change.value)
             && !/(?:奖励[^。；;]*(?:未领取|尚未|待领取))/u.test(change.value)) change = { ...change, acquisition: 'obtained' };
-        const recordKey = stateId(change);
+        const subject = stateId(change);
+        const recordKey = keysById.get(change.id) ?? keysBySubject.get(subject) ?? subject;
         const old = records.get(recordKey);
-        // A frozen Long may retain an explicit settlement absent from the
-        // Summary records. Use its explicit structured result only as
-        // a fallback, preserving a real Summary result and manual correction.
-        if (source.aggregate && old && !old.needsReview) {
-            if (old.manual || source.evidenceStartFloor === undefined && !isTrackedActive(old)) return;
-            if (source.evidenceStartFloor !== undefined && (change.reviewOnly || old.sourceFloor >= source.evidenceStartFloor)) {
-                if (![old, ...old.history].some(item => item.value === change.value && item.status === change.status)) {
-                    const conflicts = old.reviewConflicts ?? [];
-                    if (!conflicts.some(item => item.sourceId === source.sourceId && item.evidence === change.evidence))
-                        records.set(recordKey, { ...old, reviewConflicts: [...conflicts, {
-                            sourceId: source.sourceId, sourceFloor: source.sourceFloor, value: change.value, evidence: change.evidence,
-                        }] });
-                }
-                return;
+        // Stage prose has interval precision. An overlapping, more precise
+        // fact or an explicit review-only candidate cannot overwrite it.
+        if (source.aggregate && old?.manual && !(change.playerCorrection && source.sourceFloor > old.sourceFloor)) return;
+        const conflict = change.reviewOnly || source.evidenceStartFloor !== undefined
+            && old && old.sourceFloor >= source.evidenceStartFloor && !change.playerCorrection;
+        if (conflict && !change.manual) {
+            if (old && !old.needsReview && ![old, ...old.history].some(item => item.value === change.value && item.status === change.status)) {
+                const conflicts = old.reviewConflicts ?? [];
+                if (!conflicts.some(item => item.sourceId === source.sourceId && item.evidence === change.evidence))
+                    records.set(recordKey, { ...old, reviewConflicts: [...conflicts, {
+                        sourceId: source.sourceId, sourceFloor: source.sourceFloor, value: change.value, evidence: change.evidence,
+                    }] });
             }
+            return;
         }
-        if (source.evidenceStartFloor !== undefined && change.reviewOnly) return;
+        if (source.aggregate && old && !old.needsReview && source.evidenceStartFloor === undefined && !isTrackedActive(old)) return;
         if (!change.manual && old && !old.needsReview) {
             if (source.needsReview) return;
-            if (old.category === 'milestone' || (isContinuityChange(old) && change.category !== old.category)
+            if ((old.category === 'milestone' && !change.playerCorrection) || (isContinuityChange(old) && change.category !== old.category)
                 || (old.category === 'history' && old.lifetime === 'permanent' && source.evidenceStartFloor !== undefined)) return;
-            if (old.kind === 'thread' && (old.status === 'completed' && change.status !== 'completed'
+            if (old.kind === 'thread' && !change.playerCorrection && (old.status === 'completed' && change.status !== 'completed'
                 || !isTrackedActive(old) && isTrackedActive(change))) return;
         }
-        const history = old ? [...old.history, { key: old.key, value: old.value, status: old.status, condition: old.condition, acquisition: old.acquisition, sourceId: old.sourceId, sourceFloor: old.sourceFloor, evidence: old.evidence }] : [];
+        const history = old ? [...old.history, { entity: old.entity, key: old.key, value: old.value, status: old.status, condition: old.condition, acquisition: old.acquisition, sourceId: old.sourceId, sourceFloor: old.sourceFloor, evidence: old.evidence }] : [];
+        keysById.set(change.id, recordKey);
+        keysBySubject.set(subject, recordKey);
         records.set(recordKey, { ...old, ...change, manual: Boolean(change.manual), id: old?.id ?? change.id, ...source, history,
-            reviewConflicts: undefined,
+            reviewConflicts: undefined, playerCorrection: change.playerCorrection || undefined,
             evidenceStartFloor: source.evidenceStartFloor, originSourceId: change.manual ? change.sourceId : source.aggregate ? source.sourceId : old?.originSourceId ?? source.sourceId,
-            condition: change.condition || old?.condition || '', actors: change.actors?.length ? change.actors : old?.actors ?? [] });
+            condition: change.condition ?? old?.condition ?? '', actors: change.actors?.length ? change.actors : old?.actors ?? [] });
     };
     const events = [];
     const summaries = Object.values(store.summaries ?? {}).filter(item => item.floor <= throughFloor);
@@ -240,7 +250,9 @@ export function projectActiveState(store, throughFloor = Infinity) {
             const proof = evidenceCache.get(record);
             if (proof.startFloor < memory.startFloor || proof.floor > memory.endFloor
                 || change.evidenceFingerprint !== proof.fingerprint || !proof.sections.some(text => text.includes(change.evidence))) continue;
-            events.push({ change, floor: proof.floor, sequence: useCheckpoints ? 0.7 : 0.6, source: {
+            const verified = change.playerCorrection && !proof.corrections.some(text => text.includes(change.evidence))
+                ? { ...change, playerCorrection: false } : change;
+            events.push({ change: verified, floor: proof.floor, sequence: useCheckpoints ? 0.7 : 0.6, source: {
                 sourceId: memory.id, sourceFloor: proof.floor, evidenceStartFloor: proof.startFloor, needsReview: false, aggregate: true,
             } });
         }
@@ -300,7 +312,7 @@ export function stateContext(store, throughFloor = Infinity) {
 export function activeStateVersion(store, throughFloor) {
     return fnv1a(JSON.stringify(projectActiveState(store, throughFloor).sort((a, b) => a.id.localeCompare(b.id))
         .map(item => [item.id, item.entity, item.key, item.value, item.status, item.condition, item.lifetime, item.acquisition, item.needsReview,
-            item.sourceFloor, item.sourceId, item.evidence, item.manual])));
+            item.sourceFloor, item.sourceId, item.evidence, item.manual, item.category, item.actors, item.evidenceStartFloor])));
 }
 
 export function trackedLines(store, throughFloor, kind) {
@@ -330,6 +342,10 @@ export function matchesTrackedValue(text, item, value, key = item.key) {
     const suffixes = conditions.flatMap(condition => ['', '（尚未领取）'].map(pending => `${pending}${condition ? `；条件：${condition}` : ''}`));
     return keys.some(name => [`${item.entity} · ${name}：${value}`, `【${item.entity}｜${name}】${value}`,
         `${item.entity}：${name}：${value}`].some(rendered => suffixes.some(suffix => body === rendered + suffix)));
+}
+
+export function matchesTrackedHistory(text, item) {
+    return item.history?.some(old => matchesTrackedValue(text, { ...item, entity: old.entity ?? item.entity }, old.value, old.key)) ?? false;
 }
 
 export function isAtomicTrackedEntry(text, item) {
@@ -364,7 +380,7 @@ export function reconcileTrackedCheckpoint(content, store, throughFloor, startFl
             || section === 'Open Threads' && item.kind === 'thread' && !isTrackedActive(item)
                 && matchesTrackedFact({ text: line }, item)
             || isAtomicTrackedEntry(line, item) && (item.sourceFloor >= throughFloor || !isTrackedActive(item))
-            || [...item.history, item].some(old => matchesTrackedValue(line, item, old.value, old.key))));
+            || matchesTrackedHistory(line, item) || matchesTrackedValue(line, item, item.value)));
         // Model prose may carry newer Summary evidence; don't overwrite it with
         // an older tracked value. Exact flat fields are replaced once, observers stay separate.
         const lines = rows.filter(item => sectionFor(item) === section && isTrackedActive(item)

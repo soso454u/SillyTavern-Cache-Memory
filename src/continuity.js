@@ -1,7 +1,7 @@
 import { fnv1a } from './utils.js?v=1.27.16';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.27.26';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.26';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.27.30';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedHistory, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.30';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
@@ -48,7 +48,7 @@ export function collectKeepItems(store, throughFloor = Infinity) {
     const state = projectActiveState(store, throughFloor).filter(item => !item.needsReview);
     return Object.entries(store?.keepRegistry ?? {}).map(([id, item]) => {
         const latest = state.find(row => row.sourceFloor > (Number(item.sourceFloor) || 0)
-            && (isAtomicTrackedEntry(item.text, row) || row.history.some(old => matchesTrackedValue(item.text, row, old.value, old.key))));
+            && (isAtomicTrackedEntry(item.text, row) || matchesTrackedHistory(item.text, row)));
         if (item.status !== 'active' || !latest || !latest.evidence) return { ...item, id };
         const ended = !isTrackedActive(latest);
         const changed = !matchesTrackedValue(item.text, latest, latest.value)
@@ -67,7 +67,7 @@ function evidencedChanges(text, section, source) {
     return lines(readSection(text, section)).flatMap(line => {
         const [id, value, evidence] = line.split('|').map(part => part.trim());
         // A model may not remove an item merely by omitting it or claiming it is old.
-        if (!id || !value || !evidence || evidence.length < 4 || !source.includes(evidence)) return [];
+        if (!id || !value || !evidence || evidence.length < 4 || ![source].flat().some(text => text.includes(evidence))) return [];
         return [{ id, value, evidence }];
     });
 }
@@ -203,11 +203,14 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
         if (projected !== fact) facts.set(fact.id, projected);
     }
     const exact = (fact, item) => fact.stateId === item.id
-        || [...item.history, item].some(old => matchesTrackedValue(fact.text, item, old.value, old.key));
-    // New verified rows have an evidence date. An exact copy of one of their
-    // values in a later-written Long has no separate evidence of a transition.
+        || matchesTrackedHistory(fact.text, item) || matchesTrackedValue(fact.text, item, item.value);
+    // A repeated value in a later-written Long is still the original fact.
+    // Preserve independent newer facts when their evidence has no shared ID
+    // and cannot be tied to a known old value.
     const factIsNewer = (fact, item) => fact.floor > item.sourceFloor
-        && !(item.evidenceStartFloor !== undefined && exact(fact, item));
+        && !item.manual && !item.playerCorrection
+        && !matchesTrackedHistory(fact.text, item)
+        && !(item.evidenceStartFloor !== undefined && matchesTrackedValue(fact.text, item, item.value));
     for (const item of tracked.filter(row => !isTrackedActive(row))) {
         for (const fact of facts.values()) {
             if (fact.status !== 'active' || factIsNewer(fact, item)) continue;
@@ -216,13 +219,18 @@ export function projectLongFacts(store, throughFloor = Infinity, { includeTracke
         }
     }
     if (includeTracked) {
-        for (const item of tracked.filter(row => row.kind === 'state' && row.lifetime !== 'temporary' && row.acquisition !== 'pending')) {
+        for (const item of tracked.filter(row => row.kind === 'state' && isTrackedActive(row) && row.acquisition !== 'pending')) {
             const matches = [...facts.values()].filter(fact => fact.status === 'active' && (exact(fact, item) || isAtomicTrackedEntry(fact.text, item)));
             if (matches.some(fact => factIsNewer(fact, item))) continue;
-            if (includeTracked === 'existing' && !matches.length) continue;
+            if (matches.length === 1 && matchesTrackedValue(matches[0].text, item, item.value)) {
+                const fact = matches[0];
+                facts.set(fact.id, { ...fact, stateId: item.id, tracked: true });
+                continue;
+            }
+            if (!matches.length && (includeTracked === 'existing' || item.lifetime === 'temporary')) continue;
             const id = matches[0]?.id ?? item.id;
             for (const duplicate of matches.slice(1)) facts.set(duplicate.id, { ...duplicate, status: 'superseded' });
-            facts.set(id, { id, stateId: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: item.needsReview ? 'needs-review' : item.status === 'active' ? 'active' : 'retired',
+            facts.set(id, { id, stateId: item.id, text: `【${item.entity}｜${item.key}】${item.value}`, status: 'active',
                 floor: item.sourceFloor, sourceId: item.sourceId, tracked: true, evidence: item.evidence });
         }
     }

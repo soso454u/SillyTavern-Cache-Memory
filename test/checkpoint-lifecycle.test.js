@@ -99,7 +99,8 @@ test('new CP requests produce narrative without a second role sheet or a new sta
     const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => settings, apiClient: { complete: async request => {
         calls++; assert.match(request.systemPrompt, /STATE_RESOLUTIONS/);
         assert.doesNotMatch(request.systemPrompt, /勾选的表/);
-        assert.doesNotMatch(request.userContent, /CURRENT_TRACKED_STATE|SUMMARY_RESULTS/);
+        assert.match(request.userContent, /CURRENT_TRACKED_STATE[\s\S]*左腿骨折/);
+        assert.doesNotMatch(request.userContent, /SUMMARY_RESULTS/);
         return { content: '[CHECKPOINT]\n[Stage Story]\n旅人在暴雨中救出村民，左腿受伤。' };
     } } });
     const cp = await summarizer.generateCheckpoint(1, 5); assert.equal(calls, 1);

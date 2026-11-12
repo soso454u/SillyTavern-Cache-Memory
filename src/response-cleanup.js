@@ -1,5 +1,5 @@
-import { parseStructuredSummary, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.16';
-import { readSection } from './continuity.js?v=1.27.26';
+import { parseStructuredSummary, stripStructuredSections, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.16';
+import { readSection } from './continuity.js?v=1.27.30';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
 const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
@@ -79,7 +79,8 @@ export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } 
         }
         const event = text.match(/<event>\s*([\s\S]*?)\s*<\/event>/i)?.[1];
         if (event !== undefined) { if (!hasMemoryValue(event)) return fail(); return text; }
-        if (/\[SUMMARY\]|\[Event\]|<event>/i.test(text) || /\[SUMMARY\]|<event>/i.test(prompt)) return fail();
+        if (/\[SUMMARY\]|\[Event\]|<event>/i.test(text) || /\[SUMMARY\]|<event>/i.test(prompt)
+            || !hasMemoryValue(stripStructuredSections(text, ['Changes']))) return fail();
     } else if (kind === 'Checkpoint') {
         const fields = CHECKPOINT_FIELDS.map(name => readSection(text, name));
         if (fields.some(hasMemoryValue)) return text;

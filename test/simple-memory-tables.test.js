@@ -70,9 +70,9 @@ test('all four tables can be independently selected; choosing none leaves only c
     assert.doesNotMatch(generationPrompt(disabled, 'summary'), /\[Changes\]/);
 });
 
-test('ordinary Summary makes one existing request, keeps actions and a key quote, and stores no optional table delta', async () => {
+test('ordinary Summary makes one existing request, keeps actions and a key quote, and stores only evidenced story deltas without a role table', async () => {
     const f = fixture(); const saved = await f.summarizer.summarizeEntry(getAssistantMessages(f.chat)[0], { deferAggregates: true });
-    assert.equal(f.requests.length, 1); assert.equal(saved.stateChanges, undefined);
+    assert.equal(f.requests.length, 1); assert.deepEqual(saved.stateChanges.map(row => row.category), ['identity', 'relationship', 'knowledge', 'task']);
     assert.match(saved.event, /拦住[\s\S]*通行证[\s\S]*“天亮前回来。”/);
     assert.doesNotMatch(f.requests[0].userContent, /CURRENT_TRACKED_STATE|EXISTING_LONG_FACTS/);
 });
@@ -93,7 +93,8 @@ test('a changed original reply never inherits table evidence from the previous s
     const f = fixture(), entry = getAssistantMessages(f.chat)[0];
     f.store.addSummary({ messageId: entry.messageId, floor: 1, event: '旧的另一回复', status: 'frozen', frozen: true,
         sourceContentFingerprint: 'another-source', stateChanges: [{ ...identity, id: stateId(identity) }] });
-    const saved = await f.summarizer.summarizeEntry(entry, { overwrite: true, deferAggregates: true });
+    f.chat[0].mes = '新剧情没有原身份资料。';
+    const saved = await f.summarizer.summarizeEntry(getAssistantMessages(f.chat)[0], { overwrite: true, deferAggregates: true });
     assert.equal(f.requests.length, 1); assert.equal(saved.stateChanges, undefined);
 });
 
@@ -175,11 +176,11 @@ for (const tables of [false, true]) test(`55-floor end-to-end story pipeline kee
     const summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => config, apiClient: { complete: async request => {
         requests.push(request);
         if (request.userContent.startsWith('[EXISTING_LONG_FACTS]')) {
-            assert.equal(request.userContent.includes('[CURRENT_TRACKED_STATE]'), tables);
+            assert.match(request.userContent, /CURRENT_TRACKED_STATE[\s\S]*旧城医师/);
             return { content: '[STORY_ARC]\n医师在旧城调查期间拒收纸包，向守卫澄清只在大堂见过送信人。\n[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' };
         }
         if (request.userContent.startsWith('[PREVIOUS_CONTEXT]')) {
-            assert.equal(request.userContent.includes('[CURRENT_TRACKED_STATE]'), tables);
+            assert.match(request.userContent, /CURRENT_TRACKED_STATE[\s\S]*旧城医师/);
             return { content: '[CHECKPOINT]\n[Stage Story]\n医师拒收纸包，并当众澄清与送信人仅在大堂见过。' };
         }
         return { content: `[SUMMARY]\n[Title]\n拒收纸包\n[Characters]\n医师\n[Event]\n医师当众拒收纸包，澄清：“我只在大堂见过他。”\n[Changes]\n${JSON.stringify([identity])}` };

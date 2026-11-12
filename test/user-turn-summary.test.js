@@ -51,7 +51,7 @@ test('one existing Summary call receives user facts and the filtered assistant, 
         { is_user: true, mes: 'FUTURE_USER_SENTINEL' }]);
     const original = structuredClone(f.chat), row = await f.summarizer.summarizeMessage(f.entry().messageId, { deferAggregates: true });
     assert.equal(f.calls.length, 1); assert.equal(f.calls[0].maxTokens, null);
-    assert.ok(f.calls[0].userContent.startsWith(reply)); assert.match(f.calls[0].userContent, /\[CURRENT_USER_INPUT\]/);
+    assert.ok(f.calls[0].userContent.startsWith(`[SUMMARY_SOURCE]\n${reply}`)); assert.match(f.calls[0].userContent, /\[CURRENT_USER_INPUT\]/);
     assert.ok(f.calls[0].userContent.includes(user)); assert.doesNotMatch(f.calls[0].userContent, /OLD_USER_SENTINEL|HIDDEN_SENTINEL|FUTURE_USER_SENTINEL/);
     assert.equal(row.event, event); assert.equal(row.userSourceFingerprint, summaryUserSource(f.chat, f.entry()).fingerprint);
     assert.deepEqual(f.chat, original); assert.equal(getAssistantMessages(f.chat).length, 2);
@@ -70,7 +70,7 @@ test('custom assistant filters do not remove user facts outside those tags', asy
     const f = fixture(); Object.assign(f.settings, { summaryFilterMode: 'custom', summaryFilterTags: 'story' });
     f.chat[1].mes = '<story>研究员推门进入。</story><context>OMIT_SENTINEL</context>';
     await f.summarizer.summarizeMessage(f.entry().messageId, { deferAggregates: true });
-    assert.ok(f.calls[0].userContent.startsWith('研究员推门进入。'));
+    assert.ok(f.calls[0].userContent.startsWith('[SUMMARY_SOURCE]\n研究员推门进入。'));
     assert.ok(f.calls[0].userContent.includes(user)); assert.doesNotMatch(f.calls[0].userContent, /OMIT_SENTINEL/);
 });
 
@@ -213,4 +213,53 @@ test('a failed repair of changed user input blocks its dependent CP without cons
     assert.equal(calls, 4); assert.equal(result.failed, 1); assert.equal(result.skipped, 2);
     assert.equal(f.store.current().checkpoints.length, 0); assert.equal(f.store.current().longMemories.length, 0);
     assert.equal(f.summarizer.getMissingCheckpointPlan().blocked.length, 1);
+});
+
+
+test('Normal sends custom extraction, keeps an uncertain conflict for review, and applies an explicit player correction by the same ID', async () => {
+    const correction = '设定纠正：纪念外套由小宁试穿，阿妍从未试穿这件外套。';
+    const chat = [
+        { is_user: true, mes: '今天试穿外套。' }, { mes: '阿妍试穿了纪念外套。', gen_started: 'a1' },
+        { is_user: true, mes: '继续故事。' }, { mes: '有人声称小宁才是试穿者。', gen_started: 'a2' },
+        { is_user: true, mes: correction }, { mes: '她们整理好衣柜。', gen_started: 'a3' },
+    ];
+    const f = fixture(chat);
+    f.settings.prompts = { ...f.settings.prompts, state: '合成自定义状态提取标记' };
+    const entry = getAssistantMessages(chat);
+    const original = { kind: 'state', entity: '纪念外套', key: '试穿经历', category: 'milestone',
+        value: '阿妍试穿过', evidence: '阿妍试穿了纪念外套', status: 'active', confirmed: true };
+    let delta = original;
+    f.summarizer.apiClient.complete = async request => {
+        f.calls.push(request);
+        return { content: `[SUMMARY]\n[Event]\n${delta.evidence}\n[Changes]\n${JSON.stringify([delta])}` };
+    };
+    const first = await f.summarizer.summarizeEntry(entry[0], { deferAggregates: true });
+    const id = first.stateChanges[0].id;
+    assert.match(f.calls[0].systemPrompt, /合成自定义状态提取标记/);
+    assert.equal([...f.calls[0].systemPrompt.matchAll(/\[STEP \d/g)].length, 8);
+    delta = { ...original, id, value: '小宁试穿过', evidence: '有人声称小宁才是试穿者', reviewOnly: true };
+    await f.summarizer.summarizeEntry(entry[1], { deferAggregates: true });
+    assert.equal(projectActiveState(f.store.current())[0].value, original.value);
+    assert.equal(projectActiveState(f.store.current())[0].reviewConflicts[0].value, delta.value);
+    delta = { ...original, id, value: '小宁试穿过，阿妍从未试穿', evidence: correction };
+    await f.summarizer.summarizeEntry(entry[2], { deferAggregates: true });
+    const [current] = projectActiveState(f.store.current());
+    assert.equal(current.id, id);
+    assert.equal(current.value, delta.value);
+    assert.equal(current.history[0].value, original.value);
+    assert.equal(f.store.getSummary(entry[0].messageId).event, first.event);
+    assert.equal(f.calls.length, 3);
+});
+
+
+test('a custom legacy Summary keeps its visible format and stores the same evidenced Changes separately', async () => {
+    const f = fixture([{ mes: '林舟已经成为研究所主管。', gen_started: 'legacy' }]);
+    f.settings.prompts = { ...f.settings.prompts, summary: '使用 XML，剧情写入 <event>。' };
+    const delta = { kind: 'state', entity: '林舟', key: '职务', value: '研究所主管', category: 'identity', status: 'active',
+        evidence: '林舟已经成为研究所主管', confirmed: true };
+    f.summarizer.apiClient.complete = async () => ({ content: `<event>林舟接任主管。</event>\n[Changes]\n${JSON.stringify([delta])}` });
+    const record = await f.summarizer.summarizeEntry(f.entry(), { deferAggregates: true });
+    assert.equal(record.raw, '<event>林舟接任主管。</event>');
+    assert.equal(record.event, '林舟接任主管。');
+    assert.equal(record.stateChanges[0].value, delta.value);
 });

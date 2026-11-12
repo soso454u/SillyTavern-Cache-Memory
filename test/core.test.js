@@ -236,8 +236,8 @@ test('summarizer builds frozen floor, checkpoint and long memories without chang
         async complete({ systemPrompt, userContent, maxTokens }) {
             calls += 1;
             budgets.push(maxTokens);
-            if (userContent.startsWith('body')) {
-                return { content: `<title>T${calls}</title><characters>C</characters><event>${userContent}</event>`, status: 200 };
+            if (userContent.startsWith('[SUMMARY_SOURCE]\nbody')) {
+                return { content: `<title>T${calls}</title><characters>C</characters><event>${userContent.split('\n')[1]}</event>`, status: 200 };
             }
             return { content: systemPrompt.includes('[LONG_MEMORY]') ? `[STORY_ARC]\n合成事件形成完整因果链。\n[LONG_MEMORY]\naggregate-${calls}` : `[CHECKPOINT]\n[Events]\naggregate-${calls}`, status: 200 };
         },

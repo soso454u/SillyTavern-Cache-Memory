@@ -1,6 +1,6 @@
 import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages } from './utils.js?v=1.27.16';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.26';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.26';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.30';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.30';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -477,7 +477,8 @@ export class MemoryStore {
 
     editTrackedState(updates) {
         const store = this.current();
-        const existing = projectActiveState(store).find(item => item.id === updates.id);
+        const tracked = projectActiveState(store);
+        const existing = tracked.find(item => updates.id ? item.id === updates.id : stateId(item) === stateId(updates));
         const source = Object.values(store.summaries).find(item => item.floor === Number(updates.sourceFloor) && summaryIsCurrent(item));
         if (!source) throw new Error('请选择具有已生成摘要的来源楼层');
         const item = { ...existing, ...structuredClone(updates), entity: String(updates.entity ?? existing?.entity ?? '').trim(), key: String(updates.key ?? existing?.key ?? '').trim() };
@@ -485,7 +486,9 @@ export class MemoryStore {
         if (!['thread', 'state'].includes(item.kind)) throw new Error('未知状态类型');
         const allowed = item.kind === 'thread' ? [...ACTIVE_THREAD_STATUSES, 'completed', 'failed', 'cancelled'] : ['active', 'expired'];
         if (!allowed.includes(item.status)) throw new Error('未知事项状态');
-        item.id = existing?.id ?? stateId(item);
+        const subject = stateId(item);
+        if (tracked.some(row => row.id !== existing?.id && stateId(row) === subject)) throw new Error('该人物已有同名事项，请编辑现有记录');
+        item.id = existing?.id ?? subject;
         item.sourceId = source.messageId; item.sourceFingerprint = source.sourceFingerprint;
         item.originSourceId = source.messageId; // Explicit correction re-anchors reviewed evidence.
         item.manual = true; item.evidence = '用户手动确认';
@@ -668,7 +671,7 @@ export class MemoryStore {
         if (updates.content !== undefined) { delete item.factCorrection; delete item.invalidSourceIds; delete item.invalidSourceVersions; }
         if (item.memoryKind === 'facts' && Object.hasOwn(updates, 'content') && item.content !== previousContent) {
             const evidence = Object.values(store.summaries).filter(summary => summary.floor >= item.startFloor && summary.floor <= item.endFloor)
-                .map(summaryText).join('\n');
+                .map(summary => summaryText(summary, { includeTransitionEvidence: true }));
             const sections = { add: 'LONG_MEMORY', replace: 'UPDATED_FACTS', retire: 'RETIRED_FACTS' };
             const structured = /^\s*\[LONG_MEMORY\]\s*$/im.test(previousContent ?? '') && /^\s*\[LONG_MEMORY\]\s*$/im.test(item.content);
             const unchanged = update => {

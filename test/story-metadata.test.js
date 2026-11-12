@@ -36,7 +36,7 @@ test('filtered summary source receives extracted metadata without exposing the c
     assert.match(input, /^\[SOURCE_METADATA\]/);
     assert.match(input, /\[SUMMARY_SOURCE\]\n只保留的正文$/);
     assert.doesNotMatch(input, /隐藏资料/);
-    assert.equal(summarySourceWithMetadata('原正文', { storyTime: '', location: '' }), '原正文');
+    assert.equal(summarySourceWithMetadata('原正文', { storyTime: '', location: '' }), '[SUMMARY_SOURCE]\n原正文');
 });
 
 test('story ranges use the first and last explicit values while leaving missing legacy data empty', () => {
@@ -65,4 +65,12 @@ test('scene metadata uses the current narration and rejects locations from choic
     const scene = summaryTurnMetadata('[Scene]\n「2032/01/02 11:50｜总部办公室｜在场人物｜晴」\n' + raw, prose, '');
     assert.equal(scene.location, '总部办公室');
     assert.equal(scene.storyTime, '2032/01/02 11:50');
+});
+
+
+test('a past date in a recollection and a proposed meeting time do not become current metadata', () => {
+    const narration = '医师回忆自己曾于2025/01/02 11:30到岗。她提议明天14:00碰面。';
+    const metadata = summaryTurnMetadata(`<content>${narration}</content>`, narration, '我记得去年的09:30见过她。');
+    assert.equal(metadata.storyTime, '');
+    assert.equal(summarySourceWithMetadata(narration, metadata), `[SUMMARY_SOURCE]\n${narration}`);
 });

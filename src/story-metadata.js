@@ -68,12 +68,20 @@ function lastStatusBarLocation(text) {
     return '';
 }
 
-export function extractStoryMetadata(message) {
+function sceneTimeFromHeading(text) {
+    return plainText(text).split(/\r?\n/u).map(line => {
+        const heading = line.trim().replace(/^[「【\[]/u, '');
+        const time = lastExplicitTime(heading.split(/[|｜]/u, 1)[0]);
+        return time && heading.startsWith(time) ? time : '';
+    }).filter(Boolean).at(-1) ?? '';
+}
+
+export function extractStoryMetadata(message, { sceneOnly = false } = {}) {
     const text = String(message ?? '');
     const storyTime = lastTaggedValue(text, ['storytime', 'story_time', 'story-time', 'datetime', 'date', 'time'])
         || lastBracketValue(text, ['Story[ _-]?Time', '剧情时间', '故事时间', '日期', '时间'])
         || lastLabeledValue(text, ['剧情时间', '故事时间', 'Story[ _-]?Time', '日期', '时间'])
-        || lastExplicitTime(text);
+        || (sceneOnly ? sceneTimeFromHeading(text) : lastExplicitTime(text));
     const location = lastTaggedValue(text, ['location', 'place', 'scene_location', 'scene-location'])
         || lastBracketValue(text, ['Scene[ _-]?Location', 'Location', '剧情地点', '故事地点', '地点', '场所'])
         || lastLabeledValue(text, ['剧情地点', '故事地点', 'Scene[ _-]?Location', 'Location', '地点', '场所'])
@@ -95,14 +103,14 @@ export function summaryTurnMetadata(message, narration, userText) {
     const narrativeBlocks = selected !== full ? [selected] : (content.length ? content : embedded).map(block => block[2]);
     const prose = (narrativeBlocks.join('\n') || header).replace(ignored, '');
     const locations = new Set(narrativeBlocks.map(block => extractStoryMetadata(block.replace(ignored, '')).location).filter(Boolean));
-    const user = extractStoryMetadata(String(userText ?? '').replace(ignored, ''));
+    const user = extractStoryMetadata(String(userText ?? '').replace(ignored, ''), { sceneOnly: true });
     const scene = [...header.matchAll(/^\s*\[Scene\]\s*\r?\n\s*([^\n\r<]+)/gim)].at(-1)?.[1] ?? '';
     const explicitScene = lastTaggedValue(cleaned, ['scene_location', 'scene-location'])
         || lastBracketValue(cleaned, ['Scene[ _-]?Location', '剧情地点', '故事地点'])
         || lastLabeledValue(cleaned, ['Scene[ _-]?Location', '剧情地点', '故事地点']);
     return {
         storyTime: lastExplicitTime(scene.split(/[|｜]/u)[0])
-            || extractStoryMetadata(full.replace(/<(choices|options|prewrite)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, '')).storyTime || user.storyTime,
+            || extractStoryMetadata(full.replace(/<(choices|options|prewrite)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, ''), { sceneOnly: true }).storyTime || user.storyTime,
         location: locations.size > 1 ? '' : extractStoryMetadata(prose).location || explicitScene || lastStatusBarLocation(scene)
             || extractStoryMetadata(header).location || user.location,
         locationSource: prose,
@@ -118,8 +126,9 @@ export function locationFromNarration(value, narration) {
 export function summarySourceWithMetadata(source, metadata) {
     const storyTime = cleanValue(metadata?.storyTime);
     const location = cleanValue(metadata?.location);
-    if (!storyTime && !location) return String(source ?? '');
-    return `[SOURCE_METADATA]\n[StoryTime]\n${storyTime || '无'}\n[Location]\n${location || '无'}\n\n[SUMMARY_SOURCE]\n${String(source ?? '')}`;
+    const fields = [storyTime && `[StoryTime]\n${storyTime}`, location && `[Location]\n${location}`].filter(Boolean);
+    const body = `[SUMMARY_SOURCE]\n${String(source ?? '')}`;
+    return fields.length ? `[SOURCE_METADATA]\n${fields.join('\n')}\n\n${body}` : body;
 }
 
 export function storyMetadataRange(items) {

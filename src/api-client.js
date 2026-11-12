@@ -1,4 +1,4 @@
-import { normalizeOutputLimits, normalizeOutputTokenLimit } from './defaults.js?v=1.27.29';
+import { normalizeOutputLimits, normalizeOutputTokenLimit } from './defaults.js?v=1.27.30';
 
 export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'outputLimitVersion', 'limitOutputTokens', 'tokenLimitParameter', 'generationTransport']);
 
@@ -53,7 +53,7 @@ function isExplicitStreamUnsupported(error) {
         && /(?:stream(?:ing)?[^\n]{0,40}(?:unsupported|not supported|invalid|unknown|unavailable|not allowed)|(?:unsupported|not supported|invalid|unknown)[^\n]{0,40}stream)/i.test(error?.message ?? '');
 }
 
-export async function readOpenAISse(response, { signal, onFirstChunk = () => {}, allowJson = false } = {}) {
+export async function readOpenAISse(response, { signal, onFirstChunk = () => {}, onContent, allowJson = false } = {}) {
     if (!response?.body?.getReader) throw new Error('流式响应没有可读取的 body');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -80,6 +80,7 @@ export async function readOpenAISse(response, { signal, onFirstChunk = () => {},
         if (!eventCount++) onFirstChunk();
         const parts = chunkParts(data);
         content += parts.content;
+        if (parts.content) onContent?.(parts.content);
         reasoning += parts.reasoning;
         if (parts.finishReason != null) finishReason = parts.finishReason;
     };
@@ -512,9 +513,9 @@ export class SummaryApiClient {
         finally { control?.cleanup(); this.responseControls.delete(response); }
     }
 
-    async consumeSse(response, onFirstChunk) {
+    async consumeSse(response, onFirstChunk, onContent) {
         const control = this.responseControls.get(response);
-        try { return await readOpenAISse(response, { signal: control?.signal, onFirstChunk, allowJson: true }); }
+        try { return await readOpenAISse(response, { signal: control?.signal, onFirstChunk, onContent, allowJson: true }); }
         catch (error) { throw control?.translate(error) ?? error; }
         finally { control?.cleanup(); this.responseControls.delete(response); }
     }
@@ -554,7 +555,7 @@ export class SummaryApiClient {
     }
 
     // Models, test and every generation share live ST headers, URL normalization and diagnostics.
-    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '', signal, connection } = {}) {
+    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '', signal, connection, onContent } = {}) {
         const settings = connection?.settings ?? { ...this.getSettings() };
         const startedAt = now();
         const stream = kind === 'completion' && payload?.stream === true;
@@ -609,7 +610,7 @@ export class SummaryApiClient {
             if (kind === 'completion' && response.ok && response.body?.getReader) {
                 let streamed;
                 try {
-                    streamed = await this.consumeSse(response, () => { diagnostics.ttfcMs ??= elapsed(startedAt); });
+                    streamed = await this.consumeSse(response, () => { diagnostics.ttfcMs ??= elapsed(startedAt); }, onContent);
                 } catch (error) {
                     diagnostics.proxyException = safeText(errorText(error), secrets);
                     const status = error.status ?? response.status;
@@ -707,15 +708,22 @@ export class SummaryApiClient {
         const mode = ['auto', 'stream', 'non-stream'].includes(request.transportMode)
             ? request.transportMode
             : settings.generationTransport ?? 'auto';
+        const report = (type, detail = {}) => {
+            try { request.onGeneration?.({ type, ...detail }); } catch { /* Observers cannot affect generation. */ }
+        };
+        const send = payload => this.requestOpenAICompatible({ payload, signal: request.signal, connection,
+            onContent: text => report('chunk', { text }) });
         const run = async stream => {
+            report('transport', { stream });
             const attemptPayload = { ...payload, stream };
-            try { return await this.requestOpenAICompatible({ payload: attemptPayload, signal: request.signal, connection }); }
+            try { return await send(attemptPayload); }
             catch (error) {
                 // Retry only an explicit rejected parameter, preserving the selected transport and output budget.
                 if (!attemptPayload.max_tokens || !/max_tokens/.test(error.message) || !/unsupported|not supported|unknown|use.*max_completion_tokens/i.test(error.message)) throw error;
+                report('transport', { stream, parameterRetry: true });
                 attemptPayload.max_completion_tokens = attemptPayload.max_tokens;
                 delete attemptPayload.max_tokens;
-                return this.requestOpenAICompatible({ payload: attemptPayload, signal: request.signal, connection });
+                return send(attemptPayload);
             }
         };
         const preferStream = mode !== 'non-stream';
@@ -724,12 +732,15 @@ export class SummaryApiClient {
         catch (error) {
             if (mode !== 'auto' || !preferStream || !isExplicitStreamUnsupported(error)) throw error;
             console.info('[Cache Memory] stream explicitly unsupported; retrying once with stream:false');
+            report('fallback');
             result = await run(false);
             result.diagnostics.streamFallback = true;
         }
         const { data, response, diagnostics, source } = result;
         const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text
             ?? data?.content?.[0]?.text ?? data?.response ?? '';
+        report('response', { stream: result.streamed === true, requestedStream: diagnostics.stream,
+            status: response.status, totalMs: diagnostics.totalMs, text: String(content) });
         if (!String(content).trim()) {
             const truncated = isOutputTruncated(data?.choices?.[0]?.finish_reason);
             const error = new Error(truncated ? '模型接口报告输出达到 token 上限，尚未返回可用正文' : 'API 返回成功，但没有可用文本');

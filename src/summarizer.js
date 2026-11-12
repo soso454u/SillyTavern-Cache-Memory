@@ -1,16 +1,16 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.29';
-import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.26';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.29';
-import { generationPrompt } from './generation-prompts.js?v=1.27.29';
+import { isOutputTruncated } from './api-client.js?v=1.27.30';
+import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.30';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.30';
+import { generationPrompt } from './generation-prompts.js?v=1.27.30';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.26';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.30';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence } from './summary-source.js?v=1.27.26';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.26';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.26';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.26';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.26';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.30';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.30';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.30';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.30';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.30';
 import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.16';
 import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.16';
 
@@ -27,6 +27,7 @@ function trackedContext(rows) {
 }
 
 function generationTrackedRows(rows, settings) {
+    if (settings.summaryMode === 'normal' && settings.continuityEnabled) return rows;
     const continuity = settings.continuityEnabled ? rows.filter(isContinuityChange) : [];
     const tables = settings.activeStateEnabled ? selectedTableRecords(rows.filter(row => !isContinuityChange(row)), settings) : [];
     return [...continuity, ...tables];
@@ -76,7 +77,6 @@ function metadataValue(value) {
 
 export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}) {
     const source = String(text ?? '').trim();
-    const read = tag => source.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))?.[1]?.trim() ?? '';
     const structured = parseStructuredSummary(source);
     if (structured) return {
         title: structured.title || '未命名摘要',
@@ -92,17 +92,20 @@ export function parseFloorSummary(text, maxLength, { preserveFull = false } = {}
         raw: structured.raw,
         format: 'structured',
     };
-    const title = read('title') || readSection(source, 'Title') || '未命名摘要';
-    const characters = read('characters') || readSection(source, 'Characters') || '未明确';
-    const storyTime = metadataValue(read('storyTime') || read('story_time') || readSection(source, 'StoryTime'));
-    const location = metadataValue(read('location') || readSection(source, 'Location'));
-    const event = read('event') || source;
+    const changes = readSection(source, 'Changes');
+    const visible = changes ? stripStructuredSections(source, ['Changes']) : source;
+    const read = tag => visible.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i'))?.[1]?.trim() ?? '';
+    const title = read('title') || readSection(visible, 'Title') || '未命名摘要';
+    const characters = read('characters') || readSection(visible, 'Characters') || '未明确';
+    const storyTime = metadataValue(read('storyTime') || read('story_time') || readSection(visible, 'StoryTime'));
+    const location = metadataValue(read('location') || readSection(visible, 'Location'));
+    const event = read('event') || visible;
     // maxLength is a generation target, never a client-side truncation rule.
-    return { title, characters, storyTime, location, event, state: '', open: '', quote: '', keep: '', raw: source, format: 'legacy' };
+    return { title, characters, storyTime, location, event, state: '', open: '', quote: '', keep: '', changes, raw: visible, format: 'legacy' };
 }
 
 export class MemorySummarizer {
-    constructor({ store, apiClient, getSettings, getChat, getPersistenceState = () => ({}), flushMemory = async () => ({ state: 'confirmed' }), commitMemory = async mutate => mutate(), onStatus = () => {}, retryDelay = waitForRetry }) {
+    constructor({ store, apiClient, getSettings, getChat, getPersistenceState = () => ({}), flushMemory = async () => ({ state: 'confirmed' }), commitMemory = async mutate => mutate(), onStatus = () => {}, onGeneration = () => {}, retryDelay = waitForRetry }) {
         this.store = store;
         this.getPersistenceState = getPersistenceState;
         this.flushMemory = flushMemory;
@@ -111,6 +114,7 @@ export class MemorySummarizer {
         this.getSettings = () => memoryGenerationSettings(getSettings(), store.current().summaryMode);
         this.getChat = getChat;
         this.onStatus = onStatus;
+        this.onGeneration = onGeneration;
         this.queue = Promise.resolve();
         this.inFlight = new Set();
         this.pendingSummaries = new Map();
@@ -195,24 +199,40 @@ export class MemorySummarizer {
         return recovery.promise;
     }
 
-    async completeWithRetry(request, assertActive, key, { retryDelay = this.retryDelay, onRetry = () => {}, validate = result => result } = {}) {
+    async completeWithRetry(request, assertActive, key, { label, retryDelay = this.retryDelay, onRetry = () => {}, validate = result => result } = {}) {
         assertActive();
         if (this.unsavedResponses.has(key)) return this.unsavedResponses.get(key);
+        const chatId = this.store.current().chatId, revision = this.contextRevision;
+        const report = event => {
+            if (chatId !== this.store.current().chatId || revision !== this.contextRevision) return;
+            try { this.onGeneration({ ...event, label, chatId }); } catch { /* Logging is observational. */ }
+        };
         // Cache only validated responses. Network and content failures share one budget.
         const result = await retryOperation(async () => {
-            const response = await this.apiClient.complete(request);
+            report({ type: 'start' });
+            const response = await this.apiClient.complete({ ...request, onGeneration: report });
             assertActive();
             if (isOutputTruncated(response.finishReason)) {
                 throw Object.assign(new Error('模型接口报告输出达到 token 上限，已停止处理截断的记忆结果'), { code: 'OUTPUT_TRUNCATED' });
             }
-            return validate(response);
+            const validated = validate(response);
+            report({ type: 'validated' });
+            return validated;
         }, { signal: request.signal, assertActive, delay: retryDelay,
             onRetry: info => {
+                report({ type: 'retry', waitMs: info.waitMs, attempt: info.attempt, maxRetries: info.maxRetries });
                 this.onStatus('busy', `生成请求失败，${info.waitMs / 1000} 秒后自动重试 ${info.attempt}/${info.maxRetries}：${info.error.message}`);
                 onRetry(info);
-            } });
+            } }).catch(error => {
+                report({ type: 'failed' });
+                throw error;
+            });
         this.unsavedResponses.set(key, result);
         return result;
+    }
+
+    reportSaved(chatId, label, type = 'saved') {
+        try { this.onGeneration({ type, chatId, label }); } catch { /* Logging is observational. */ }
     }
 
     generationStore() {
@@ -369,7 +389,7 @@ export class MemorySummarizer {
         const revision = this.contextRevision;
         const targetVersions = () => JSON.stringify(this.store.summaryCandidates(entry).map(([id, item]) => [id, summaryVersion(item)]).sort());
         const expectedTargets = targetVersions();
-        let responseKey;
+        let responseKey, stateInput;
         const assertContext = () => {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('摘要');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
@@ -378,6 +398,8 @@ export class MemorySummarizer {
                 || summaryUserSource(this.getChat(), current).fingerprint !== userSource.fingerprint) {
                 throw Object.assign(new Error('请求期间原文已编辑、删除或切换备选回复，请重试本层'), { code: 'SOURCE_CHANGED' });
             }
+            if (stateInput !== undefined && trackedContext(generationTrackedRows(projectActiveState(this.generationStore(), entry.floor - 1), settings)) !== stateInput)
+                throw Object.assign(new Error('请求期间既有状态已变化，请重新生成本层'), { code: 'SOURCE_CHANGED' });
             if (targetVersions() !== expectedTargets) throw Object.assign(new Error('另一窗口或设备已更新本层记忆，未覆盖较新摘要'), { code: 'SOURCE_CHANGED' });
         };
         this.onStatus('busy', `正在总结第 ${entry.floor} 层`);
@@ -391,7 +413,9 @@ export class MemorySummarizer {
             const userText = userSource.messages.map(message => message.text).join('\n\n');
             const evidenceSource = summarySource.text + (userText ? '\n\n' + userText : '');
             const sourceMetadata = summaryTurnMetadata(entry.message.mes, summarySource.text, userText);
-            const transitionEvidence = timeJumpEvidence(userSource);
+            const timeJump = timeJumpEvidence(userSource);
+            const corrections = playerCorrectionEvidence(userSource);
+            const transitionEvidence = [...new Set([timeJump, ...corrections].filter(Boolean))].join('\n');
             if (settings.cacheDebug) console.info('[Cache Memory] SUMMARY SOURCE', {
                 strategy: settings.summaryFilterMode,
                 source: summarySource.source,
@@ -401,18 +425,21 @@ export class MemorySummarizer {
                 locationFound: Boolean(sourceMetadata.location),
             });
             const trackChanges = settings.activeStateEnabled || settings.continuityEnabled;
+            const generationStore = this.generationStore();
+            const known = trackChanges ? projectActiveState(generationStore, entry.floor - 1) : [];
+            stateInput = trackChanges ? trackedContext(generationTrackedRows(known, settings)) : undefined;
             const request = {
                 systemPrompt,
                 userContent: summarySourceWithMetadata(summarySource.text, sourceMetadata)
                     + formatSummaryUserSource(userSource)
-                    + (transitionEvidence ? '\n\n[TIME_JUMP]\n先核对本轮明确给出的年龄、语言能力、居住及照护变化，再总结当前场景。' : '')
-                    + priorNormalContext(this.generationStore(), settings, entry.floor)
-                    + (trackChanges ? trackedContext(generationTrackedRows(projectActiveState(this.generationStore(), entry.floor - 1), settings)) : ''),
+                    + (timeJump ? '\n\n[TIME_JUMP]\n先核对本轮明确给出的年龄、语言能力、居住及照护变化，再总结当前场景。' : '')
+                    + priorNormalContext(generationStore, settings, entry.floor)
+                    + (stateInput ?? ''),
                 maxTokens: settings.summaryMaxTokens,
                 signal,
             };
             responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);
-            const parsed = await this.completeWithRetry(request, assertContext, responseKey, { retryDelay, onRetry, validate: result => {
+            const parsed = await this.completeWithRetry(request, assertContext, responseKey, { label: `小总结 · 第 ${entry.floor} 层`, retryDelay, onRetry, validate: result => {
                 const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: evidenceSource, prompt: settings.prompts.summary });
                 return parseFloorSummary(cleaned, settings.summaryMaxLength, { preserveFull: settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy' });
             } });
@@ -446,8 +473,7 @@ export class MemorySummarizer {
                 status: 'frozen',
             };
             if (trackChanges && (settings.activeStateEnabled || parsed.changes)) {
-                const known = projectActiveState(this.generationStore(), entry.floor - 1);
-                const changes = generationTrackedRows(parseStateChanges(parsed.changes, [summarySource.text, ...userSource.messages.map(message => message.text)], known, { advanced }), settings);
+                const changes = generationTrackedRows(parseStateChanges(parsed.changes, [summarySource.text, ...userSource.messages.map(message => message.text)], known, { advanced, corrections }), settings);
                 const selected = selectNormalChanges(changes, known);
                 if (settings.activeStateEnabled || selected.length) record.stateChanges = selected;
             }
@@ -462,7 +488,8 @@ export class MemorySummarizer {
                 const changes = new Map(existing.stateChanges.map(row => [row.id || stateId(row), structuredClone(row)]));
                 for (const row of record.stateChanges ?? []) {
                     const id = row.id || stateId(row);
-                    if (changes.get(id)?.category !== 'milestone') changes.set(id, row);
+                    const prior = changes.get(id);
+                    if (!prior || !row.reviewOnly && selectNormalChanges([row], [prior]).length) changes.set(id, row);
                 }
                 record.stateChanges = [...changes.values()];
             }
@@ -470,6 +497,7 @@ export class MemorySummarizer {
                 const saved = this.store.addSummary(record, { overwrite, entry, background: deferAggregates || this.aggregateDeferrals > 0 });
                 return saved;
             }, assertContext);
+            this.reportSaved(chatId, `小总结 · 第 ${entry.floor} 层`);
             this.unsavedResponses.delete(responseKey);
             let aggregateFailure = '';
             try {
@@ -483,6 +511,7 @@ export class MemorySummarizer {
                 : `第 ${entry.floor} 层摘要已冻结`);
             return record;
         } catch (error) {
+            if (error.code === 'SAVE_UNCONFIRMED') this.reportSaved(chatId, `小总结 · 第 ${entry.floor} 层`, 'save-pending');
             if (error.code !== 'SAVE_UNCONFIRMED') this.unsavedResponses.delete(responseKey);
             // Network failures can arrive after a chat switch or source edit too.
             try { assertContext(); } catch (contextError) { error = contextError; }
@@ -846,6 +875,8 @@ export class MemorySummarizer {
         const checkpointVersions = state.id ? { [state.id]: aggregateVersion([...checkpoints, ...this.store.current().longMemories].find(cp => cp.id === state.id)) } : {};
         const keeps = collectKeepItems(this.generationStore(), endFloor);
         const keepVersion = JSON.stringify(this.store.current().keepRegistry);
+        const longFacts = () => formatLongFacts(projectLongFacts(this.generationStore(), startFloor - 1, { includeTracked: 'existing' }));
+        const priorLongFacts = longFacts();
         const storyMetadata = storyMetadataRange(opening ? [{ floor: 0, ...extractStoryMetadata(opening.message.mes) }, ...summaries] : summaries);
         const trackedStateVersion = settings.activeStateEnabled || settings.continuityEnabled ? activeStateVersion(this.generationStore(), endFloor) : null;
         const sourceVersions = Object.fromEntries(summaries.map(item => [item.messageId, summaryVersion(item)]));
@@ -857,6 +888,7 @@ export class MemorySummarizer {
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
             if (opening && getOpeningSource(this.getChat())?.fingerprint !== opening.fingerprint) throw Object.assign(new Error('聚合期间开场白已变化，未提交过期阶段结果'), { code: 'SOURCE_CHANGED' });
             if (targetVersions() !== expectedTargets) throw Object.assign(new Error('阶段记忆已被其他窗口更新，未覆盖较新记录'), { code: 'SOURCE_CHANGED' });
+            if (longFacts() !== priorLongFacts) throw Object.assign(new Error('先前长期事实已变化，未提交过期阶段结果'), { code: 'SOURCE_CHANGED' });
             if (JSON.stringify(this.store.current().keepRegistry) !== keepVersion) throw Object.assign(new Error('KEEP 已变化，未提交过期阶段结果'), { code: 'SOURCE_CHANGED' });
             if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.generationStore(), endFloor)) throw Object.assign(new Error('聚合期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
             if (Object.entries(checkpointVersions).some(([id, version]) => aggregateVersion([...this.store.current().checkpoints, ...this.store.current().longMemories].find(cp => cp.id === id)) !== version)
@@ -867,7 +899,11 @@ export class MemorySummarizer {
         };
         const known = trackedStateVersion ? projectActiveState(this.generationStore(), endFloor) : [];
         const continuity = trackedContext(generationTrackedRows(known, settings));
-        const userContent = `[PREVIOUS_CONTEXT]\n${state.content}\n\n[LONG_FACTS]\n${formatLongFacts(projectLongFacts(this.generationStore(), startFloor - 1))}\n\n[ACTIVE_KEEP]\n${formatKeepItems(keeps)}${continuity}\n\n[NEW_SUMMARIES]\n${newSummaries}`;
+        const activeKeep = formatKeepItems(keeps);
+        const userContent = `[PREVIOUS_CONTEXT]\n${state.content}`
+            + (priorLongFacts === '无' ? '' : `\n\n[EXISTING_LONG_FACTS]\n${priorLongFacts}`)
+            + (activeKeep === '无' ? '' : `\n\n[ACTIVE_KEEP]\n${activeKeep}`)
+            + continuity + `\n\n[NEW_SUMMARIES]\n${newSummaries}`;
         const systemPrompt = replacePromptVariables(generationPrompt(settings, 'checkpoint'), {
             startFloor,
             endFloor,
@@ -877,7 +913,7 @@ export class MemorySummarizer {
         try {
             const request = { systemPrompt, userContent, maxTokens: settings.checkpointMaxTokens, signal };
             responseKey = JSON.stringify(['checkpoint', chatId, revision, expectedTargets, request]);
-            const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { validate: result => {
+            const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { label: `Checkpoint · 第 ${startFloor}–${endFloor} 层`, validate: result => {
                 return prepareMemoryResponse(result.content, 'Checkpoint', { source: userContent, prompt: settings.prompts.checkpoint });
             } });
             assertSources();
@@ -907,9 +943,11 @@ export class MemorySummarizer {
                 record.content = deduplicateCheckpoint(record.content);
                 return this.store.addCheckpoint(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) });
             }, assertSources);
+            this.reportSaved(chatId, `Checkpoint · 第 ${startFloor}–${endFloor} 层`);
             this.unsavedResponses.delete(responseKey);
             return record;
         } catch (error) {
+            if (error.code === 'SAVE_UNCONFIRMED') this.reportSaved(chatId, `Checkpoint · 第 ${startFloor}–${endFloor} 层`, 'save-pending');
             if (error.code !== 'SAVE_UNCONFIRMED') this.unsavedResponses.delete(responseKey);
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Checkpoint');
             if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) throw error;
@@ -982,7 +1020,9 @@ export class MemorySummarizer {
             maxLength: settings.longMemoryMaxLength,
         }) + (openingContentFingerprint ? '\n首段阶段记忆已包含第0层开场事实。本次长期剧情必须继续压缩并继承这些必要初始事实，与后续事件合并，不新增独立常驻开场块。' : '');
         const incremental = settings.summaryMode === 'ensemble' || settings.memoryStrategy !== 'legacy';
-        const projection = projectLongFacts(this.generationStore(), startFloor - 1);
+        const priorFacts = () => projectLongFacts(this.generationStore(), startFloor - 1, { includeTracked: 'existing' });
+        const projection = priorFacts();
+        const priorLongFacts = formatLongFacts(projection);
         const sourceChat = this.getChat();
         const entries = new Map(getAssistantMessages(sourceChat).map(entry => [entry.floor, entry]));
         const sourceSummaries = this.store.currentSummaries(sourceChat)
@@ -1008,6 +1048,7 @@ export class MemorySummarizer {
             if (targetVersions() !== expectedTargets) throw Object.assign(new Error('长期记忆已被其他窗口更新，未覆盖较新记录'), { code: 'SOURCE_CHANGED' });
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Long Memory');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
+            if (formatLongFacts(priorFacts()) !== priorLongFacts) throw Object.assign(new Error('先前长期事实已变化，未提交过期长期结果'), { code: 'SOURCE_CHANGED' });
             if (trackedStateVersion && trackedStateVersion !== activeStateVersion(this.generationStore(), endFloor)) throw Object.assign(new Error('整理期间角色状态已变化，请重新校验'), { code: 'SOURCE_CHANGED' });
             if (chatVersion !== this.summarySourceVersion()
                 || Object.entries(sourceVersions).some(([id, version]) => !isUsableMemory(this.store.getSummary(id)) || summaryVersion(this.store.getSummary(id)) !== version)
@@ -1018,12 +1059,13 @@ export class MemorySummarizer {
         const checkpointText = sorted.map(item => `[${item.id.toUpperCase()} | 第${stageStartLabel(item)}-${item.endFloor}层]\n${checkpointEvidenceText(item)}`).join('\n\n');
         const known = trackedStateVersion ? projectActiveState(this.generationStore(), endFloor) : [];
         const continuity = trackedContext(generationTrackedRows(known, settings));
-        const userContent = incremental ? `[EXISTING_LONG_FACTS]\n${formatLongFacts(projection)}${continuity}\n\n[CHECKPOINT_STATE]\n${checkpointText}\n\n[NEW_SUMMARIES]\n${newSummaries}` : checkpointText;
+        const userContent = `[EXISTING_LONG_FACTS]\n${priorLongFacts}${continuity}\n\n[CHECKPOINT_STATE]\n${checkpointText}`
+            + (newSummaries ? `\n\n[NEW_SUMMARIES]\n${newSummaries}` : '');
         let responseKey;
         try {
             const request = { systemPrompt, userContent, maxTokens: settings.longMemoryMaxTokens, signal };
             responseKey = JSON.stringify(['long', chatId, revision, expectedTargets, request]);
-            const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { validate: result => {
+            const cleaned = await this.completeWithRetry(request, assertSources, responseKey, { label: `Long Memory · 第 ${startFloor}–${endFloor} 层`, validate: result => {
                 return prepareMemoryResponse(result.content, 'Long Memory', { source: userContent, prompt: settings.prompts.longMemory });
             } });
             assertSources();
@@ -1046,11 +1088,13 @@ export class MemorySummarizer {
                 manualEdited: false,
                 status: 'frozen',
             };
-            if (incremental) record.factUpdates = selectNormalFactUpdates(parseFactUpdates(record.content, projection, newSummaries), projection.facts);
+            if (incremental) record.factUpdates = selectNormalFactUpdates(parseFactUpdates(record.content, projection, sourceSummaries.map(item => summaryText(item, { includeTransitionEvidence: true }))), projection.facts);
             await this.commitMemory(() => this.store.addLongMemory(record, { overwrite: overwrite || Boolean(existing && (!isUsableMemory(existing))) }), assertSources);
+            this.reportSaved(chatId, `Long Memory · 第 ${startFloor}–${endFloor} 层`);
             this.unsavedResponses.delete(responseKey);
             return record;
         } catch (error) {
+            if (error.code === 'SAVE_UNCONFIRMED') this.reportSaved(chatId, `Long Memory · 第 ${startFloor}–${endFloor} 层`, 'save-pending');
             if (error.code !== 'SAVE_UNCONFIRMED') this.unsavedResponses.delete(responseKey);
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('Long Memory');
             if (['CHAT_CHANGED', 'REQUEST_ABORTED', 'SOURCE_CHANGED', 'SAVE_UNCONFIRMED'].includes(error.code)) throw error;

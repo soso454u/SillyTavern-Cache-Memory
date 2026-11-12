@@ -260,7 +260,12 @@ test('SSE chunks are joined across transport boundaries; reasoning-only chunks a
         'data: [DONE]\n\n',
         'data: {"choices":[{"delta":{"content":"不应读取"}}]}\n\n',
     ]);
-    const result = await client.complete({ systemPrompt: '只返回摘要', userContent: '私密正文' });
+    const progress = [];
+    const result = await client.complete({ systemPrompt: '只返回摘要', userContent: '私密正文',
+        onGeneration: event => { progress.push(event); if (event.type === 'chunk') throw new Error('模拟日志区已卸载'); } });
+    assert.deepEqual(progress.map(event => event.type), ['transport', 'chunk', 'chunk', 'response']);
+    assert.deepEqual(progress.filter(event => event.type === 'chunk').map(event => event.text), ['[SUMMARY]\n', '[Event]\n事实']);
+    assert.doesNotMatch(JSON.stringify(progress), /内部思考|先分析|private-ark-key|私密正文/);
     assert.equal(result.content, '[SUMMARY]\n[Event]\n事实');
     assert.equal(result.reasoning, '先分析内部思考');
     assert.equal(result.finishReason, 'stop');
@@ -293,7 +298,11 @@ test('auto transport falls back once only for an explicit unsupported-stream 4xx
         });
         return new Response('{"choices":[{"message":{"content":"fallback ok"}}]}', { headers: { 'Content-Type': 'application/json' } });
     };
-    const result = await client.complete({ userContent: 'body' });
+    const progress = [];
+    const result = await client.complete({ userContent: 'body', onGeneration: event => progress.push(event) });
+    assert.deepEqual(progress.map(event => event.type), ['transport', 'fallback', 'transport', 'response']);
+    assert.equal(progress.at(-1).stream, false);
+    assert.equal(progress.at(-1).text, 'fallback ok');
     assert.equal(result.content, 'fallback ok');
     assert.equal(result.diagnostics.streamFallback, true);
     assert.deepEqual(streams, [true, false]);

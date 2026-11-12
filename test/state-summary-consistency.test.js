@@ -177,3 +177,21 @@ test('changing KEEP during a checkpoint request rejects the stale lifecycle and 
     assert.equal(store.current().keepRegistry['KEEP-0001'].status, 'resolved');
     assert.deepEqual(store.current().checkpoints, []);
 });
+
+
+test('manual subject correction keeps one stable record and hides its stale typed value without changing the story', () => {
+    const metadata = {}, store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'manual-subject', saveMetadata() {} });
+    const id = stateId(skill);
+    store.addSummary({ messageId: 'm1', floor: 1, event: '两人曾因观察训练相识。', status: 'frozen', stateChanges: [{ ...skill, id }] });
+    store.editTrackedState({ id, entity: '角色甲的全名', value: 'Lv.2', sourceFloor: 1 });
+    const rows = projectActiveState(store.current());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, id);
+    assert.equal(rows[0].history[0].entity, skill.entity);
+    const cp = '[Story So Far]\n两人曾因观察训练相识。\n[Current State]\n- 角色甲 · 观察：Lv.1';
+    const projected = reconcileTrackedCheckpoint(cp, store.current(), 1);
+    assert.match(projected, /两人曾因观察训练相识。/);
+    assert.match(projected, /角色甲的全名 · 观察：Lv.2/);
+    assert.doesNotMatch(projected, /角色甲 · 观察：Lv.1/);
+    assert.equal(store.getSummary('m1').event, '两人曾因观察训练相识。');
+});

@@ -89,7 +89,7 @@ test('153-floor screenshot: automatic updates repair old holes then catch up all
     const f = screenshotFixture(), before = structuredClone(f.store.current());
     const latest = getAssistantMessages(f.chat).at(-1);
     await f.summarizer.summarizeMessage(latest.messageId, { expectedFingerprint: latest.fingerprint, recoverPending: true });
-    assert.deepEqual(f.calls.filter(call => call.kind === 'Summary').map(call => Number(call.request.userContent.match(/^合成正文(\d+)/)[1])), [153, 107, 150]);
+    assert.deepEqual(f.calls.filter(call => call.kind === 'Summary').map(call => Number(call.request.userContent.match(/^\[SUMMARY_SOURCE\]\n合成正文(\d+)/)[1])), [153, 107, 150]);
     assert.equal(f.calls.filter(call => call.kind === 'Checkpoint').length, 9);
     assert.equal(f.calls.filter(call => call.kind === 'Long').length, 1);
     assert.equal(f.store.current().checkpoints.length, 30); assert.equal(f.store.current().longMemories.length, 3);
@@ -102,7 +102,7 @@ test('153-floor screenshot: automatic updates repair old holes then catch up all
 
 test('a repeatedly invalid old floor never blocks the latest summary and is tried again on the next update', async () => {
     const f = screenshotFixture(), complete = f.summarizer.apiClient.complete;
-    f.summarizer.apiClient.complete = async request => /^合成正文150(?:\n|$)/.test(request.userContent)
+    f.summarizer.apiClient.complete = async request => /^\[SUMMARY_SOURCE\]\n合成正文150(?:\n|$)/.test(request.userContent)
         ? (f.calls.push({ kind: 'bad', request }), { content: '[SUMMARY]\n[Title]\n缺少正文' }) : complete(request);
     await f.summarizer.summarizeLatest();
     assert.equal(f.calls.filter(call => call.kind === 'bad').length, 4);
@@ -145,7 +145,7 @@ test('content retry stops before another request when cancelled, edited, or swit
 
 test('one-click completion continues after an invalid floor, leaving only dependent ranges pending', async () => {
     const f = fixture(10), complete = f.summarizer.apiClient.complete; let invalid = 0;
-    f.summarizer.apiClient.complete = async request => /^合成正文1(?:\n|$)/.test(request.userContent)
+    f.summarizer.apiClient.complete = async request => /^\[SUMMARY_SOURCE\]\n合成正文1(?:\n|$)/.test(request.userContent)
         ? (invalid++, { content: '[SUMMARY]\n[Event]\n无' }) : complete(request);
     const result = await f.summarizer.fillMissingMemories();
     assert.equal(invalid, 4); assert.equal(result.failed, 1); assert.equal(result.created, 10);

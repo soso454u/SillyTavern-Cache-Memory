@@ -1,20 +1,21 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.29';
+import { generationPrompt } from './generation-prompts.js?v=1.27.30';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.29';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.29';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.30';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.30';
 import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.27';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.26';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.30';
+import { cleanGeneratedResponse } from './response-cleanup.js?v=1.27.30';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.26';
-import { parseFloorSummary } from './summarizer.js?v=1.27.29';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.26';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.30';
+import { parseFloorSummary } from './summarizer.js?v=1.27.30';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.30';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.26';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.26';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.30';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.30';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -525,6 +526,12 @@ export function configTemplate() {
                                 <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
                                 <label>输出上限<select data-setting="limitOutputTokens"><option value="false">由模型接口决定（默认）</option><option value="true">手动设置</option></select></label>
                                 <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
+                                <details class="cache-memory-generation-log">
+                                    <summary>生成日志</summary>
+                                    <p class="cache-memory-help">显示当前聊天最近六次记忆生成。流式响应会逐段更新，日志随聊天切换清空。</p>
+                                    <button type="button" class="menu_button" data-clear-generation-log>清空日志</button>
+                                    <pre data-generation-log aria-label="记忆生成日志">暂无生成记录</pre>
+                                </details>
                                 <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
                                 <label data-manual-token-limit hidden>小总结 max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="summaryMaxTokens"></label>
                                 <label data-manual-token-limit hidden>Checkpoint max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="checkpointMaxTokens"></label>
@@ -554,9 +561,9 @@ export function configTemplate() {
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
                         <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>基础摘要、阶段总结、长期总结共用一套剧情模板；角色表格规则单独设置。</p></div></div>
                         <small class="cache-memory-help" data-prompt-mode-help></small>
-                        <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
+                        <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认记忆规则</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
                         <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
-                        <details><summary>角色表格提取规则（小总结）</summary><p class="cache-memory-help">开启表格后，规则随小总结请求发送。阶段与长期总结各自核对勾选表格的资料。</p><textarea rows="1" data-prompt="state"></textarea><button type="button" class="menu_button" data-reset-prompt="state"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看完整提取规则</summary><textarea rows="16" readonly data-effective-prompt="state" aria-label="状态追踪提示词"></textarea></details></details>
+                        <details><summary>状态提取提示词（小总结）</summary><p class="cache-memory-help">持续状态开启时，普通模式随小总结发送此提示词。进阶模式用它维护勾选的角色表格。</p><textarea rows="1" data-prompt="state"></textarea><button type="button" class="menu_button" data-reset-prompt="state"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看完整提取规则</summary><textarea rows="16" readonly data-effective-prompt="state" aria-label="状态追踪提示词"></textarea></details></details>
                         <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="checkpoint" aria-label="实际完整提示词"></textarea></details></details>
                         <details><summary>长期记忆提示词</summary><textarea rows="1" data-prompt="longMemory"></textarea><button type="button" class="menu_button" data-reset-prompt="longMemory"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="longMemory" aria-label="实际完整提示词"></textarea></details></details>
                     </section>
@@ -575,6 +582,8 @@ export class CacheMemoryUI {
         this.updateSettings = updateSettings;
         this.persistSettings = persistSettings;
         this.apiClient = apiClient;
+        this.generationLog = [];
+        this.generationLogChatId = null;
         this.store = store;
         this.summarizer = summarizer;
         this.getChat = getChat;
@@ -637,7 +646,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.29', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.30', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -801,6 +810,59 @@ export class CacheMemoryUI {
 
     generationSettings() {
         return memoryGenerationSettings(this.getSettings(), this.store?.current().summaryMode);
+    }
+
+    clearGenerationLog(chatId = this.store.current().chatId) {
+        this.generationLogChatId = chatId;
+        this.generationLog = [];
+        this.renderGenerationLog();
+    }
+
+    recordGeneration({ type, chatId, label, text, stream, requestedStream, status, totalMs, parameterRetry, waitMs, attempt, maxRetries }) {
+        if (this.destroyed || chatId !== this.store.current().chatId) return;
+        if (chatId !== this.generationLogChatId) this.clearGenerationLog(chatId);
+        let entry = this.generationLog.findLast(item => item.label === label);
+        if (type === 'start' || !entry) {
+            entry = { label, time: new Date().toLocaleTimeString(), events: ['开始生成'], output: '', clipped: false };
+            this.generationLog.push(entry);
+            if (this.generationLog.length > 6) this.generationLog.shift();
+        }
+        if (type === 'transport') {
+            if (parameterRetry) entry.output = '';
+            entry.events.push(parameterRetry ? '更换输出上限参数后重发' : stream ? '请求流式传输' : '请求非流式传输');
+        }
+        if (type === 'fallback') {
+            entry.output = '';
+            entry.events.push('接口拒绝流式请求，回退到非流式');
+        }
+        if (type === 'chunk' || type === 'response') {
+            const output = type === 'chunk' ? entry.output + text : text;
+            entry.clipped ||= output.length > 12000;
+            entry.output = output.slice(0, 12000);
+        }
+        if (type === 'response') entry.events.push(`${stream ? '收到流式响应' : requestedStream ? '接口返回整段 JSON' : '收到非流式响应'} · HTTP ${status} · ${totalMs} ms`);
+        if (type === 'validated') entry.events.push('记忆格式已通过检查');
+        if (type === 'retry') entry.events.push(`本次生成未通过，${waitMs / 1000} 秒后重试 ${attempt}/${maxRetries}`);
+        if (type === 'failed') entry.events.push('生成未完成');
+        if (type === 'saved') entry.events.push('记忆已保存');
+        if (type === 'save-pending') entry.events.push('保存尚未确认');
+        if (this.generationLogFrame != null) return;
+        this.generationLogFrame = this.root.requestAnimationFrame(() => {
+            this.generationLogFrame = null;
+            this.renderGenerationLog();
+        });
+    }
+
+    renderGenerationLog(scope = this.config) {
+        const panel = scope?.querySelector('[data-generation-log]');
+        if (!panel || !panel.closest('details')?.open) return;
+        const follow = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 24;
+        panel.textContent = this.generationLog.map(entry => {
+            const output = cleanGeneratedResponse(entry.output.replace(/<[^>]*$/u, ''));
+            return [`[${entry.time}] ${entry.label}`, entry.events.join(' · '), output,
+                entry.clipped ? '日志预览已达到显示上限' : ''].filter(Boolean).join('\n');
+        }).join('\n\n') || '暂无生成记录';
+        if (follow) panel.scrollTop = panel.scrollHeight;
     }
 
     renderPromptPreviews(scope) {
@@ -1041,6 +1103,7 @@ export class CacheMemoryUI {
         root.dataset.cacheMemoryBound = 'true';
         root.addEventListener('toggle', event => {
             if (!event.target.open) return;
+            if (event.target.matches?.('.cache-memory-generation-log')) this.renderGenerationLog(root);
             if (event.target.matches?.('.cache-memory-prompt-preview')) this.renderPromptPreviews(event.target);
             this.resizeTextareas(event.target);
         }, { capture: true, signal: this.controller.signal });
@@ -1149,6 +1212,10 @@ export class CacheMemoryUI {
             this.markSettingsDirty();
         }, { signal: this.controller.signal });
         root.addEventListener('click', async event => {
+            if (event.target.closest('[data-clear-generation-log]')) {
+                this.clearGenerationLog();
+                return;
+            }
             if (event.target.closest('button[data-settings-close]')) {
                 this.closeSettings();
                 return;
@@ -3573,6 +3640,7 @@ export class CacheMemoryUI {
         this.style?.remove();
         if (this.root[OWNER_KEY] === this) delete this.root[OWNER_KEY];
         this.chatObserver?.disconnect();
+        if (this.generationLogFrame != null) this.root.cancelAnimationFrame(this.generationLogFrame);
         if (this.messageFrame != null) this.root.cancelAnimationFrame(this.messageFrame);
         if (this.managerFrame != null) this.root.cancelAnimationFrame(this.managerFrame);
         this.wandObserver?.disconnect();

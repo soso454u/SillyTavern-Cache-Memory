@@ -32,7 +32,7 @@ function fixture(count = 50) {
         calls.push(request);
         if (request.systemPrompt.includes('[CHECKPOINT]')) return { content: '[CHECKPOINT]\n[Current State]\n当前状态\n[KEEP]\n无' };
         if (request.systemPrompt.includes('[LONG_MEMORY]')) return { content: '[LONG_MEMORY]\n无\n[UPDATED_FACTS]\n无\n[RETIRED_FACTS]\n无' };
-        return { content: `[SUMMARY]\n[Title]\n${request.userContent.split('\n\n[')[0]}\n[Event]\n${request.userContent.split('\n\n[')[0]}\n[Open]\n无\n[KEEP]\n无` };
+        return { content: `[SUMMARY]\n[Title]\n${request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, '')}\n[Event]\n${request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, '')}\n[Open]\n无\n[KEEP]\n无` };
     } };
     const summarizer = new MemorySummarizer({ store, apiClient, getSettings: () => settings, getChat: () => chat });
     const progress = [];
@@ -52,7 +52,7 @@ test('50-floor old chat: manual 1–10 creates two checkpoints once after the ba
     assert.equal(result.status, 'completed');
     assert.equal(aggregates, 1);
     assert.equal(f.calls.length, 12);
-    assert.ok(f.calls.slice(0, 10).every(call => call.userContent.startsWith('正文')));
+    assert.ok(f.calls.slice(0, 10).every(call => call.userContent.startsWith('[SUMMARY_SOURCE]\n正文')));
     assert.deepEqual(f.store.current().checkpoints.map(cp => [cp.id, cp.startFloor, cp.endFloor]), [['checkpoint-001', 1, 5], ['checkpoint-002', 6, 10]]);
     assert.deepEqual(f.refreshes, ['new checkpoint']);
     await f.summarizer.summarizeMessage(getAssistantMessages(f.chat)[10].messageId);
@@ -127,7 +127,7 @@ test('transient failures retry at 2s/5s/10s, persistent errors do not stop later
     const complete = f.apiClient.complete;
     f.backfill.delay = async ms => delays.push(ms);
     f.apiClient.complete = request => {
-        const body = request.userContent.split('\n\n[')[0];
+        const body = request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, '');
         attempts.set(body, (attempts.get(body) || 0) + 1);
         if (body === '正文1' && attempts.get(body) < 3) throw Object.assign(new Error('Gateway timeout'), { status: 504 });
         if (body === '正文2') throw Object.assign(new Error('Unauthorized'), { status: 401 });
@@ -167,7 +167,7 @@ test('forcing a batch with a published checkpoint preserves both the checkpoint 
     const prompt = f.store.current().injectionSnapshot.value;
     const checkpoint = structuredClone(f.store.current().checkpoints[0]);
     f.refreshes.length = 0;
-    f.apiClient.complete = async request => ({ content: `[SUMMARY]\n[Title]\n更新\n[Event]\n${request.userContent.split('\n\n[')[0]}的更新` });
+    f.apiClient.complete = async request => ({ content: `[SUMMARY]\n[Title]\n更新\n[Event]\n${request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, '')}的更新` });
     const result = await f.backfill.start({ endFloor: 5, mode: 'all' });
     assert.equal(result.success, 5);
     assert.notEqual(prompt, '');
@@ -191,7 +191,7 @@ test('selected floors regenerate once each, leaving other summaries and aggregat
     const before = structuredClone(f.store.current());
     const calls = [];
     f.apiClient.complete = async request => {
-        calls.push(request.userContent.split('\n\n[')[0]);
+        calls.push(request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, ''));
         return { content: '[SUMMARY]\n[Title]\n更新\n[Event]\n新的剧情摘要' };
     };
     f.summarizer.generateDueAggregates = async () => assert.fail('selected mode must not generate aggregates');
@@ -215,7 +215,7 @@ test('pause finishes the active request, waits before the next floor, then resum
     let concurrent = 0, maximum = 0;
     f.apiClient.complete = async request => {
         maximum = Math.max(maximum, ++concurrent);
-        if (request.userContent.split('\n\n[')[0] === '正文1') { started.resolve(); await release.promise; }
+        if (request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, '') === '正文1') { started.resolve(); await release.promise; }
         try { return await complete(request); } finally { concurrent--; }
     };
     f.backfill.onProgress = state => { if (state.status === 'paused') paused.resolve(); };
@@ -237,7 +237,7 @@ test('cancellation aborts only the active floor and aggregates the five already 
     const started = gate();
     const complete = f.apiClient.complete;
     f.apiClient.complete = request => {
-        if (request.userContent.split('\n\n[')[0] !== '正文6') return complete(request);
+        if (request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, '') !== '正文6') return complete(request);
         return new Promise((_resolve, reject) => {
             request.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'REQUEST_ABORTED' })), { once: true });
             started.resolve();

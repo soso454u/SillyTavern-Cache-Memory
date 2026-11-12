@@ -43,7 +43,7 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
     const handlers = new Map();
     const context = {chatId:'synthetic', characterId:0, characters:[{name:'A', avatar:'synthetic.png'}], chatMetadata:metadata, chat,
         getRequestHeaders: () => ({'Content-Type':'application/json'}), saveMetadata: async () => {writes++;remote=clone(metadata.cache_memory);} };
-    class UI {constructor(options){this.callbacks=options;}setStatus(){}cancelMissingCheckpointBackfill(){}mountSettings(){return true;}bindChatActions(){}renderMemorySaveState(){}refreshSummaryMode(){}queueManagerRender(){}queueMessageRender(){}destroy(){}}
+    class UI {constructor(options){this.callbacks=options;}setStatus(){}clearGenerationLog() {} recordGeneration() {} cancelMissingCheckpointBackfill(){}mountSettings(){return true;}bindChatActions(){}renderMemorySaveState(){}refreshSummaryMode(){}queueManagerRender(){}queueMessageRender(){}destroy(){}}
     class EmptyClient {async completeBeforeInjection(){return {remaining:0};}abortAll(){}install(){}probe(){return Promise.resolve();}uninstall(){}invalidateContext(){}}
     class Server extends EmptyClient {available=false;}
     class Publisher {publish(value){published.push(value);return {};}dispose(){}}

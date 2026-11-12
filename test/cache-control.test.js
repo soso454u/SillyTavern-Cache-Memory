@@ -154,7 +154,7 @@ test('automatic 105 floors create 21 frozen CP and segmented Long1-50/51-100, pr
     const summarizer = new MemorySummarizer({ store, getSettings: () => settings, getChat: () => chat,
         apiClient: { complete: async request => {
             requests.push(request);
-            return { content: request.userContent.startsWith('body') ? `[SUMMARY]\n[Event]\n${request.userContent}`
+            return { content: request.userContent.startsWith('[SUMMARY_SOURCE]\nbody') ? `[SUMMARY]\n[Event]\n${request.userContent.split('\n')[1]}`
                 : request.userContent.startsWith('[EXISTING_LONG_FACTS]') ? '[STORY_ARC]\n完整长期剧情\n[LONG_MEMORY]\n- a persistent fact' : '[CHECKPOINT]\n[Current State]\nphase state' };
         } } });
     for (const entry of getAssistantMessages(chat)) await summarizer.summarizeEntry(entry);

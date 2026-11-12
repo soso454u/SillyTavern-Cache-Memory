@@ -180,7 +180,7 @@ test('global prompt modes retain custom text and prepend exactly once to all thr
     const html = configTemplate();
     assert.ok(html.indexOf('<summary>全局提示词</summary>') < html.indexOf('<summary>小总结提示词</summary>'));
     assert.match(html, /<details class="cache-memory-global-prompt"><summary>全局提示词/);
-    assert.match(html, /value="blank">空白[\s\S]*value="default">默认破限[\s\S]*value="custom">自定义/);
+    assert.match(html, /value="blank">空白[\s\S]*value="default">默认记忆规则[\s\S]*value="custom">自定义/);
 });
 
 test('Long Memory with existing tracked and checkpoint sections shows separate Chinese fields without dropping content', () => {

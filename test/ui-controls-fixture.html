@@ -27,7 +27,7 @@ for (const [entity, value] of [['守卫', '驻守城门'], ['医师', '照看病
 }
 const calls = [];
 const apiClient = { hasApiKey: () => false, complete: async request => {
-    calls.push(request.userContent.split('\n\n[')[0]);
+    calls.push(request.userContent.split('\n\n[')[0].replace(/^\[SUMMARY_SOURCE\]\n/u, ''));
     return { content: '[SUMMARY]\n[Title]\n更新\n[Event]\n新的合成摘要' };
 } };
 const summarizer = new MemorySummarizer({ store, apiClient, getSettings: () => settings, getChat: () => chat });
@@ -113,6 +113,24 @@ try {
     }
     assert('模型页保留手动额度且高级设置默认折叠', !panel('api').querySelector('.cache-memory-setting-details').open && get('[data-setting="limitOutputTokens"]').value === 'false');
     assert('模型页没有已停用的适配器开关', !panel('api').textContent.includes('API 缓存适配器'));
+    click('[data-settings-tab="api"] span');
+    panel('api').querySelector('.cache-memory-setting-details > summary').click();
+    const log = get('.cache-memory-generation-log');
+    log.querySelector('summary').click();
+    const report = (type, details = {}) => ui.recordGeneration({ type, chatId, label: '小总结 · 第 4 层', ...details });
+    report('start');
+    report('transport', { stream: true });
+    report('chunk', { text: '<think>内部核对</think>[SUMMARY]\n[Event]\n医师抵达' });
+    await settle();
+    assert('流式首段可见且隐藏思考标记', get('[data-generation-log]').textContent.includes('医师抵达') && !get('[data-generation-log]').textContent.includes('内部核对'));
+    report('response', { stream: true, status: 200, totalMs: 60, text: '[SUMMARY]\n[Event]\n医师抵达桥头。' });
+    report('saved');
+    await settle();
+    assert('完成后展示整段结果与保存状态', get('[data-generation-log]').textContent.includes('记忆已保存') &&
+        get('[data-generation-log]').textContent.match(/医师抵达桥头/g).length === 1);
+    click('[data-clear-generation-log]');
+    assert('日志可清空且不更改已有摘要', get('[data-generation-log]').textContent === '暂无生成记录' && calls.length === 3);
+    click('[data-settings-tab="prompts"] span');
     const details = panel('prompts').querySelector('[data-prompt="summary"]').closest('details');
     details.querySelector('summary').click(); await settle();
     const editor = details.querySelector('textarea');

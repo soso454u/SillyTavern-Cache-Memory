@@ -83,6 +83,16 @@ export function timeJumpEvidence(source) {
     return '';
 }
 
+// Only leading, explicit out-of-story corrections can authorize replacing a
+// previously confirmed history item. Dialogue and ordinary later denials cannot.
+export function playerCorrectionEvidence(source) {
+    return source.messages.flatMap(({ text }) => text.split(/\r?\n/u).map(line => line.trim())
+        .filter(line => line.length <= 360 && (
+            /^(?:(?:设定)?(?:纠正|更正|修正)|设定更新|更改设定|retcon|correction)\s*[:：]/iu.test(line)
+            || /^(?:之前|先前|上一版)[^，。；!?！？]{0,32}(?:设定|说法|记录)(?:作废|有误|写错了)(?:[，。；：]|$)/u.test(line)
+        ))).slice(0, 3);
+}
+
 export function summaryStoryBlock(row) {
     const fields = { ...(parseStructuredSummary(row.raw) ?? {}), ...row };
     const meaningful = text => text && !/^(?:无|none)[。.]?$/iu.test(String(text).trim());

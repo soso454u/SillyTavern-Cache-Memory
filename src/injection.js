@@ -1,12 +1,12 @@
 import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.16';
-import { INJECTION_MODES } from './defaults.js?v=1.27.29';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.26';
+import { INJECTION_MODES } from './defaults.js?v=1.27.30';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.30';
 import { stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { hasLastingResult, isContinuityChange, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.26';
-import { historyPublicationLimit } from './history-handoff.js?v=1.27.26';
+import { hasLastingResult, isContinuityChange, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedHistory, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.30';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.30';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { summaryStoryBlock } from './summary-source.js?v=1.27.26';
-import { aggregateVersion } from './memory-store.js?v=1.27.26';
+import { summaryStoryBlock } from './summary-source.js?v=1.27.30';
+import { aggregateVersion } from './memory-store.js?v=1.27.30';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
@@ -76,15 +76,15 @@ export function compactInjectionBlocks(blocks, store, { published = new Set(), c
                 // Only structured current state has a safe replacement identity.
                 // Untyped facts may contain historical causes and stay intact.
                 if (update && rows.some(row => row.kind === 'state' && matchesTrackedFact(update, row)
-                    && row.evidence && row.history.some(old => matchesTrackedValue(update.text, row, old.value, old.key))
+                    && row.evidence && matchesTrackedHistory(update.text, row)
                     && (rendered.some(text => matchesTrackedValue(text, row, row.value))
                         || !facts.some(fact => fact.status === 'active' && fact.id === update.id && fact.text === update.text)))) return false;
             }
             const current = ['Characters', 'Current State', 'Secrets & Knowledge', 'Open Threads', 'Continuity Locks'].includes(section);
             if (mutable && current) {
-                const row = rows.find(item => matchesTrackedFact({ text: body }, item));
+                const row = rows.find(item => matchesTrackedFact({ text: body }, item) || matchesTrackedHistory(body, item));
                 if (row?.evidence && row.sourceFloor > block.endFloor
-                    && (isAtomicTrackedEntry(body, row) || row.history.some(old => matchesTrackedValue(body, row, old.value, old.key)))
+                    && (isAtomicTrackedEntry(body, row) || matchesTrackedHistory(body, row))
                     && (!isTrackedActive(row) || !matchesTrackedValue(body, row, row.value))) return false;
             }
             // Flat, complete entries only. A nested field or continuation needs
@@ -107,7 +107,7 @@ const checkpointModes = [INJECTION_MODES.ROLLING, INJECTION_MODES.CHECKPOINT_BOU
 const hiddenSections = ['KEEP', 'RESOLVED_KEEP', 'SUPERSEDED_KEEP', 'STATE_RESOLUTIONS'];
 const canonical = text => String(text).replace(/^\s*[-*•]\s*/u, '')
     .replace(/^(?:KEEP-\d+\s*\|\s*)+/iu, '')
-    .replace(/^【([^｜】]+)｜([^】]+)】/u, '$1 · $2：').replace(/\s+/gu, ' ').trim();
+    .replace(/^【([^｜】]+)｜([^】]+)】/u, '$1 · $2：').replace(/（设定纠正，以此为准）$/u, '').replace(/\s+/gu, ' ').trim();
 
 function continuityLine(row) {
     if (row.category !== 'milestone') return `${row.entity} · ${row.key}：${row.value}`;
@@ -205,13 +205,20 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         if (context.length) blocks.push({ id: 'legacy:latest-context', type: 'legacy-context', startFloor: latest.startFloor,
             endFloor: latest.endFloor, text: '[LEGACY_CONTEXT]\n' + context.join('\n') });
     }
+    const projection = projectLongFacts(store, through, { includeTracked: 'existing' });
+    const currentTrackedValue = row => !projection.facts.some(fact => fact.status === 'active'
+        && fact.floor > row.sourceFloor && (fact.stateId === row.id || isAtomicTrackedEntry(fact.text, row))
+        && !matchesTrackedValue(fact.text, row, row.value));
+    const displayedStates = new Map();
     // Tables are optional, separately labelled, and frozen at the same CP/Long
     // boundary. Never append their rows into Summary, CP or Long prose.
     if (characterTablesEnabled(store, settings)) {
-        const records = selectedTableRecords(relevantSnapshotRows(store, through), settings);
+        const records = selectedTableRecords(relevantSnapshotRows(store, through).filter(currentTrackedValue), settings);
         const tables = CHARACTER_TABLES.flatMap(table => {
-            const lines = records.filter(row => tableForRecord(row) === table.key).map(row =>
-                `- ${row.entity} · ${row.key}：${row.value}${row.condition ? `；条件：${row.condition}` : ''}${row.acquisition === 'pending' ? '（未领取）' : ''}`);
+            const lines = records.filter(row => tableForRecord(row) === table.key).map(row => {
+                displayedStates.set(row.id, row);
+                return `- ${row.entity} · ${row.key}：${row.value}${row.condition ? `；条件：${row.condition}` : ''}${row.acquisition === 'pending' ? '（未领取）' : ''}`;
+            });
             return lines.length ? [`【${table.label}】`, ...lines] : [];
         });
         if (tables.length) blocks.push({ id: 'tables:current', type: 'table', startFloor: through, endFloor: through,
@@ -225,13 +232,19 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         seen.add(key); return true;
     };
     const tracked = projectActiveState(store, through);
-    const continuity = tracked.filter(row => isContinuityChange(row) && !row.needsReview && isTrackedActive(row));
+    const correctedHistory = row => row.category === 'milestone' && (row.playerCorrection || row.manual && row.history.length);
+    const continuity = tracked.filter(row => isContinuityChange(row) && !row.needsReview
+        && (isTrackedActive(row) || correctedHistory(row)) && currentTrackedValue(row));
     for (const [historical, id, heading] of [
         [true, 'continuity:history', '[CONFIRMED_HISTORY | 已确认经历，缺记不等于未发生]'],
         [false, 'continuity:current', '[CURRENT_CONTINUITY | 截至此处已确认的持续状态]'],
     ]) {
         const lines = continuity.filter(row => (row.category === 'milestone') === historical)
-            .map(continuityLine).filter(Boolean).filter(line => {
+            .map(row => {
+                const line = continuityLine(row);
+                if (line) displayedStates.set(row.id, row);
+                return line && correctedHistory(row) ? line + '（设定纠正，以此为准）' : line;
+            }).filter(Boolean).filter(line => {
                 // An identical value in dated history does not say it is still current.
                 const newText = uncovered(line);
                 return !historical || newText;
@@ -239,10 +252,22 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         if (lines.length) blocks.push({ id, type: 'continuity', startFloor: through, endFloor: through,
             text: heading + '\n' + lines.map(line => '- ' + line).join('\n') });
     }
-    const projection = projectLongFacts(store, through, { includeTracked: 'existing' });
+    if (!['advanced', 'ensemble'].includes(store.summaryMode) && settings.activeStateEnabled !== false) {
+        const lines = relevantSnapshotRows(store, through).filter(currentTrackedValue)
+            .map(row => {
+                displayedStates.set(row.id, row);
+                return continuityLine(row) + (row.acquisition === 'pending' ? '（尚未领取）' : '')
+                    + (row.condition ? `；条件：${row.condition}` : '');
+            }).filter(uncovered);
+        if (lines.length) blocks.push({ id: 'continuity:tracked', type: 'continuity', startFloor: through, endFloor: through,
+            text: `[TRACKED_STATE | 截至第${through}层]\n${lines.map(line => '- ' + line).join('\n')}` });
+    }
     const facts = projection.facts.filter(row => row.status === 'active'
         || row.status === 'superseded' && /(?:永久|不可逆|终身|失去.{0,8}(?:右臂|左臂|双腿|视力)|摧毁|重大损失|重大债务)/u.test(row.text))
-        .filter(row => uncovered(row.text)).map(row => {
+        .filter(fact => {
+            const state = displayedStates.get(fact.stateId);
+            return (!state || !matchesTrackedValue(fact.text, state, state.value)) && uncovered(fact.text);
+        }).map(row => {
             // Free-text plans in old Long records have no stable state ID.
             // Their status was recorded at that floor and may need newer evidence.
             const date = !row.stateId && !row.asOfFloor && /(?:尚未|仍有效|目前|当前)/u.test(row.text) ? `截至第${row.floor}层：` : '';

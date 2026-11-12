@@ -1,4 +1,4 @@
-import { hasLastingResult } from './active-state.js?v=1.27.26';
+import { hasLastingResult } from './active-state.js?v=1.27.30';
 // Normal-mode generation only. Never replay these selectors over saved memory
 // or use them in injection: omitted deltas remain in the new Summary narrative.
 const clean = value => String(value ?? '').trim();
@@ -13,10 +13,14 @@ export function selectNormalChanges(changes, known = []) {
     const selected = new Map();
     for (const row of changes) {
         const old = selected.get(row.id) ?? previous.get(row.id);
-        if (old?.category === 'milestone' && !old.needsReview) continue;
+        if (row.reviewOnly) {
+            if (old && (old.value !== row.value || old.status !== row.status)) selected.set(row.id, row);
+            continue;
+        }
+        if (old?.category === 'milestone' && !old.needsReview && !row.playerCorrection) continue;
         // Keep evidenced closure of old transient records, so existing tracked
         // tasks can still settle. A settled task cannot become active again.
-        if (row.kind === 'thread' && old && !activeThread(old.status) && activeThread(row.status)) continue;
+        if (row.kind === 'thread' && old && !row.playerCorrection && !activeThread(old.status) && activeThread(row.status)) continue;
         const ended = row.kind === 'thread' ? !activeThread(row.status) : row.status === 'expired';
         if (!ended) {
             if (row.kind === 'state' && row.lifetime === 'temporary' && shortDone.test(row.value)
