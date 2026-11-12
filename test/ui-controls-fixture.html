@@ -11,15 +11,29 @@ body button { padding: 12px !important; border: 2px solid #aaa !important; borde
 <script type="module">
 import { CacheMemoryUI } from '../src/ui.js';
 import { MemoryStore } from '../src/memory-store.js';
-import { normalizeSettings, ENSEMBLE_PROMPTS } from '../src/defaults.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { MemorySummarizer } from '../src/summarizer.js';
 let settings = normalizeSettings({ globalPromptMode: 'blank' });
 let chatId = 'synthetic-controls-a';
 const metadata = {}, media = Object.assign(new EventTarget(), { matches: false });
 const nativeMatchMedia = window.matchMedia;
 window.matchMedia = () => media;
 const store = new MemoryStore({ getChatId: () => chatId, getMetadata: () => metadata, saveMetadata: () => {} });
+const chat = Array.from({ length: 6 }, (_, index) => ({ name: '测试角色', mes: '合成正文 ' + (index + 1), gen_started: 'f' + index }));
+const entries = store.syncMessages(chat);
+store.addSummary({ ...entries[0], sourceFingerprint: entries[0].fingerprint, event: '原摘要', status: 'frozen' });
+for (const [entity, value] of [['守卫', '驻守城门'], ['医师', '照看病人']]) {
+    store.editTrackedState({ entity, key: '职责', value, kind: 'state', status: 'active', category: 'identity', sourceFloor: 1 });
+}
+const calls = [];
+const apiClient = { hasApiKey: () => false, complete: async request => {
+    calls.push(request.userContent.split('\n\n[')[0]);
+    return { content: '[SUMMARY]\n[Title]\n更新\n[Event]\n新的合成摘要' };
+} };
+const summarizer = new MemorySummarizer({ store, apiClient, getSettings: () => settings, getChat: () => chat });
 const ui = new CacheMemoryUI({ store, getSettings: () => settings, updateSettings: patch => settings = normalizeSettings({ ...settings, ...patch }),
-    persistSettings: async () => {}, getChat: () => [], apiClient: { hasApiKey: () => false, complete: () => { throw Error('模型请求禁止'); } }, summarizer: { isSummarizing: () => false } });
+    persistSettings: async () => {}, getChat: () => chat, apiClient, summarizer, updateInjection: () => {},
+    persistence: { getState: () => ({ state: 'confirmed', detail: '合成记忆' }) } });
 ui.mountSettings();
 const results = window.controlResults = [];
 const assert = (name, passed) => { results.push({ name, passed: Boolean(passed) }); if (!passed) throw Error(name); };
@@ -29,23 +43,45 @@ const panel = name => ui.config.querySelector(`[data-settings-panel="${name}"]`)
 try {
     if (!ui.style.sheet) await new Promise(resolve => ui.style.addEventListener('load', resolve, { once: true }));
     click('[data-open-settings]');
-    assert('窗口状态属性不是按钮动作属性', !ui.config.matches('[data-summary-mode]') && ui.config.dataset.currentSummaryMode === 'normal');
-    assert('模式区仅留两个按钮，没有卡片标题', !ui.config.querySelector('.cache-memory-mode-heading') && [...ui.config.querySelectorAll('.cache-memory-mode-switch')].every(element => element.children.length === 1 && element.querySelectorAll('button').length === 2 && getComputedStyle(element).borderWidth === '0px'));
-    const initialMode = store.current().summaryMode;
-    for (const name of ['manager', 'api', 'injection', 'prompts', 'general']) {
-        click(`[data-settings-tab="${name}"] span`);
-        assert(`实际点击 ${name} 菜单可切换且不改变模式`, !panel(name).hidden && store.current().summaryMode === initialMode);
+    assert('记忆管理默认打开且常规紧随其后', !panel('manager').hidden && [...ui.config.querySelectorAll('[data-settings-tab]')].slice(0, 2).map(tab => tab.dataset.settingsTab).join() === 'manager,general');
+    const get = selector => ui.config.querySelector(selector);
+    const set = (selector, value) => {
+        const input = get(selector);
+        input.value = value;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    assert('备份和检查默认折叠', [...panel('manager').querySelectorAll('.cache-memory-manager-tools details')].every(section => !section.open));
+    set('[data-backfill-mode]', 'selected');
+    set('[data-backfill-selection]', '1、3–4');
+    assert('所选楼层模式只显示指定楼层', get('[data-backfill-range-fields]').hidden && !get('[data-backfill-selection-field]').hidden);
+    ui.renderManager();
+    assert('重绘后保留当前批处理选择', get('[data-backfill-selection]').value === '1、3–4' && get('[data-backfill-action="start"]').textContent === '重新生成摘要');
+    click('[data-backfill-action="start"]');
+    assert('确认框展示所选楼层与条数', ui.activeDialog.textContent.includes('第 1、3、4 层，共 3 条') && calls.length === 0);
+    click('.cache-memory-modal-panel button[type="submit"]');
+    await settle();
+    assert('批量处理仅提交选中的楼层', calls.join() === '合成正文 1,合成正文 3,合成正文 4' && Object.values(store.current().summaries).map(row => row.floor).join() === '1,3,4');
+
+    click('[data-manager-view="tables"]');
+    await settle();
+    assert('关闭自动维护时仍能浏览人物资料', !get('[data-role-tables-toggle]').checked && get('[data-character-table]').disabled && get('.cache-memory-table-records').textContent.includes('守卫'));
+    set('[data-character-entity]', '医师');
+    assert('按主体筛选角色表格', get('.cache-memory-table-records').textContent.includes('照看病人') && !get('.cache-memory-table-records').textContent.includes('驻守城门'));
+    get('[data-role-tables-toggle]').click();
+    assert('角色表格在当前聊天开启且可以勾选分类', store.current().summaryMode === 'advanced' && !get('[data-character-table]').disabled);
+    click('[data-view-character-table="knowledge"] span');
+    assert('空表可查看并独立选择维护', get('[data-character-table]').dataset.characterTable === 'knowledge' && !get('[data-character-table]').checked);
+    get('[data-character-table]').click();
+    assert('勾选写入所选表设置', settings.characterTables.knowledge);
+    get('[data-role-tables-toggle]').click();
+    assert('关闭维护保留表选择和人物资料，浏览不发模型请求', store.current().summaryMode === 'normal' && settings.characterTables.knowledge && Object.keys(store.current().stateOverrides).length === 2 && calls.length === 3);
+
+    for (const name of ['manager', 'api', 'injection', 'general', 'prompts']) {
+        click('[data-settings-tab="' + name + '"] span');
+        assert('可以打开 ' + name + ' 页面', !panel(name).hidden);
     }
-    click('button[data-summary-mode="ensemble"]');
-    assert('点击群像按钮同步编辑器和高亮', store.current().summaryMode === 'advanced' && ui.config.querySelector('[data-prompt="summary"]').value === ENSEMBLE_PROMPTS.summary && [...ui.config.querySelectorAll('button[data-summary-mode="ensemble"]')].every(button => button.getAttribute('aria-pressed') === 'true'));
-    assert('顶部与提示词页均明确标出群像为当前模式', [...ui.config.querySelectorAll('button[data-summary-mode]')].every(button => button.querySelector('[data-summary-current]').hidden === (button.dataset.summaryMode !== 'ensemble') && (button.dataset.summaryMode !== 'ensemble' || button.getAttribute('aria-label').includes('当前聊天正在使用'))));
-    const groupButton = ui.config.querySelector('button[data-summary-mode="ensemble"]');
-    const normalButton = ui.config.querySelector('button[data-summary-mode="normal"]');
-    assert('宿主强制按钮样式下仍有选中高亮且无边框阴影', getComputedStyle(groupButton).backgroundColor !== getComputedStyle(normalButton).backgroundColor && getComputedStyle(groupButton).borderWidth === '0px' && getComputedStyle(groupButton).boxShadow === 'none');
-    click('[data-settings-tab="prompts"] span');
-    click('[data-settings-panel="prompts"] button[data-summary-mode="normal"]');
-    assert('提示词页按钮可切回普通且不吞菜单点击', store.current().summaryMode === 'normal' && !panel('prompts').hidden && ui.config.querySelector('[data-prompt="summary"]').value === settings.prompts.summary);
-    assert('切回普通后两处当前文字立即同步', [...ui.config.querySelectorAll('button[data-summary-mode]')].every(button => button.querySelector('[data-summary-current]').hidden === (button.dataset.summaryMode !== 'normal')));
+    assert('模型页保留手动额度且高级设置默认折叠', !panel('api').querySelector('.cache-memory-setting-details').open && get('[data-setting="limitOutputTokens"]').value === 'false');
+    assert('模型页没有已停用的适配器开关', !panel('api').textContent.includes('API 缓存适配器'));
     const details = panel('prompts').querySelector('[data-prompt="summary"]').closest('details');
     details.querySelector('summary').click(); await settle();
     const editor = details.querySelector('textarea');

@@ -115,17 +115,17 @@ test('downloaded JSON can be selected for one-confirmation import without creati
     assert.equal(f.p.getState().state, 'confirmed'); assert.ok(f.remote.summaries.m2);
 });
 
-test('the ordinary toolbar exposes download and import without any recovery-copy controls', () => {
+test('the backup section groups ordinary file actions separately from recovery copies', () => {
     const html = configTemplate();
-    const start = html.indexOf('data-manager-view="overview"');
-    const recovery = html.indexOf('<details class="cache-memory-backup"', start);
+    const start = html.indexOf('<details class="cache-memory-backup"');
+    const recovery = html.indexOf('<details class="cache-memory-recovery-tools"', start);
     const ordinary = html.slice(start, recovery);
+    assert.match(ordinary, /<summary>备份、导入与恢复<\/summary>/);
     assert.match(ordinary, /下载记忆 JSON/); assert.match(ordinary, /导入记忆 JSON/);
     assert.match(ordinary, /data-save-memory[^>]*>上传记忆到服务器/);
     assert.match(ordinary, /data-read-server>从服务器恢复记忆/);
-    assert.doesNotMatch(ordinary, /data-export-recovery|data-memory-conflict/);
+    assert.doesNotMatch(ordinary, /data-export-recovery|data-memory-conflict|data-find-recovery/);
     assert.match(html.slice(recovery), /data-find-recovery/);
-    assert.doesNotMatch(ordinary, /data-find-recovery/);
     assert.equal((html.match(/data-import-merge-file/g) ?? []).length, 1);
 });
 

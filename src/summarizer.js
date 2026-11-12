@@ -1,8 +1,8 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.26';
+import { isOutputTruncated } from './api-client.js?v=1.27.27';
 import { prepareMemoryResponse } from './response-cleanup.js?v=1.27.26';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.26';
-import { generationPrompt } from './generation-prompts.js?v=1.27.26';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.27';
+import { generationPrompt } from './generation-prompts.js?v=1.27.27';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
 import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.26';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';

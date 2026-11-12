@@ -5,7 +5,7 @@ export { ENSEMBLE_PROMPTS };
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.26';
 import { DEFAULT_API_CACHE_POLICY, normalizeApiCacheConnections, normalizeApiCachePolicy } from './api-cache-adapter.js?v=1.27.17';
 
-export const PLUGIN_VERSION = '1.27.26';
+export const PLUGIN_VERSION = '1.27.27';
 
 export const MODULE_ID = 'cache_memory';
 export const METADATA_KEY = 'cache_memory';
@@ -1921,7 +1921,7 @@ export function normalizeSettings(saved = {}) {
         recentRawFloors: Math.round(number(source.recentRawFloors, 3, 1, 100)),
         injectionPolicyVersion: 2,
         cacheDebug: source.cacheDebug === true,
-        apiCacheAdapterEnabled: source.apiCacheAdapterEnabled === true,
+        apiCacheAdapterEnabled: false,
         apiCacheDefaultPolicy: normalizeApiCachePolicy(source.apiCacheDefaultPolicy),
         apiCacheConnections: normalizeApiCacheConnections(source.apiCacheConnections),
         apiCacheLastConnection: /^cm-[0-9a-z]{1,8}$/.test(String(source.apiCacheLastConnection || '')) ? source.apiCacheLastConnection : '',

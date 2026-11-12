@@ -1,17 +1,16 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.26';
+import { generationPrompt } from './generation-prompts.js?v=1.27.27';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.26';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.26';
-import { HistoryBackfill } from './history-backfill.js?v=1.27.16';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.27';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.27';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.27';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.26';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.26';
-import { API_CACHE_COMPATIBILITY } from './api-cache-adapter.js?v=1.27.17';
-import { parseFloorSummary } from './summarizer.js?v=1.27.26';
+import { parseFloorSummary } from './summarizer.js?v=1.27.27';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.26';
 
 import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.26';
@@ -355,50 +354,57 @@ function settingsTemplate() {
 
 function managerPanelTemplate() {
     return `
-        <section id="${MANAGER_ID}" class="cache-memory-tab-panel cache-memory-manager-panel" role="tabpanel" data-settings-panel="manager" hidden>
+        <section id="${MANAGER_ID}" class="cache-memory-tab-panel cache-memory-manager-panel" role="tabpanel" data-settings-panel="manager">
             <nav class="cache-memory-manager-tabs" aria-label="记忆管理页面">
                 <button type="button" data-manager-view="overview">概览</button><button type="button" data-manager-view="summaries">楼层摘要</button><button type="button" data-manager-view="checkpoints">阶段总结</button><button type="button" data-manager-view="long">长期总结</button><button type="button" data-manager-view="tables">角色表格</button>
             </nav>
-            <details class="cache-memory-advanced-records"><summary>高级资料与旧版记录</summary><div class="cache-memory-actions"><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">旧版任务记录</button><button type="button" data-manager-view="states">旧版角色状态</button></div><small>原始数据保留，普通使用不必管理这些分类。</small></details>
-            <div data-manager-overview-only>
-            <div class="cache-memory-manager-toolbar">
-                <button type="button" class="menu_button" data-save-memory title="以当前本机记忆为准上传，覆盖前备份服务器原数据">上传记忆到服务器</button>
-                <button type="button" class="menu_button" data-read-server>从服务器恢复记忆</button>
-                <button type="button" class="menu_button" data-export><i class="fa-solid fa-download"></i> 下载记忆 JSON</button>
-                <button type="button" class="menu_button" data-export-chat>下载聊天＋记忆</button>
-                <button type="button" class="menu_button" data-create-branch>创建平行线聊天</button>
-                <button type="button" class="menu_button" data-import-merge><i class="fa-solid fa-upload"></i> 导入记忆 JSON</button>
-                <input type="file" accept="application/json,.json" data-import-merge-file hidden>
-            </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
-            <details class="cache-memory-backup"><summary>保存与诊断</summary>
-            <div class="cache-memory-actions cache-memory-manager-toolbar">
-                <button type="button" class="menu_button" data-validate-memory>检查记忆状态</button>
-                <button type="button" class="menu_button" data-audit-open>按楼层查看原文／摘要</button>
-                <button type="button" class="menu_button" data-cleanup-summaries title="清理已确认归属且已有当前摘要的旧 Swipe 和重复记录；服务器确认后生效，不调用模型">清理旧摘要</button>
-                <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
-                <button type="button" class="menu_button" data-find-recovery>查找恢复副本</button>
-                <button type="button" class="menu_button" data-pending-backup hidden>下载待保存副本</button>
-                <button type="button" class="menu_button" data-reinject>重新注入</button>
-                <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
-            </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p><p data-memory-diagnostics></p>
-            <div class="cache-memory-summary-audit" data-summary-audit hidden></div>
-            <div data-recovery-candidates hidden></div>
-            <div class="cache-memory-manager-toolbar">
-                <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat><i class="fa-solid fa-triangle-exclamation"></i> 清空当前聊天记忆</button>
-            </div><p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
-            <div>
+            <div class="cache-memory-save-state" data-memory-save-box data-state="unknown"><strong>保存</strong><span data-memory-save-status>状态未知</span></div>
+            <div class="cache-memory-conflict-tools">
                 <div class="cache-memory-actions" data-memory-conflict-actions hidden>
                     <button type="button" class="menu_button" data-memory-conflict="merge">合并双方</button>
                     <button type="button" class="menu_button" data-memory-conflict="export">导出冲突副本</button>
                     <button type="button" class="menu_button cache-memory-danger" data-memory-conflict="server">以服务器为准</button>
                     <button type="button" class="menu_button cache-memory-danger" data-memory-conflict="local">以本机为准</button>
                 </div>
-            </div>
-            <div data-conflict-details></div>
-            </details>
-            <div class="cache-memory-save-state" data-memory-save-box data-state="unknown"><strong>记忆保存状态：</strong><span data-memory-save-status>状态未知</span></div>
+                <div data-conflict-details></div>
             </div>
             <div class="cache-memory-manager-content" data-manager-content></div>
+            <div class="cache-memory-manager-tools">
+                <p class="cache-memory-action-status" data-manager-action-status role="status" aria-live="polite" hidden></p>
+                <details class="cache-memory-backup" data-manager-overview-only><summary>备份、导入与恢复</summary>
+                    <div class="cache-memory-actions">
+                        <button type="button" class="menu_button" data-export>下载记忆 JSON</button>
+                        <button type="button" class="menu_button" data-export-chat>下载聊天＋记忆</button>
+                        <button type="button" class="menu_button" data-import-merge>导入记忆 JSON</button>
+                        <button type="button" class="menu_button" data-create-branch>创建平行线聊天</button>
+                        <button type="button" class="menu_button" data-save-memory title="以当前本机记忆为准上传，覆盖前备份服务器原数据">上传记忆到服务器</button>
+                        <button type="button" class="menu_button" data-read-server>从服务器恢复记忆</button>
+                        <input type="file" accept="application/json,.json" data-import-merge-file hidden>
+                    </div>
+                    <details class="cache-memory-recovery-tools"><summary>恢复副本</summary>
+                        <div class="cache-memory-actions">
+                            <button type="button" class="menu_button" data-upload-backup hidden>下载上传前服务器备份</button>
+                            <button type="button" class="menu_button" data-pending-backup hidden>下载待保存副本</button>
+                            <button type="button" class="menu_button" data-find-recovery>查找恢复副本</button>
+                        </div>
+                        <div data-recovery-candidates hidden></div>
+                    </details>
+                </details>
+                <details class="cache-memory-backup" data-manager-overview-only><summary>检查与修复</summary>
+                    <div class="cache-memory-actions">
+                        <button type="button" class="menu_button" data-validate-memory>检查记忆状态</button>
+                        <button type="button" class="menu_button" data-audit-open>对照原文和摘要</button>
+                        <button type="button" class="menu_button" data-reinject>重新注入</button>
+                        <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
+                        <button type="button" class="menu_button" data-cleanup-summaries title="清理已确认归属且已有当前摘要的旧 Swipe 和重复记录">清理旧摘要</button>
+                        <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat>清空当前聊天记忆</button>
+                    </div><p data-memory-diagnostics></p>
+                    <div class="cache-memory-summary-audit" data-summary-audit hidden></div>
+                </details>
+                <details class="cache-memory-advanced-records"><summary>高级资料与旧版记录</summary>
+                    <div class="cache-memory-actions"><button type="button" data-manager-view="facts">长期事实</button><button type="button" data-manager-view="keeps">KEEP</button><button type="button" data-manager-view="threads">旧版任务记录</button><button type="button" data-manager-view="states">旧版角色状态</button></div>
+                </details>
+            </div>
         </section>`;
 }
 
@@ -411,31 +417,29 @@ export function configTemplate() {
                 <header class="cache-memory-dialog-header">
                     <div class="cache-memory-dialog-title" title="拖动标题栏移动弹窗">
                         <i class="fa-solid fa-brain" aria-hidden="true"></i>
-                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small>自动整理剧情，保留关键细节</small><small class="cache-memory-auto-save" data-settings-save-state data-state="saved" role="status">已自动保存</small></div>
+                        <div><h3 id="cache-memory-config-title">缓存记忆</h3><small class="cache-memory-auto-save" data-settings-save-state data-state="saved" role="status">已自动保存</small></div>
                     </div>
                     <div class="cache-memory-header-actions"><div class="cache-memory-theme-controls" role="group" aria-label="界面主题"><button type="button" data-theme-mode="light" aria-label="日间模式" title="日间模式" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button><button type="button" data-theme-mode="dark" aria-label="夜间模式" title="夜间模式" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z"/></svg></button><button type="button" data-theme-mode="system" aria-label="跟随系统深浅色" title="跟随系统深浅色" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M12 4v13"/></svg></button></div><button type="button" class="menu_button cache-memory-icon-button" data-settings-close title="关闭" aria-label="关闭"><span aria-hidden="true">×</span></button></div>
                 </header>
-                <div class="cache-memory-mode-switch"><div class="cache-memory-mode-buttons" role="group" aria-label="当前聊天角色表格开关"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>基础记忆</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>角色表格</span><small data-summary-current hidden>当前</small></button></div></div>
-                <div class="cache-memory-task-feedback cache-memory-status" data-cache-status data-state="idle" role="status" aria-live="polite" hidden></div>
-                <div class="cache-memory-config-status cache-memory-status" data-freeze-status data-state="success" hidden></div>
                 <nav class="cache-memory-tabs" role="tablist" aria-label="Cache Memory 设置">
-                    <button type="button" class="cache-memory-tab is-active" role="tab" aria-selected="true" data-settings-tab="general"><i class="fa-solid fa-layer-group"></i><span>常规</span></button>
-                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="manager"><i class="fa-solid fa-box-archive"></i><span>记忆管理</span></button>
+                    <button type="button" class="cache-memory-tab is-active" role="tab" aria-selected="true" data-settings-tab="manager"><i class="fa-solid fa-box-archive"></i><span>记忆管理</span></button>
+                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="general"><i class="fa-solid fa-layer-group"></i><span>常规</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="api"><i class="fa-solid fa-key"></i><span>模型接口</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="injection"><i class="fa-solid fa-syringe"></i><span>记忆注入</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="prompts"><i class="fa-solid fa-file-lines"></i><span>提示词</span></button>
                 </nav>
+                <div class="cache-memory-task-feedback cache-memory-status" data-cache-status data-state="idle" role="status" aria-live="polite" hidden></div>
                 </div>
-                <div class="cache-memory-config-content">
-                    <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="general">
-                        <div class="cache-memory-section-heading"><div><h4>运行与分层</h4><p>控制摘要生成和冻结记忆的楼层范围。</p></div></div>
+                <div class="cache-memory-config-content is-manager-view">
+                    ${managerPanelTemplate()}
+                    <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="general" hidden>
+                        <div class="cache-memory-section-heading"><div><h4>插件运行</h4></div></div>
                         <div class="cache-memory-switches">
                             <label class="cache-memory-toggle"><span><strong>启用插件</strong><small>显示楼层记忆并启用处理流程</small></span><input type="checkbox" data-setting="enabled"></label>
                             <label class="cache-memory-toggle"><span><strong>自动生成小总结</strong><small>正常回复结束后自动排队</small></span><input type="checkbox" data-setting="autoSummarize"></label>
-                            <label class="cache-memory-toggle"><span><strong>使用独立模型接口</strong><small>不占用 SillyTavern 当前聊天模型</small></span><input type="checkbox" data-setting="independentApi"></label>
-                            <label class="cache-memory-toggle"><span><strong>严格缓存模式</strong><small>旧阶段模式可选冻结。短正文策略始终冻结 CP／Long 前缀。</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
                             <label class="cache-memory-toggle"><span><strong>魔法棒菜单入口</strong><small>在输入框旁的扩展菜单中显示</small></span><input type="checkbox" data-setting="showWandButton"></label>
                         </div>
+                        <div class="cache-memory-section-heading"><h4>摘要与分层</h4></div>
                         <div class="cache-memory-grid">
                             <label>过滤策略<select data-setting="summaryFilterMode"><option value="${SUMMARY_FILTER_MODES.DEFAULT}">默认（推荐）</option><option value="${SUMMARY_FILTER_MODES.CUSTOM}">自定义标签</option><option value="${SUMMARY_FILTER_MODES.FULL}">不过滤（完整正文）</option></select></label>
                             <label data-custom-filter>正文标签（按优先级，用逗号或换行分隔）<textarea rows="1" data-setting="summaryFilterTags" placeholder="content, context, story"></textarea></label>
@@ -445,32 +449,22 @@ export function configTemplate() {
                             <label>阶段总结目标长度<input type="number" min="100" data-setting="checkpointMaxLength"></label>
                             <label>长期总结目标长度<input type="number" min="200" data-setting="longMemoryMaxLength"></label>
                         </div>
-                        <small class="cache-memory-help">默认每 5 层提交 Checkpoint、每 50 层提交分段 Long Memory；已有自定义间隔保留。角色表格默认关闭；开启后可在“角色表格”中勾选要维护的表。摘要长度保持相同，严格模式仍只在边界更新注入。</small>
+                        <small class="cache-memory-help">默认每 5 层生成阶段总结，每 50 层生成长期总结。</small>
                     </section>
-                    ${managerPanelTemplate()}
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="api" hidden>
                         <div class="cache-memory-section-heading"><div><h4>模型接口</h4><p>统一使用 OpenAI 兼容接口。</p></div></div>
+                        <label class="cache-memory-toggle"><span><strong>使用独立模型接口</strong><small>不占用 SillyTavern 当前聊天模型</small></span><input type="checkbox" data-setting="independentApi"></label>
                         <div class="cache-memory-profile-controls">
                             <label>接口配置<select data-api-profile aria-label="选择接口配置"></select></label>
                             <button type="button" class="menu_button" data-profile-action="add">新增</button>
                             <button type="button" class="menu_button" data-profile-action="rename">重命名</button>
                             <button type="button" class="menu_button" data-profile-action="delete">删除</button>
                         </div>
-                        <div class="cache-memory-api-guide"><i class="fa-solid fa-circle-info"></i><span><strong>设置顺序：</strong>填写接口地址和密钥（自动保存）→ 下拉选择或手动填写模型 → 测试连接。密钥只保存在当前浏览器。</span></div>
                         <div class="cache-memory-grid">
-                            <label>接口类型<input type="text" value="OpenAI 兼容接口" readonly></label>
                             <label>接口地址<input type="url" data-setting="apiBaseUrl" placeholder="例如：https://example.com/v1"></label>
                             <label>API 密钥<input type="password" data-api-key autocomplete="off" placeholder="未配置"></label>
                             <label>摘要模型<input type="text" data-setting="model" placeholder="可手动填写模型名称"><select data-model-list data-model-select aria-label="从完整模型列表选择"><option value="">获取列表后可在此选择模型</option></select></label>
-                            <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
-                            <label>输出上限<select data-setting="limitOutputTokens"><option value="false">由模型接口决定（默认）</option><option value="true">手动设置</option></select></label>
-                            <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
-                            <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
-                            <label data-manual-token-limit hidden>小总结 max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="summaryMaxTokens"></label>
-                            <label data-manual-token-limit hidden>Checkpoint max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="checkpointMaxTokens"></label>
-                            <label data-manual-token-limit hidden>Long Memory max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="longMemoryMaxTokens"></label>
-                            <label data-manual-token-limit hidden>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
                         </div>
                         <div class="cache-memory-actions">
                             <button type="button" class="menu_button cache-memory-primary" data-list-models><i class="fa-solid fa-arrows-rotate"></i> 刷新模型列表</button>
@@ -479,37 +473,25 @@ export function configTemplate() {
                             <button type="button" class="menu_button" data-clear-api-key><i class="fa-solid fa-trash"></i> 清除密钥</button>
                         </div>
                         <small class="cache-memory-key-state" data-api-key-state></small>
-                        <small class="cache-memory-warning">安全提示：API 密钥只保存在当前浏览器，不会写入聊天记录。所有第三方模型请求均由 SillyTavern 同源后端转发，浏览器不会跨域直连。</small>
-                        <small class="cache-memory-help">模型输入框支持手动填写和下拉选择；获取列表失败时不会影响手动填写与测试连接。</small>
-                        <small class="cache-memory-help">模型请求由插件持续等待，支持手动停止；上游或 SillyTavern 代理断开时会报错。</small>
-                        <section class="cache-memory-api-adapter">
-                            <div class="cache-memory-section-heading"><div><h4>API 缓存适配器（可选）</h4><p>控制主模型请求的缓存断点；实际结构改写只在 SillyTavern 服务端完成。</p></div></div>
-                            <label class="cache-memory-toggle"><span><strong>启用服务端缓存适配器</strong><small>服务端插件缺失或接口不兼容时保持原请求</small></span><input type="checkbox" data-setting="apiCacheAdapterEnabled"></label>
-                            <div class="cache-memory-adapter-connection"><strong>当前连接：</strong><span data-api-cache-connection>尚未识别</span></div>
-                            <div class="cache-memory-switches">
-                                <label class="cache-memory-toggle"><span><strong>启用此连接策略</strong><small>按主模型 API 连接分别保存</small></span><input type="checkbox" data-api-cache-policy="enabled"></label>
-                                <label class="cache-memory-toggle"><span><strong>拒绝已证实的冻结记忆改写</strong><small>默认关闭。服务端有当前权威快照且识别到正文不一致时，才会在转发前拒绝。</small></span><input type="checkbox" data-api-cache-policy="rejectFrozenMemoryChanges"></label>
-                                <label class="cache-memory-toggle"><span><strong>固定设定断点</strong><small>只选择独立、非空的前置 system 消息块</small></span><input type="checkbox" data-api-cache-policy="cacheStatic"></label>
-                                <label class="cache-memory-toggle"><span><strong>冻结记忆断点</strong><small>识别 CACHE_MEMORY / Checkpoint / Long Memory</small></span><input type="checkbox" data-api-cache-policy="cacheMemory"></label>
-                                <label class="cache-memory-toggle"><span><strong>滚动历史断点</strong><small>按独立 user / assistant 消息块选择</small></span><input type="checkbox" data-api-cache-policy="cacheHistory"></label>
-                            </div>
+                        <small class="cache-memory-help">密钥保存在当前浏览器。请求由 SillyTavern 后端转发。</small>
+                        <details class="cache-memory-setting-details">
+                            <summary>高级生成设置</summary>
                             <div class="cache-memory-grid">
-                                <label>缓存 TTL<select data-api-cache-policy="ttl"><option value="5m">5 分钟</option><option value="1h">1 小时</option></select></label>
-                                <label>历史断点深度<input type="number" min="1" max="64" data-api-cache-policy="historyDepth"></label>
-                                <label>接口兼容模式<select data-api-cache-policy="compatibility"><option value="${API_CACHE_COMPATIBILITY.AUTO}">自动检测（仅确认兼容时启用）</option><option value="${API_CACHE_COMPATIBILITY.ANTHROPIC_BLOCKS}">Anthropic 内容块（手动确认）</option></select></label>
+                                <label>创造性（0 更稳定）<input type="number" min="0" max="2" step="0.05" data-setting="temperature"></label>
+                                <label>输出上限<select data-setting="limitOutputTokens"><option value="false">由模型接口决定（默认）</option><option value="true">手动设置</option></select></label>
+                                <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
+                                <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
+                                <label data-manual-token-limit hidden>小总结 max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="summaryMaxTokens"></label>
+                                <label data-manual-token-limit hidden>Checkpoint max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="checkpointMaxTokens"></label>
+                                <label data-manual-token-limit hidden>Long Memory max tokens<input type="number" min="1" placeholder="留空由接口决定" data-setting="longMemoryMaxTokens"></label>
+                                <label data-manual-token-limit hidden>输出上限参数<select data-setting="tokenLimitParameter"><option value="max_tokens">max_tokens（默认）</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>
                             </div>
-                            <div class="cache-memory-actions">
-                                <button type="button" class="menu_button" data-api-cache-probe><i class="fa-solid fa-server"></i> 检测服务端适配器</button>
-                                <button type="button" class="menu_button" data-api-cache-reset><i class="fa-solid fa-arrow-rotate-left"></i> 此连接恢复默认</button>
-                            </div>
-                            <div class="cache-memory-adapter-status" data-api-cache-status data-state="idle">尚未检测服务端适配器</div>
-                            <pre class="cache-memory-continuity" data-api-cache-preview hidden></pre>
-                            <small class="cache-memory-warning">Claude 原生源的官方缓存由 ST 服务端 config.yaml 管理，本适配器不会覆盖。自动模式只对确认支持内容块 cache_control 的连接生效；检测到 New API 已有缓存字段时会旁路，避免双重改写。</small>
-                        </section>
+                        </details>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="injection" hidden>
                         <div class="cache-memory-section-heading"><div><h4>记忆注入</h4><p>选择正文保留层数与历史记忆的发送方式。</p></div></div>
+                        <label class="cache-memory-toggle" data-boundary-injection><span><strong>严格缓存模式</strong><small>旧阶段模式可选冻结。短正文策略始终冻结 CP／Long 前缀。</small></span><input type="checkbox" data-setting="strictCacheMode"></label>
                         <label class="cache-memory-field">注入范围<select data-setting="injectionMode"><option value="${INJECTION_MODES.ROLLING}">最近正文＋每层更新记忆（默认）</option><option value="${INJECTION_MODES.CHECKPOINT_SHORT_HISTORY}">Checkpoint 边界＋短正文（动态摘要尾部）</option><option value="${INJECTION_MODES.NONE}">不注入记忆（旧剧情不会通过记忆发送）</option><option value="${INJECTION_MODES.CHECKPOINT_BOUNDARY}">Checkpoint 边界（保留旧策略）</option><option value="${INJECTION_MODES.LONG_BOUNDARY}">Long Memory 边界</option><option value="${INJECTION_MODES.LONG}">仅长期记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT}">长期记忆 + 阶段记忆</option><option value="${INJECTION_MODES.LONG_CHECKPOINT_RECENT}">旧版近期模式（按阶段总结发送）</option></select></label>
                         <label class="cache-memory-field">保留最近几层 char 正文<input type="number" min="1" max="100" step="1" data-setting="recentRawFloors"></label>
                         <small class="cache-memory-help">默认 3 层，按正常 char 回复计数。Rolling 将其作为上限，记忆覆盖不足时提示。Checkpoint 短正文在覆盖不足时保留相关原文。开场在首段记忆接管前单独保留。</small>
@@ -520,13 +502,12 @@ export function configTemplate() {
                         <label class="cache-memory-toggle"><span><strong>只发送最后一条 user</strong><small>默认关闭；开启后过滤更早的user输入，可独立于正文衔接使用</small></span><input type="checkbox" data-setting="lastUserOnly"></label>
                         <small class="cache-memory-help">关闭时沿用现有user历史发送方式；开启后只保留最后一条非开场白user输入。第0条在首段记忆接管前暂时保留，避免初始背景丢失。原“不发送用户”正则可以保留，开启此开关后也可停用；继续生成时旧深度正则可能清空最后一条user。开关不改写已冻结记忆。</small>
                         <small class="cache-memory-help">仅把“替换为”留空才表示删除匹配内容，“查找”不能为空。酒馆深度按消息计数：普通一问一答、末尾为新user时，char最小深度9清空通常只留4条回复，11才留5条。固定深度仍可能与CP重叠或出现缺口。</small>
-                        <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>分开显示设置事件、浏览器与服务端入站的指纹、冲突位置及跨请求变化。仅记录脱敏诊断。</small></span><input type="checkbox" data-setting="cacheDebug"></label>
+                        <label class="cache-memory-toggle"><span><strong>Cache Debug / 缓存诊断</strong><small>显示设置事件与浏览器请求的脱敏指纹及跨请求变化。</small></span><input type="checkbox" data-setting="cacheDebug"></label>
                         <pre class="cache-memory-continuity" data-cache-debug hidden></pre>
                     </section>
 
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
                         <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>基础摘要、阶段总结、长期总结共用一套剧情模板；角色表格规则单独设置。</p></div></div>
-                        <div class="cache-memory-mode-switch cache-memory-prompt-mode"><div class="cache-memory-mode-buttons" role="group" aria-label="角色表格开关"><button type="button" data-summary-mode="normal" aria-pressed="true"><span>基础记忆</span><small data-summary-current>当前</small></button><button type="button" data-summary-mode="ensemble" aria-pressed="false"><span>角色表格</span><small data-summary-current hidden>当前</small></button></div></div>
                         <small class="cache-memory-help" data-prompt-mode-help></small>
                         <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认破限</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
                         <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
@@ -542,7 +523,7 @@ export function configTemplate() {
 }
 
 export class CacheMemoryUI {
-    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, captureChat, exportChat, createChatBranch, updateInjection, prepareInjection, persistence, apiCacheAdapter }) {
+    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, captureChat, exportChat, createChatBranch, updateInjection, prepareInjection, persistence }) {
         this.root = resolveUIRoot();
         this.doc = this.root.document;
         this.getSettings = getSettings;
@@ -558,7 +539,6 @@ export class CacheMemoryUI {
         this.updateInjection = updateInjection;
         this.prepareInjection = prepareInjection;
         this.persistence = persistence;
-        this.apiCacheAdapter = apiCacheAdapter;
         this.manager = null;
         this.config = null;
         this.wandObserver = null;
@@ -600,7 +580,7 @@ export class CacheMemoryUI {
         this.missingCheckpointRunId = 0;
         this.missingCheckpointState = { status: 'idle', total: 0, processed: 0, created: 0, skipped: 0, failed: 0, currentRange: null, blocked: [], errors: [] };
         if (summarizer && store && getChat) this.backfill = new HistoryBackfill({
-            summarizer, store, getChat, onProgress: state => { this.showTaskProgress({ ...state, phase: '楼层摘要补齐' }); this.renderBackfillProgress(); },
+            summarizer, store, getChat, onProgress: state => { this.showTaskProgress({ ...state, phase: '批量楼层摘要' }); this.renderBackfillProgress(); },
         });
     }
 
@@ -612,7 +592,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.16', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.27', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -809,18 +789,8 @@ export class CacheMemoryUI {
                 const remove = scope.querySelector('[data-profile-action="delete"]');
                 if (remove) remove.disabled = index.profiles.length <= 1;
             }
-            for (const element of scope.querySelectorAll('button[data-summary-mode]')) {
-                const active = element.dataset.summaryMode === settings.summaryMode;
-                element.classList.toggle('is-active', active);
-                element.setAttribute('aria-pressed', String(active));
-                element.disabled = !hasChat;
-                element.querySelector('[data-summary-current]').hidden = !active || !hasChat;
-                const label = element.querySelector('span').textContent;
-                element.setAttribute('aria-label', active && hasChat ? `${label}（当前聊天正在使用）` : label);
-                element.title = hasChat ? `${label}${active ? '：当前聊天正在使用' : '：点击切换，仅影响以后生成的记忆'}` : '打开聊天后可选择总结模式';
-            }
             const modeHelp = scope.querySelector('[data-prompt-mode-help]');
-            if (modeHelp) modeHelp.textContent = '基础摘要、阶段总结、长期总结共用一套规则；角色表格独立勾选，不增加摘要长度。自定义提示词仍会保留。';
+            if (modeHelp) modeHelp.textContent = '基础摘要、阶段总结、长期总结共用一套规则；可在「记忆管理 → 角色表格」选择要自动维护的资料。';
             this.renderPromptPreviews(scope);
             const warning = scope.querySelector('[data-cache-mode-warning]');
             const rolling = settings.injectionMode === INJECTION_MODES.ROLLING;
@@ -858,18 +828,9 @@ export class CacheMemoryUI {
             if (keyState) keyState.textContent = this.apiClient.hasApiKey() ? 'API 密钥已保存在本浏览器' : '尚未保存 API 密钥';
             const keyInput = scope.querySelector('[data-api-key]');
             if (keyInput) keyInput.placeholder = this.apiClient.hasApiKey() ? '已保存，留空表示不更改' : '未配置';
-            const adapterPolicy = this.apiCacheAdapter?.currentPolicy?.();
-            const connection = scope.querySelector('[data-api-cache-connection]');
-            if (connection) connection.textContent = adapterPolicy?.label || '默认策略（尚未识别主模型连接）';
-            for (const element of scope.querySelectorAll('[data-api-cache-policy]')) {
-                const value = adapterPolicy?.policy?.[element.dataset.apiCachePolicy];
-                if (element.type === 'checkbox') element.checked = Boolean(value);
-                else element.value = value ?? '';
-            }
         }
         for (const scope of scopes) this.resizeTextareas(scope);
         this.applyTheme();
-        if (this.apiCacheAdapter?.status) this.setApiCacheAdapterStatus(this.apiCacheAdapter.status);
         this.renderSettingsSaveState();
     }
 
@@ -1056,16 +1017,6 @@ export class CacheMemoryUI {
             }
             if (event.target === this.pendingSettingInput) { clearTimeout(this.settingInputTimer); this.pendingSettingInput = null; }
             if (event.target.closest('[data-api-key]')) { void this.saveInputApiKey(root); return; }
-            const cachePolicy = event.target.closest('[data-api-cache-policy]');
-            if (cachePolicy) {
-                const key = cachePolicy.dataset.apiCachePolicy;
-                const value = cachePolicy.type === 'checkbox' ? cachePolicy.checked
-                    : key === 'historyDepth' ? Number(cachePolicy.value) : cachePolicy.value;
-                this.apiCacheAdapter?.updateCurrentPolicy?.({ [key]: value });
-                this.markSettingsDirty();
-                this.populateSettings();
-                return;
-            }
             const modelSelect = event.target.closest('[data-model-select]');
             if (modelSelect) {
                 if (!modelSelect.value) return;
@@ -1163,20 +1114,6 @@ export class CacheMemoryUI {
                 this.markSettingsDirty();
                 return;
             }
-            if (event.target.closest('button[data-enable-character-tables]')) {
-                this.store.setSummaryMode('advanced'); this.updateSettings({ activeStateEnabled: true });
-                this.populateSettings(); this.renderManager(); this.updateInjection('settings changed'); return;
-            }
-            const mode = event.target.closest('button[data-summary-mode]');
-            if (mode) {
-                if (!this.store?.current().chatId || mode.disabled) return;
-                this.store.setSummaryMode(mode.dataset.summaryMode === 'ensemble' ? 'advanced' : 'normal');
-                if (mode.dataset.summaryMode === 'ensemble') this.updateSettings({ activeStateEnabled: true });
-                this.updateInjection('settings changed');
-                this.populateSettings();
-                this.renderManager();
-                return;
-            }
             if (event.target === this.config) {
                 this.closeSettings();
                 return;
@@ -1211,17 +1148,6 @@ export class CacheMemoryUI {
                         this.populateSettings();
                     }
                 } catch { this.setStatus('error', '配置操作失败，请填写名称并检查浏览器本地存储权限。'); }
-                return;
-            }
-            if (event.target.closest('[data-api-cache-probe]')) {
-                this.setApiCacheAdapterStatus({ state: 'working', message: '正在检测 SillyTavern 服务端适配器…', preview: null });
-                await this.apiCacheAdapter?.probe?.();
-                return;
-            }
-            if (event.target.closest('[data-api-cache-reset]')) {
-                this.apiCacheAdapter?.resetCurrentPolicy?.();
-                this.markSettingsDirty();
-                this.populateSettings();
                 return;
             }
             const reset = event.target.closest('[data-reset-prompt]');
@@ -1297,6 +1223,7 @@ export class CacheMemoryUI {
         this.populateSettings();
         this.renderModelOptions(this.modelOptions);
         this.config.hidden = false;
+        if (this.config.querySelector('[data-settings-tab="manager"]')?.getAttribute('aria-selected') === 'true') this.activateSettingsTab('manager');
         lockDialogSize(this.config.querySelector('.cache-memory-config-frame'));
         this.resizeTextareas(this.config);
         if (this.debugSnapshot) this.setCacheDebug(this.debugSnapshot);
@@ -1389,20 +1316,6 @@ export class CacheMemoryUI {
         }
     }
 
-    setApiCacheAdapterStatus(status = {}) {
-        if (this.destroyed) return;
-        for (const output of this.doc.querySelectorAll('[data-api-cache-status]')) {
-            output.dataset.state = status.state || 'idle';
-            output.textContent = status.message || '尚未检测服务端适配器';
-        }
-        for (const output of this.doc.querySelectorAll('[data-api-cache-preview]')) {
-            output.hidden = !status.preview;
-            output.textContent = status.preview ? `适配器入站诊断与委托结构（脱敏）\n${JSON.stringify(status.preview, null, 2)}` : '';
-        }
-        const connection = this.config?.querySelector('[data-api-cache-connection]');
-        if (connection) connection.textContent = this.apiCacheAdapter?.currentPolicy?.().label || '默认策略（尚未识别主模型连接）';
-    }
-
     setStatus(state, text, error) {
         if (this.destroyed) return;
         if (error?.diagnostics) text += `\n${formatSummaryFailure({ errorCategory: error.category, errorCode: error.code, errorDiagnostics: error.diagnostics, error: error.message })}`;
@@ -1412,8 +1325,6 @@ export class CacheMemoryUI {
             output.removeAttribute('title');
             if (output.closest?.('.cache-memory-config-panel')) {
                 output.hidden = !text || state === 'success' && /^第.*层摘要已冻结$/.test(text);
-                const freeze = this.config?.querySelector('[data-freeze-status]');
-                if (freeze) freeze.hidden = !output.hidden;
             }
         }
     }
@@ -1724,8 +1635,7 @@ export class CacheMemoryUI {
             this.root.cancelAnimationFrame(this.managerFrame);
             this.managerFrame = null;
         }
-        const overview = this.manager.querySelector('[data-manager-overview-only]');
-        if (overview) overview.hidden = this.managerView !== 'overview';
+        for (const section of this.manager.querySelectorAll('[data-manager-overview-only]')) section.hidden = this.managerView !== 'overview';
         this.renderMemorySaveState();
         for (const tab of this.manager.querySelectorAll('[data-manager-view]')) {
             const active = tab.dataset.managerView === this.managerView;
@@ -1901,9 +1811,6 @@ export class CacheMemoryUI {
     renderMemorySaveState() {
         if (!this.manager) return;
         const current = this.store.current();
-        const frozen = Object.values(current.summaries).reduce((latest, item) => isUsableMemory(item) && (!latest || item.floor > latest.floor) ? item : latest, null);
-        const freezeStatus = this.config?.querySelector('[data-freeze-status]');
-        if (freezeStatus) { freezeStatus.hidden = !frozen || !this.config.querySelector('[data-cache-status]').hidden; freezeStatus.textContent = frozen ? `第 ${frozen.floor} 层摘要已冻结` : ''; }
         const status = this.persistence?.getState?.(this.store?.current?.().chatId) ?? { state: 'unknown', detail: '' };
         const labels = {
             pending: '待保存', saving: '保存中', confirmed: '已确认保存', failed: '保存失败',
@@ -1972,7 +1879,6 @@ export class CacheMemoryUI {
             ['摘要：已生成 / 应有', `${overview.summaries.generated} / ${overview.summaries.expected}`],
             ['阶段记忆：已生成 / 应有', `${overview.checkpoints.actual} / ${overview.checkpoints.expected}`],
             ['长期记忆：已生成 / 应有', `${overview.longMemories.actual} / ${overview.longMemories.expected}`],
-            ['有效 KEEP', overview.activeKeeps],
         ];
         const grid = this.element('div', 'cache-memory-stats');
         for (const [label, value] of stats) {
@@ -1982,20 +1888,17 @@ export class CacheMemoryUI {
         }
         const health = this.element('section', 'cache-memory-health');
         health.dataset.state = overview.issues.length ? 'incomplete' : 'healthy';
-        health.append(this.element('h4', '', '记忆状态'));
-        health.append(this.element('strong', '', overview.issues.length ? '有待处理问题' : '记忆正常'));
+        health.append(this.element('strong', '', overview.issues.length ? '有待处理的记忆' : '记忆正常'));
         if (overview.issues.length) {
             const details = this.element('details');
             details.append(this.element('summary', '', `查看 ${overview.issues.length} 类问题`));
             const list = this.element('ul');
             for (const issue of overview.issues) list.append(this.element('li', '', issue));
             details.append(list); health.append(details);
-        } else {
-            health.append(this.element('p', '', '当前应有的 Summary、Checkpoint 与 Long Memory 均已生成。'));
         }
         const diagnostics = this.manager.querySelector('[data-memory-diagnostics]');
         if (diagnostics) diagnostics.textContent = `存储摘要记录总数 ${overview.storedSummaryRecords} 条 · 当前聊天有效摘要 ${overview.summaries.actual}/${overview.summaries.expected} · 小总结已存 ${overview.checkpoints.actual}/${overview.checkpoints.expected} · 大总结已存 ${overview.longMemories.actual}/${overview.longMemories.expected} · 已注入 ${overview.injectedLongMemories} 份大总结＋${overview.injectedCheckpoints} 份小总结＋${overview.injectedSummaries} 份楼层摘要 · 注入估算 ≈${overview.estimatedTokens} tokens（仅供诊断）`;
-        if (overview.injectionExplanation) health.append(this.element('p', '', overview.injectionExplanation));
+        if (overview.issues.length && overview.injectionExplanation) health.append(this.element('p', '', overview.injectionExplanation));
         if (this.showSummaryHealthDetails) {
             const detailSection = this.element('div', 'cache-memory-summary-health-details');
             detailSection.append(this.element('h5', '', '摘要异常明细'));
@@ -2013,18 +1916,23 @@ export class CacheMemoryUI {
             for (const conflict of this.lastMergeReport.conflicts.slice(0, 10)) report.append(this.element('p', '', `${conflict.type} ${conflict.id}：同 ID 内容不同，未覆盖当前记录。`));
             health.append(report);
         }
-        root.append(grid, health);
         const quick = this.element('div', 'cache-memory-actions');
-        quick.innerHTML = '<button type="button" class="menu_button cache-memory-primary" data-backfill-action="missing">补齐缺失摘要</button><button type="button" class="menu_button" data-backfill-action="failed">重试失败摘要</button><button type="button" class="menu_button" data-view-summary-health>查看缺失楼层</button><button type="button" class="menu_button" data-update-checkpoints>更新需处理的阶段记忆</button>';
+        quick.innerHTML = '<button type="button" class="menu_button" data-view-summary-health>查看楼层问题</button><button type="button" class="menu_button" data-update-checkpoints>更新待处理的阶段总结</button>';
         const filling = this.isMissingCheckpointBackfillActive();
-        quick.innerHTML += `<button type="button" class="menu_button cache-memory-primary" data-fill-all-memories ${filling || this.backfill?.active || this.importingMemory || this.restoringServerMemory ? 'disabled' : ''}>一键补全所有记忆</button><button type="button" class="menu_button" data-cancel-missing-checkpoints ${filling ? '' : 'disabled'}>安全停止补全</button>`;
+        quick.innerHTML += `<button type="button" class="menu_button cache-memory-primary" data-fill-all-memories ${filling || this.backfill?.active || this.importingMemory || this.restoringServerMemory ? 'disabled' : ''}>一键补全所有记忆</button><button type="button" class="menu_button" data-cancel-missing-checkpoints ${filling ? '' : 'hidden'}>安全停止补全</button>`;
         if (this.missingCheckpointState.kind === 'all') {
             const state = this.missingCheckpointState;
             const labels = { running: '正在补全', cancelling: '正在停止', completed: '补全完成', cancelled: '已停止', failed: '补全未完成' };
             const range = state.currentRange;
             quick.append(this.element('p', '', `${labels[state.status] ?? state.status} · ${state.phase ?? ''}${range ? ` 第 ${range.startFloor}–${range.endFloor} 层` : ''} · ${state.processed}/${state.total} · 已生成 ${state.created}${state.errors?.length ? `\n${state.errors.at(-1)}` : ''}`));
         }
-        root.append(quick, this.longMemoryControls(), this.backfillPanel(), this.aggregationPanel());
+        const tools = this.element('details', 'cache-memory-secondary-tools');
+        tools.open = this.isMissingCheckpointBackfillActive() || Boolean(this.aggregateToolsOpen);
+        tools.addEventListener('toggle', () => { if (tools.isConnected) this.aggregateToolsOpen = tools.open; }, { signal: this.controller.signal });
+        tools.append(this.element('summary', '', '更多阶段与长期操作'), this.aggregationPanel(), this.longMemoryControls());
+        root.append(grid, this.backfillPanel(), quick);
+        if (overview.issues.length || this.showSummaryHealthDetails || this.lastMergeReport) root.append(health);
+        root.append(tools);
         return root;
     }
 
@@ -2052,43 +1960,76 @@ export class CacheMemoryUI {
 
     renderCharacterTablesPage() {
         const root = this.element('div', 'cache-memory-manager-page cache-memory-character-tables');
-        const enabled = characterTablesEnabled(this.store.current(), this.getSettings());
-        root.append(this.element('h4', '', '角色表格'), this.element('p', '', '点“查看”浏览已有资料；勾选只控制后续维护与注入。查看不需要开启，也不会调用模型。'));
-        const choices = this.element('div', 'cache-memory-table-choices');
-        const selected = normalizeCharacterTables(this.getSettings().characterTables);
+        const current = this.store.current();
+        const settings = this.getSettings();
+        const enabled = characterTablesEnabled(current, settings);
+        const toolbar = this.element('label', 'cache-memory-toggle cache-memory-table-switch');
+        const switchText = this.element('span');
+        switchText.append(this.element('strong', '', '自动维护角色表格'), this.element('small', '',
+            enabled ? '随三层总结更新已勾选的表。' : '可查看与编辑已有记录。开启后随新剧情维护。'));
+        const toggle = this.element('input');
+        toggle.type = 'checkbox';
+        toggle.dataset.roleTablesToggle = '';
+        toggle.checked = enabled;
+        toggle.disabled = !current.chatId;
+        toolbar.append(switchText, toggle);
+
+        const navigation = this.element('nav', 'cache-memory-table-nav');
+        navigation.setAttribute('aria-label', '角色表格分类');
+        const selected = normalizeCharacterTables(settings.characterTables);
         const rows = projectActiveState(this.store.effectiveStore(this.getChat()));
         const viewing = CHARACTER_TABLES.find(table => table.key === this.characterTableView) ?? CHARACTER_TABLES[0];
+        const tableRows = rows.filter(row => tableForRecord(row) === viewing.key);
         for (const table of CHARACTER_TABLES) {
-            const card = this.element('div', `cache-memory-table-choice${table.key === viewing.key ? ' is-viewing' : ''}`);
-            const label = this.element('label', 'cache-memory-toggle');
-            const input = this.element('input'); input.type = 'checkbox'; input.checked = selected[table.key]; input.dataset.characterTable = table.key;
-            input.setAttribute('aria-label', `启用${table.label}`);
-            const text = this.element('span'); text.append(this.element('strong', '', table.label), this.element('small', '', table.description));
-            label.append(input, text);
-            const count = rows.filter(row => tableForRecord(row) === table.key).length;
-            const view = this.element('button', 'menu_button', `查看 · ${count} 项`);
-            view.type = 'button'; view.dataset.viewCharacterTable = table.key; view.setAttribute('aria-pressed', String(table.key === viewing.key));
-            card.append(label, view); choices.append(card);
+            const view = this.element('button');
+            view.type = 'button';
+            view.dataset.viewCharacterTable = table.key;
+            view.setAttribute('aria-pressed', String(table.key === viewing.key));
+            view.append(this.element('span', '', table.label),
+                this.element('small', '', String(rows.filter(row => tableForRecord(row) === table.key).length)));
+            navigation.append(view);
         }
-        root.append(choices);
-        if (!enabled) {
-            root.append(this.element('p', '', '角色表格当前关闭，仍可查看和手动编辑已有资料。开启后，小总结、阶段总结和长期总结会在各自生成时更新勾选的表。'));
-            const button = this.element('button', 'menu_button', '开启角色表格'); button.dataset.enableCharacterTables = 'true'; root.append(button);
-        }
-        if (enabled && !Object.values(selected).some(Boolean)) root.append(this.element('p', '', '目前未启用任何表，不会提取或注入表格内容；已有资料照常可看。'));
+
         const section = this.element('section', 'cache-memory-character-table-section');
-        section.append(this.element('h4', '', viewing.label), this.element('p', '', enabled && selected[viewing.key]
-            ? '已启用：随新剧情维护。点击字段可编辑，已结束事项收在历史中。' : '当前未启用，仅查看已有资料；不会因此开启提取或注入。'),
-        this.renderTrackedPage('all', viewing.key)); root.append(section);
+        const controls = this.element('div', 'cache-memory-table-controls');
+        const option = this.element('label', 'cache-memory-table-option');
+        const checkbox = this.element('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selected[viewing.key];
+        checkbox.disabled = !enabled;
+        checkbox.dataset.characterTable = viewing.key;
+        option.append(checkbox, this.element('span', '', '维护并注入此表'));
+        controls.append(this.element('p', '', viewing.description), option);
+        const entities = [...new Set(tableRows.map(row => row.entity))];
+        const entity = entities.includes(this.characterTableEntity) ? this.characterTableEntity : '';
+        if (entities.length > 1) {
+            const field = this.element('label', 'cache-memory-table-filter', '筛选主体');
+            const select = this.element('select');
+            select.dataset.characterEntity = '';
+            for (const name of ['', ...entities]) {
+                const option = this.element('option', '', name || '全部主体');
+                option.value = name;
+                select.append(option);
+            }
+            select.value = entity;
+            field.append(select);
+            controls.append(field);
+        }
+        section.append(controls, this.renderTrackedPage('all', viewing.key,
+            entity ? tableRows.filter(row => row.entity === entity) : tableRows));
+        root.append(toolbar, navigation, section);
         return root;
     }
 
-    renderTrackedPage(kind, tableSection = null) {
-        const root = this.element('div', 'cache-memory-manager-page');
-        root.append(this.element('p', '', tableSection ? '旧资料可继承；只有明确变更或结束才更新，暂时未提及不会清空。' : '来源变更的记录标为待核对，不参与当前状态整理。结束事项保留历史；长时间未提及不会自动结束。手动操作不调用模型，原冻结快照在下个既有边界更新。'));
-        const rows = projectActiveState(this.store.effectiveStore(this.getChat())).filter(item => (kind === 'all' || item.kind === kind) && (!tableSection || tableForRecord(item) === tableSection));
+    renderTrackedPage(kind, tableSection = null, tableRows = null) {
+        const root = this.element('div', tableSection ? 'cache-memory-table-records' : 'cache-memory-manager-page');
+        if (!tableSection) root.append(this.element('p', '', '来源变更的记录标为待核对，不参与当前状态整理。结束事项保留历史；长时间未提及不会自动结束。手动操作不调用模型，原冻结快照在下个既有边界更新。'));
+        const rows = tableRows ?? projectActiveState(this.store.effectiveStore(this.getChat()))
+            .filter(item => (kind === 'all' || item.kind === kind) && (!tableSection || tableForRecord(item) === tableSection));
         if (tableSection && !rows.length) root.append(this.element('p', 'cache-memory-empty', '这张表暂无已存资料。可以手动添加；启用后从新剧情记录，不会自动重做历史。'));
         const active = rows.filter(item => !item.needsReview && isTrackedActive(item));
+        const isExperience = item => tableSection && item.category === 'milestone';
+        const experiences = active.filter(isExperience);
         const archived = rows.filter(item => !item.needsReview && !isTrackedActive(item));
         const review = rows.filter(item => item.needsReview);
         const formFor = (item = {}) => {
@@ -2128,7 +2069,7 @@ export class CacheMemoryUI {
             const groupKey = `${section}:${name}`;
             if (!people.has(groupKey)) {
                 const group = this.element('details', 'cache-memory-card cache-memory-person');
-                group.open = Boolean(tableSection) && section === '当前记录';
+                group.open = Boolean(tableSection) && section === '当前记录' && rows.every(item => item.entity === name);
                 group.append(this.element('summary', '', `${name} · ${section}`));
                 const table = this.element('table', 'cache-memory-person-table');
                 const head = this.element('thead'); head.innerHTML = '<tr><th>资料</th><th>当前值 / 历史结果</th><th>来源</th></tr>';
@@ -2137,8 +2078,8 @@ export class CacheMemoryUI {
             }
             return people.get(groupKey);
         };
-        for (const [sectionTitle, items] of [['当前记录', active], ['已结束 / 历史结果', archived], ['待核对', review]]) {
-            if (!advanced) root.append(this.element('h4', '', `${sectionTitle} · ${items.length}`));
+        for (const [sectionTitle, items] of [['当前记录', active.filter(item => !isExperience(item))], ['已确认经历', experiences], ['已结束 / 历史结果', archived], ['待核对', review]]) {
+            if (!advanced && sectionTitle !== '已确认经历') root.append(this.element('h4', '', `${sectionTitle} · ${items.length}`));
             for (const item of items) {
                 const sourceLabel = item.evidenceStartFloor < item.sourceFloor
                     ? `第 ${item.evidenceStartFloor} 至 ${item.sourceFloor} 层` : `第 ${item.sourceFloor} 层`;
@@ -2158,7 +2099,8 @@ export class CacheMemoryUI {
                     const button = this.element('button', 'cache-memory-person-field', title);
                     button.type = 'button'; button.dataset.personField = item.id; button.setAttribute('aria-expanded', 'false');
                     detail.append(button);
-                    row.append(detail, this.element('td', '', item.value), this.element('td', '', `${sourceLabel} · ${trackedStatusLabel(item.status)}`));
+                    const statusLabel = sectionTitle === '已确认经历' ? '历史事实' : trackedStatusLabel(item.status);
+                    row.append(detail, this.element('td', '', item.value), this.element('td', '', `${sourceLabel} · ${statusLabel}`));
                     const editorRow = this.element('tr'); editorRow.hidden = true;
                     const editorCell = this.element('td'); editorCell.colSpan = 3; editorCell.append(card); editorRow.append(editorCell);
                     button.addEventListener('click', () => { editorRow.hidden = false; card.open = !card.open; this.resizeTextareas(card); }, { signal: this.controller.signal });
@@ -2182,7 +2124,14 @@ export class CacheMemoryUI {
 
     backfillPanel() {
         const section = this.element('section', 'cache-memory-backfill');
-        section.innerHTML = `<h4>历史楼层补齐</h4><p data-backfill-range></p><div class="cache-memory-grid"><label>开始楼层<input type="number" min="1" value="1" data-backfill-start></label><label>结束楼层<input type="number" min="1" data-backfill-end></label><label>处理模式<select data-backfill-mode><option value="missing-failed">缺失 + 失败</option><option value="missing">仅缺失</option><option value="failed">仅失败</option><option value="all">强制重新生成全部</option></select></label></div><div class="cache-memory-actions"><button type="button" class="menu_button cache-memory-primary" data-backfill-action="start">开始补齐</button><button type="button" class="menu_button" data-backfill-action="pause">暂停</button><button type="button" class="menu_button" data-backfill-action="resume">继续</button><button type="button" class="menu_button" data-backfill-action="cancel">取消</button><button type="button" class="menu_button" data-backfill-action="latest">总结当前最新层</button></div><progress data-backfill-progress max="1" value="0" aria-label="历史补齐进度"></progress><p data-backfill-status role="status" aria-live="polite"></p><small>逐层串行处理；已保存的结果不会被取消。</small>`;
+        section.innerHTML = `<div class="cache-memory-batch-heading"><h4>批量处理楼层摘要</h4><p data-backfill-range></p></div>
+            <div class="cache-memory-batch-fields">
+                <label>处理模式<select data-backfill-mode><option value="missing-failed">补齐缺失与失败</option><option value="missing">仅补齐缺失</option><option value="failed">仅重试失败</option><option value="selected">重新生成所选楼层</option><option value="all">重生成整个范围</option></select></label>
+                <div class="cache-memory-batch-range" data-backfill-range-fields><label>开始楼层<input type="number" min="1" data-backfill-start></label><label>结束楼层<input type="number" min="1" data-backfill-end></label></div>
+                <label data-backfill-selection-field hidden>指定楼层<input type="text" data-backfill-selection placeholder="例如 61–64、66" aria-describedby="cache-memory-selection-hint"><small id="cache-memory-selection-hint">支持单层、范围和组合。仅替换选中的楼层摘要。</small></label>
+            </div>
+            <div class="cache-memory-actions"><button type="button" class="menu_button cache-memory-primary" data-backfill-action="start">开始补齐</button><button type="button" class="menu_button" data-backfill-action="pause" hidden>暂停</button><button type="button" class="menu_button" data-backfill-action="resume" hidden>继续</button><button type="button" class="menu_button" data-backfill-action="cancel" hidden>停止</button><button type="button" class="menu_button" data-backfill-action="latest">总结最新层</button></div>
+            <progress data-backfill-progress max="1" value="0" aria-label="批量处理进度" hidden></progress><p data-backfill-status role="status" aria-live="polite" hidden></p>`;
         return section;
     }
 
@@ -2741,38 +2690,72 @@ export class CacheMemoryUI {
     }
 
     renderBackfillProgress() {
-        if (!this.manager || this.destroyed || !this.manager.querySelector('[data-backfill-range]')) return;
+        if (!this.manager || !this.backfill || this.destroyed) return;
+        for (const button of this.manager.querySelectorAll('[data-manager-action], [data-fill-missing], [data-continue-checkpoint], [data-import-merge], [data-fill-missing-checkpoints], [data-aggregate-continue]')) {
+            const messageId = button.closest('[data-memory-type="summary"]')?.dataset.messageId;
+            const blocked = this.backfill.active || this.isMissingCheckpointBackfillActive()
+                || Boolean(messageId && this.summarizer.isSummarizing(messageId));
+            if (blocked && !button.disabled) {
+                button.disabled = true;
+                button.dataset.batchLocked = '';
+            } else if (!blocked && 'batchLocked' in button.dataset) {
+                delete button.dataset.batchLocked;
+                button.disabled = false;
+            }
+        }
+        const panel = this.manager.querySelector('.cache-memory-backfill');
+        if (!panel) return;
         const assistants = getAssistantMessages(this.getChat());
         const latest = assistants.at(-1)?.floor ?? 0;
         const chatId = this.store.current().chatId;
         if (this.backfill.active && this.backfill.chatId !== chatId) this.backfill.cancel({ discard: true });
         const s = this.backfill.state;
-        this.manager.querySelector('[data-backfill-range]').textContent = latest ? `当前正常 assistant 楼层：1–${latest}（共 ${latest} 层）` : '当前聊天没有可总结的 assistant 楼层';
-        const start = this.manager.querySelector('[data-backfill-start]');
-        const end = this.manager.querySelector('[data-backfill-end]');
-        if (this.backfillFormChatId !== chatId || !end.value) { start.value = '1'; end.value = String(latest); this.backfillFormChatId = chatId; }
-        for (const field of this.manager.querySelectorAll('[data-backfill-start], [data-backfill-end], [data-backfill-mode]')) field.disabled = this.backfill.active;
-        start.max = end.max = String(latest);
-        const labels = { idle: '等待开始', running: '正在补齐', pausing: '当前请求结束后暂停', paused: '已暂停', cancelling: '正在取消', aggregating: '正在生成阶段记忆', completed: '已完成', cancelled: '已取消' };
-        this.manager.querySelector('[data-backfill-status]').textContent = `${labels[s.status]} · ${s.processed} / ${s.total}${s.currentFloor ? ` · 当前：第 ${s.currentFloor} 层` : ''}\n成功：${s.success} · 失败：${s.failed} · 跳过：${s.skipped} · 重试：${s.retries}${s.error ? `\n${s.error}` : ''}`;
-        const progress = this.manager.querySelector('[data-backfill-progress]');
+        panel.querySelector('[data-backfill-range]').textContent = latest
+            ? `可用楼层 ${assistants[0].floor}–${latest} · ${assistants.length} 层` : '当前聊天没有可总结的楼层';
+        if (this.backfillDraft?.chatId !== chatId) this.backfillDraft = { chatId, start: String(assistants[0]?.floor ?? 1), end: null, mode: 'missing-failed', selection: '' };
+        const { mode, start, end, selection } = this.backfillDraft;
+        const busy = this.backfill.active || this.isMissingCheckpointBackfillActive();
+        for (const [key, value] of Object.entries({ mode, start, end: end ?? (latest ? String(latest) : ''), selection })) {
+            const field = panel.querySelector(`[data-backfill-${key}]`);
+            if (field.value !== value) field.value = value;
+            if (field.type === 'number') field.max = String(latest);
+            field.disabled = busy;
+        }
+        panel.querySelector('[data-backfill-selection-field]').hidden = mode !== 'selected';
+        panel.querySelector('[data-backfill-range-fields]').hidden = mode === 'selected';
+        const labels = { running: '处理中', pausing: '当前请求结束后暂停', paused: '已暂停', cancelling: '正在停止', aggregating: '正在生成阶段总结', completed: '已完成', cancelled: '已停止' };
+        const status = panel.querySelector('[data-backfill-status]');
+        status.hidden = s.status === 'idle';
+        status.textContent = s.status === 'idle' ? '' : `${labels[s.status]} · ${s.processed} / ${s.total}${s.currentFloor ? ` · 第 ${s.currentFloor} 层` : ''}\n成功 ${s.success} · 失败 ${s.failed} · 跳过 ${s.skipped}${s.retries ? ` · 重试 ${s.retries}` : ''}${s.error ? `\n${s.error}` : ''}`;
+        const progress = panel.querySelector('[data-backfill-progress]');
+        progress.hidden = s.status === 'idle';
         progress.max = s.total || 1;
         progress.value = s.processed;
-        for (const button of this.manager.querySelectorAll('[data-backfill-action]')) {
+        for (const button of panel.querySelectorAll('[data-backfill-action]')) {
             const action = button.dataset.backfillAction;
-            button.disabled = action === 'pause' ? s.status !== 'running' : action === 'resume' ? !['paused', 'pausing'].includes(s.status)
-                : action === 'cancel' ? !['running', 'pausing', 'paused'].includes(s.status) : this.backfill.active || this.isMissingCheckpointBackfillActive() || !latest;
-        }
-        for (const button of this.manager.querySelectorAll('[data-manager-action], [data-fill-missing], [data-continue-checkpoint], [data-import-merge], [data-fill-missing-checkpoints], [data-aggregate-continue]')) {
-            const messageId = button.closest('[data-memory-type="summary"]')?.dataset.messageId;
-            button.disabled = this.backfill.active || this.isMissingCheckpointBackfillActive() || Boolean(messageId && this.summarizer.isSummarizing(messageId));
+            if (action === 'start') button.textContent = mode === 'selected' || mode === 'all' ? '重新生成摘要' : '开始补齐';
+            if (action === 'pause' || action === 'resume' || action === 'cancel') {
+                button.hidden = action === 'pause' ? s.status !== 'running' : action === 'resume' ? !['paused', 'pausing'].includes(s.status)
+                    : !['running', 'pausing', 'paused'].includes(s.status);
+                button.disabled = button.hidden;
+            } else button.disabled = busy || !latest;
         }
     }
 
     async startBackfill(options) {
-        if (this.isMissingCheckpointBackfillActive() || this.importingMemory || this.restoringServerMemory) return;
-        if (options.mode === 'all' && !await this.showPluginDialog({ title: '强制重新生成', message: '强制重新生成会替换所选范围内已有的小总结，冻结的阶段记忆仍保留。', confirmLabel: '确认重新生成' })) return;
-        try { await this.backfill.start(options); }
+        if (this.backfill.active || this.isMissingCheckpointBackfillActive() || this.importingMemory || this.restoringServerMemory) return;
+        const chatId = this.store.current().chatId;
+        try {
+            if (options.mode === 'selected') {
+                const floors = parseFloorSelection(options.selection, getAssistantMessages(this.getChat()).map(entry => entry.floor));
+                const preview = floors.slice(0, 12).join('、') + (floors.length > 12 ? '等' : '');
+                if (!await this.showPluginDialog({ title: '重新生成所选楼层', message: `将重新生成第 ${preview} 层，共 ${floors.length} 条楼层摘要。已有摘要会被替换，阶段与长期总结保留。`, confirmLabel: '确认重新生成' })) return;
+                options = { ...options, selection: floors.join(',') };
+            }
+            if (options.mode === 'all' && !await this.showPluginDialog({ title: '重生成整个范围', message: `将重新生成第 ${options.startFloor} 至 ${options.endFloor} 层的摘要，已有摘要会被替换。`, confirmLabel: '确认重新生成' })) return;
+            if (chatId !== this.store.current().chatId) return;
+            await this.backfill.start(options);
+        }
         catch (error) { notify('error', error.message); }
         this.renderManager();
         this.renderMessageMemories();
@@ -3147,7 +3130,10 @@ export class CacheMemoryUI {
         if (tableView) {
             if (!CHARACTER_TABLES.some(table => table.key === tableView.dataset.viewCharacterTable)) return;
             this.characterTableView = tableView.dataset.viewCharacterTable;
-            this.renderManager(); return;
+            this.characterTableEntity = '';
+            this.renderManager();
+            this.manager?.querySelector(`[data-view-character-table="${this.characterTableView}"]`)?.focus({ preventScroll: true });
+            return;
         }
         const view = event.target.closest('[data-manager-view]');
         if (view) {
@@ -3248,6 +3234,7 @@ export class CacheMemoryUI {
             return this.startBackfill(action === 'start' ? {
                 startFloor: Number(this.manager.querySelector('[data-backfill-start]').value),
                 endFloor: Number(this.manager.querySelector('[data-backfill-end]').value),
+                selection: this.manager.querySelector('[data-backfill-selection]').value,
                 mode: this.manager.querySelector('[data-backfill-mode]').value,
             } : { startFloor: 1, endFloor: latest.floor, mode: action });
         }
@@ -3303,11 +3290,39 @@ export class CacheMemoryUI {
         this.keepBatchMode = false;
         for (const expanded of Object.values(this.managerExpanded)) expanded.clear();
         this.managerEditing = null;
-        this.backfillFormChatId = null;
+        this.backfillDraft = null;
+        this.aggregateToolsOpen = false;
+        this.characterTableEntity = '';
         if (this.summaryAuditRun?.running) this.summaryAuditRun.stop = true;
     }
 
     handleManagerInput(event) {
+        if (event.type === 'change' && event.target.matches('[data-role-tables-toggle]')) {
+            if (!this.store.current().chatId) return;
+            const enabled = event.target.checked;
+            this.store.setSummaryMode(enabled ? 'advanced' : 'normal');
+            if (enabled && this.getSettings().activeStateEnabled === false) {
+                this.updateSettings({ activeStateEnabled: true });
+                this.markSettingsDirty();
+            }
+            this.updateInjection('settings changed');
+            this.populateSettings();
+            this.renderManager();
+            this.manager.querySelector('[data-role-tables-toggle]')?.focus({ preventScroll: true });
+            return;
+        }
+        if (event.type === 'change' && event.target.matches('[data-character-entity]')) {
+            this.characterTableEntity = event.target.value;
+            this.renderManager();
+            this.manager.querySelector('[data-character-entity]')?.focus({ preventScroll: true });
+            return;
+        }
+        const batch = ['start', 'end', 'mode', 'selection'].find(key => event.target.matches(`[data-backfill-${key}]`));
+        if (batch && this.backfillDraft) {
+            this.backfillDraft[batch] = event.target.value;
+            this.renderBackfillProgress();
+            return;
+        }
         if (event.target.matches('[data-audit-floor]')) {
             if (event.type !== 'change') return;
             const floor = Number(event.target.value);

@@ -11,6 +11,25 @@ function idleState() {
     return { status: 'idle', total: 0, processed: 0, success: 0, failed: 0, skipped: 0, retries: 0, currentFloor: null, error: '' };
 }
 
+export function parseFloorSelection(value, availableFloors) {
+    const available = new Set(availableFloors);
+    const selection = String(value ?? '').trim().replace(/\s*[-–—~～至]\s*/gu, '-');
+    if (!selection) throw new Error('请输入要重生成的楼层，如 61–64、66');
+    const selected = new Set();
+    for (const token of selection.split(/[\s,，、;；]+/u).filter(Boolean)) {
+        const match = token.match(/^(\d+)(?:-(\d+))?$/u);
+        if (!match) throw new Error(`无法识别楼层「${token}」，请使用数字或范围`);
+        const start = Number(match[1]), end = Number(match[2] ?? match[1]);
+        if (!available.has(start) || !available.has(end) || end < start) throw new Error(`楼层「${token}」不在当前可生成的范围内`);
+        for (let floor = start; floor <= end; floor++) {
+            if (!available.has(floor)) throw new Error(`当前聊天未加载第 ${floor} 层正文`);
+            selected.add(floor);
+        }
+    }
+    if (!selected.size) throw new Error('请选择至少一个楼层');
+    return [...selected].sort((a, b) => a - b);
+}
+
 export class HistoryBackfill {
     constructor({ summarizer, store, getChat, onProgress = () => {}, delay = waitForRetry }) {
         Object.assign(this, { summarizer, store, getChat, onProgress, delay });
@@ -60,16 +79,17 @@ export class HistoryBackfill {
         if (this.controller.signal.aborted) throw aborted();
     }
 
-    async start({ startFloor = 1, endFloor, mode = 'missing-failed' } = {}) {
+    async start({ startFloor = 1, endFloor, selection, mode = 'missing-failed' } = {}) {
         if (this.active) throw new Error('历史补齐正在进行，请先暂停或取消');
         const runId = ++this.runId;
-        if (!['missing', 'failed', 'missing-failed', 'all'].includes(mode)) throw new Error('未知的历史补齐模式');
+        if (!['missing', 'failed', 'missing-failed', 'all', 'selected'].includes(mode)) throw new Error('未知的历史补齐模式');
         const assistants = this.store.syncMessages(this.getChat());
+        const selectedFloors = mode === 'selected' ? new Set(parseFloorSelection(selection, assistants.map(entry => entry.floor))) : null;
         endFloor ??= assistants.at(-1)?.floor ?? 0;
-        if (!Number.isInteger(startFloor) || !Number.isInteger(endFloor) || startFloor < 1 || endFloor < startFloor || endFloor > (assistants.at(-1)?.floor ?? 0)) {
+        if (!selectedFloors && (!Number.isInteger(startFloor) || !Number.isInteger(endFloor) || startFloor < 1 || endFloor < startFloor || endFloor > (assistants.at(-1)?.floor ?? 0))) {
             throw new Error('请选择当前聊天内有效的开始和结束楼层');
         }
-        const entries = assistants.filter(entry => entry.floor >= startFloor && entry.floor <= endFloor);
+        const entries = assistants.filter(entry => selectedFloors ? selectedFloors.has(entry.floor) : entry.floor >= startFloor && entry.floor <= endFloor);
         this.chatId = this.store.current().chatId;
         this.controller = new AbortController();
         this.aggregateController = new AbortController();
@@ -84,7 +104,7 @@ export class HistoryBackfill {
                 await this.boundary();
                 this.publish({ currentFloor: entry.floor }, runId);
                 const existing = this.store.getSummaryForEntry(entry);
-                const selected = mode === 'all' || (!existing && ['missing', 'missing-failed'].includes(mode))
+                const selected = mode === 'all' || mode === 'selected' || (!existing && ['missing', 'missing-failed'].includes(mode))
                     || (existing?.status === 'failed' && ['failed', 'missing-failed'].includes(mode));
                 if (!selected) this.state.skipped++;
                 else {
@@ -114,7 +134,7 @@ export class HistoryBackfill {
         } finally {
             this.summarizer.aggregateDeferrals--;
             const cancelled = this.controller.signal.aborted;
-            if (!this.discard && this.store.current().chatId === this.chatId && this.state.success > 0) {
+            if (mode !== 'selected' && !this.discard && this.store.current().chatId === this.chatId && this.state.success > 0) {
                 this.publish({ status: 'aggregating' }, runId);
                 try {
                     await this.summarizer.enqueue(() => {

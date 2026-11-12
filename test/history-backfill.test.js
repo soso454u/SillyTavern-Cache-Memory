@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { HistoryBackfill, isRetryableSummaryError, waitForRetry } from '../src/history-backfill.js';
+import { HistoryBackfill, parseFloorSelection, isRetryableSummaryError, waitForRetry } from '../src/history-backfill.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { MemoryStore } from '../src/memory-store.js';
 import { DEFAULT_PROMPTS, normalizeSettings, PLUGIN_VERSION } from '../src/defaults.js';
@@ -175,6 +175,37 @@ test('forcing a batch with a published checkpoint preserves both the checkpoint 
     assert.equal(f.store.current().checkpoints[0].content, checkpoint.content);
     assert.equal(f.store.current().checkpoints[0].status, 'frozen');
     assert.deepEqual(f.refreshes, []);
+});
+
+test('floor selections normalize range separators, reject unavailable floors and remove duplicates', () => {
+    assert.deepEqual(parseFloorSelection('5、 1 至 3，2 4~4', [1, 2, 3, 4, 5]), [1, 2, 3, 4, 5]);
+    assert.throws(() => parseFloorSelection('1–3', [1, 3]), /未加载第 2 层/);
+    assert.throws(() => parseFloorSelection('1、9', [1, 2]), /范围内/);
+    assert.throws(() => parseFloorSelection('2–1', [1, 2]), /范围内/);
+    assert.throws(() => parseFloorSelection('12abc', [12]), /无法识别/);
+});
+
+test('selected floors regenerate once each, leaving other summaries and aggregates untouched', async () => {
+    const f = fixture(10);
+    await f.backfill.start({ endFloor: 5 });
+    const before = structuredClone(f.store.current());
+    const calls = [];
+    f.apiClient.complete = async request => {
+        calls.push(request.userContent.split('\n\n[')[0]);
+        return { content: '[SUMMARY]\n[Title]\n更新\n[Event]\n新的剧情摘要' };
+    };
+    f.summarizer.generateDueAggregates = async () => assert.fail('selected mode must not generate aggregates');
+    const result = await f.backfill.start({ mode: 'selected', selection: '7、2–3、2' });
+    assert.equal(result.success, 3);
+    assert.equal(result.processed, 3);
+    assert.deepEqual(calls, ['正文2', '正文3', '正文7']);
+    const after = f.store.current();
+    for (const row of Object.values(before.summaries).filter(row => ![2, 3].includes(row.floor))) {
+        assert.deepEqual(after.summaries[row.messageId], row);
+    }
+    assert.deepEqual(after.checkpoints, before.checkpoints);
+    assert.deepEqual(after.longMemories, before.longMemories);
+    assert.equal(after.injectionSnapshot.value, before.injectionSnapshot.value);
 });
 
 test('pause finishes the active request, waits before the next floor, then resumes; concurrency remains one', async () => {

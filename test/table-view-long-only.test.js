@@ -39,9 +39,11 @@ test('all four tables have independent view buttons and counts; browsing unselec
     assert.match(contents(ui.rendered), /守卫的姐姐/); assert.doesNotMatch(contents(ui.rendered), /医师知道密道，守卫不知道/);
     await ui.handleManagerClick({ target: { closest: selector => selector === '[data-view-character-table]' ? { dataset: { viewCharacterTable: 'knowledge' } } : null } });
     assert.equal(ui.characterTableView, 'knowledge'); assert.match(contents(ui.rendered), /医师知道密道，守卫不知道/);
-    assert.doesNotMatch(contents(ui.rendered), /守卫的姐姐/); assert.match(contents(ui.rendered), /当前未启用，仅查看/);
+    assert.doesNotMatch(contents(ui.rendered), /守卫的姐姐/); assert.match(contents(ui.rendered), /可查看与编辑已有记录/);
     const view = descendants(ui.rendered).find(node => node.dataset.viewCharacterTable === 'knowledge');
-    assert.equal(view.textContent, '查看 · 1 项');
+    assert.equal(view.attributes['aria-pressed'], 'true');
+    assert.deepEqual(view.children.map(node => node.textContent), ['秘密与认知', '1']);
+    assert.equal(descendants(ui.rendered).find(node => node.dataset.characterTable === 'knowledge').disabled, true);
     await ui.handleManagerClick({ target: { closest: selector => selector === '[data-view-character-table]' ? { dataset: { viewCharacterTable: 'relationships' } } : null } });
     assert.match(contents(ui.rendered), /这张表暂无已存资料/);
     assert.deepEqual(data, before); assert.deepEqual(settings, beforeSettings);

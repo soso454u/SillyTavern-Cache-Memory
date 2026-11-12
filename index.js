@@ -12,22 +12,21 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.26';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.27';
 import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.17';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.26';
-import { CacheDiagnostics, freezesInjection, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.26';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.27';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.27';
 import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.18';
 import { chatInheritedThrough, getAssistantMessages } from './src/utils.js?v=1.27.16';
 import { MemoryStore } from './src/memory-store.js?v=1.27.26';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.26';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.26';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.27';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.27';
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.26';
 import { MemoryServerClient } from './src/memory-server.js?v=1.27.16';
 import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.26';
 import { chatFileIdentity } from './src/chat-file.js?v=1.27.26';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.26';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.27';
 import { memoryContentDigest } from './src/memory-store.js?v=1.27.26';
-import { compareRequests } from './server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -54,7 +53,6 @@ const HISTORY_RETENTION_LABELS = {
     'no-verified-story-coverage': '已注入记忆未确认覆盖',
 };
 let cacheDebugState = {};
-let cacheDebugSequence = 0;
 let activeChatId = null;
 let onlineHandler = null;
 let refreshRevision = 0;
@@ -69,7 +67,6 @@ const apiCacheAdapter = new ApiCacheAdapterBridge({
     getSettings: () => settings,
     updateSettings,
     fetchImpl: (...args) => window.fetch(...args),
-    onStatus: status => ui?.setApiCacheAdapterStatus(status),
     observeMain: observeMainRequest,
     onInternal: report => reportCacheDebug('internal', report, report.changes?.some(change => change.kind !== 'comparison-unavailable')),
 });
@@ -128,7 +125,6 @@ function updateSettings(patch) {
     if (Object.hasOwn(patch, 'cacheDebug')) {
         diagnostics.reset();
         cacheDebugState = {};
-        cacheDebugSequence++;
         ui?.setCacheDebug(cacheDebugState);
     }
     extension_settings[MODULE_ID] = settings;
@@ -298,26 +294,20 @@ function mainRequestKey(chatId, connection, data) {
 }
 
 function cacheDebugSnapshot(data) {
-    if ((!settings?.cacheDebug && !settings?.apiCacheAdapterEnabled) || !MAIN_GENERATION_TYPES.has(data?.type)) return;
+    if (!settings?.cacheDebug || !MAIN_GENERATION_TYPES.has(data?.type)) return;
     const current = store.current();
     const chatId = memoryChatId();
     const expected = chatId && chatId === activeChatId && current.chatId === chatId ? publishedMemoryValue : null;
-    const baseline = persistence.baselines.get(chatId);
-    const reference = expected && freezesInjection(settings) && settings.injectionMode !== INJECTION_MODES.ROLLING
-        && baseline?.authoritative && baseline.revision > 0 && baseline.snapshot?.injectionSnapshot?.value === expected
-        ? { chatId, revision: baseline.revision } : undefined;
     let compatibility;
     if (data && Array.isArray(data.messages)) {
         const reason = settings.injectionMode === 'rolling' ? 'rolling projection refreshed' : current.injectionSnapshot?.reason ?? 'publication changed';
         compatibility = diagnostics.settingsReady(mainRequestKey(chatId, describeApiConnection(data), data),
-            data, expected, reference, reason, settings.cacheDebug);
+            data, expected, undefined, reason, true);
     }
-    if (!settings.cacheDebug) return;
     const snapshot = diagnostics.memory(current, settings, getAssistantMessages(chat).at(-1)?.floor ?? 0);
     snapshot.history = Array.isArray(data?.messages) ? diagnostics.history(current.chatId, data.messages)
         : { unavailable: true, message: '当前 ST 未提供设置事件的 messages' };
     if (Array.isArray(data?.messages)) snapshot.history.assistantMessageCount = data.messages.filter(message => message?.role === 'assistant').length;
-    cacheDebugSequence++;
     reportCacheDebug('main', { snapshot, compatibility, upstream: '未观察到最终上游请求' },
         compatibility?.settingsReady.memory.state === 'changed' || compatibility?.settingsReady.cache.count > 0);
 }
@@ -326,25 +316,15 @@ function observeMainRequest(data, connection) {
     if (!MAIN_GENERATION_TYPES.has(data.type)) return;
     const chatId = memoryChatId();
     const key = mainRequestKey(chatId, connection, data);
-    const { reference, observation, early, report } = diagnostics.browserRequest(key, data, settings.cacheDebug);
-    if (!report) return { reference };
-    const sequence = ++cacheDebugSequence;
+    const { observation, early, report } = diagnostics.browserRequest(key, data, settings.cacheDebug);
+    if (!report) return;
     const previous = early?.report && early.report === cacheDebugState.main?.compatibility ? cacheDebugState.main : null;
     if (Array.isArray(data.messages)) report.browserFetch.assistantMessageCount = data.messages.filter(message => message?.role === 'assistant').length;
     const compatibility = { ...early?.report, ...report };
-    const main = { ...previous, compatibility, serverIngress: '尚未观察；仅启用的服务端适配连接可回传', upstream: '未观察到最终上游请求' };
+    const main = { ...previous, compatibility, upstream: '未观察到最终上游请求' };
     const warning = ['changed', 'ambiguous'].includes(observation.memory.state) || observation.cache.count > 0
         || report.sinceSettingsReady?.some?.(change => REQUEST_CONFLICTS.has(change.kind));
     reportCacheDebug('main', main, warning);
-    return { reference, onIngress(integrity) {
-        if (sequence !== cacheDebugSequence || chatId !== memoryChatId() || runtimeController.signal.aborted) return;
-        const inbound = integrity?.inbound;
-        const changes = inbound ? compareRequests(observation, inbound) : null;
-        const repeat = inbound && early ? diagnostics.repeat(`server:${key}`, inbound, early.expectedHash, early.reason) : null;
-        reportCacheDebug('main', { ...main, serverIngress: integrity ?? '适配器未回传入站诊断', sinceBrowserFetch: changes, serverRepeat: repeat },
-            integrity?.rejected || inbound?.memory.state === 'changed' || inbound?.cache.count > 0
-            || changes?.some(change => REQUEST_CONFLICTS.has(change.kind)));
-    } };
 }
 
 async function prepareInjection() {
@@ -461,7 +441,6 @@ function bindEvents() {
     bindEvent(event_types.CHAT_CHANGED, () => {
         diagnostics.clearPending();
         cacheDebugState = {};
-        cacheDebugSequence++;
         ui?.setCacheDebug(cacheDebugState);
         schedule(() => refreshChatState({ serverLoaded: true }));
     });
@@ -535,7 +514,6 @@ function initialize() {
         updateInjection,
         prepareInjection,
         persistence,
-        apiCacheAdapter,
     });
     if (!ui.mountSettings()) {
         mountObserver = new ui.root.MutationObserver(() => {
@@ -548,7 +526,6 @@ function initialize() {
     }
     ui.bindChatActions();
     apiCacheAdapter.install(window);
-    apiCacheAdapter.probe();
     bindEvents();
     let reconnecting = false;
     onlineHandler = async () => {
@@ -610,7 +587,6 @@ export function onHotUnload() {
     ui?.destroy();
     diagnostics.reset();
     cacheDebugState = {};
-    cacheDebugSequence++;
     activeChatId = null;
     publishedMemoryValue = null;
     ui = undefined;

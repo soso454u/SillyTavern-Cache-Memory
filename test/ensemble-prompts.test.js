@@ -31,13 +31,15 @@ test('plain Summary has a total budget and optional table extraction appears onl
     }
 });
 
-test('mode controls are click buttons above the main menus, and both pages share the same selection', () => {
+test('the settings dialog opens to memory management and groups optional model settings', () => {
     const html = configTemplate();
-    assert.ok(html.indexOf('data-summary-mode') < html.indexOf('data-settings-tab'));
-    assert.equal([...html.matchAll(/data-summary-mode="normal"/g)].length, 2);
-    assert.equal([...html.matchAll(/data-summary-mode="ensemble"/g)].length, 2);
-    assert.doesNotMatch(html, /<select[^>]*data-summary-mode|总结模式（当前聊天）/);
+    assert.deepEqual([...html.matchAll(/data-settings-tab="([^"]+)"/g)].map(match => match[1]),
+        ['manager', 'general', 'api', 'injection', 'prompts']);
+    assert.match(html, /aria-selected="true" data-settings-tab="manager"/);
+    assert.doesNotMatch(html, /data-summary-mode=|API 缓存适配器/);
+    assert.match(html, /<summary>高级生成设置<\/summary>/);
     assert.equal([...html.matchAll(/data-effective-prompt=/g)].length, 4);
+    assert.equal(normalizeSettings({ apiCacheAdapterEnabled: true }).apiCacheAdapterEnabled, false);
 });
 
 function viewportFixture() {
