@@ -1,5 +1,5 @@
-import { INJECTION_MODES } from './defaults.js?v=1.27.28';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.28';
+import { INJECTION_MODES } from './defaults.js?v=1.27.29';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.29';
 import { fnv1a } from './utils.js?v=1.27.16';
 import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
 

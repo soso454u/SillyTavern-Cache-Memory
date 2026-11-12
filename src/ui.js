@@ -1,16 +1,16 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.28';
+import { generationPrompt } from './generation-prompts.js?v=1.27.29';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.28';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.28';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.29';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.29';
 import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.27';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
 import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.26';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
 import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.26';
-import { parseFloorSummary } from './summarizer.js?v=1.27.28';
+import { parseFloorSummary } from './summarizer.js?v=1.27.29';
 import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.26';
 
 import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.26';
@@ -637,7 +637,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.28', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.29', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2174,8 +2174,8 @@ export class CacheMemoryUI {
         const section = this.element('section', 'cache-memory-backfill');
         section.innerHTML = `<div class="cache-memory-batch-heading"><h4>批量处理楼层摘要</h4><p data-backfill-range></p></div>
             <div class="cache-memory-batch-fields">
-                <label>处理模式<select data-backfill-mode><option value="missing-failed">补齐缺失与失败</option><option value="missing">仅补齐缺失</option><option value="failed">仅重试失败</option><option value="selected">重新生成所选楼层</option><option value="all">重生成整个范围</option></select></label>
-                <div class="cache-memory-batch-range" data-backfill-range-fields><label>开始楼层<input type="number" min="1" data-backfill-start></label><label>结束楼层<input type="number" min="1" data-backfill-end></label></div>
+                <label>处理模式<select data-backfill-mode><option value="missing-failed">补齐缺失与失败</option><option value="missing">仅补齐缺失</option><option value="failed">仅重试失败</option><option value="selected">重新生成所选楼层</option><option value="selected-list">重新生成不连续楼层</option><option value="all">重生成并补齐分层</option></select></label>
+                <div class="cache-memory-batch-range" data-backfill-range-fields><label>开始楼层<input type="number" min="1" step="1" data-backfill-start></label><label>结束楼层<input type="number" min="1" step="1" data-backfill-end></label></div>
                 <label data-backfill-selection-field hidden>指定楼层<input type="text" data-backfill-selection placeholder="例如 61–64、66" aria-describedby="cache-memory-selection-hint"><small id="cache-memory-selection-hint">支持单层、范围和组合。仅替换选中的楼层摘要。</small></label>
             </div>
             <div class="cache-memory-actions"><button type="button" class="menu_button cache-memory-primary" data-backfill-action="start">开始补齐</button><button type="button" class="menu_button" data-backfill-action="pause" hidden>暂停</button><button type="button" class="menu_button" data-backfill-action="resume" hidden>继续</button><button type="button" class="menu_button" data-backfill-action="cancel" hidden>停止</button><button type="button" class="menu_button" data-backfill-action="latest">总结最新层</button></div>
@@ -2752,8 +2752,8 @@ export class CacheMemoryUI {
             if (field.type === 'number') field.max = String(latest);
             field.disabled = busy;
         }
-        panel.querySelector('[data-backfill-selection-field]').hidden = mode !== 'selected';
-        panel.querySelector('[data-backfill-range-fields]').hidden = mode === 'selected';
+        panel.querySelector('[data-backfill-selection-field]').hidden = mode !== 'selected-list';
+        panel.querySelector('[data-backfill-range-fields]').hidden = mode === 'selected-list';
         const labels = { running: '处理中', pausing: '当前请求结束后暂停', paused: '已暂停', cancelling: '正在停止', aggregating: '正在生成阶段总结', completed: '已完成', cancelled: '已停止' };
         const status = panel.querySelector('[data-backfill-status]');
         status.hidden = s.status === 'idle';
@@ -2764,7 +2764,7 @@ export class CacheMemoryUI {
         progress.value = s.processed;
         for (const button of panel.querySelectorAll('[data-backfill-action]')) {
             const action = button.dataset.backfillAction;
-            if (action === 'start') button.textContent = mode === 'selected' || mode === 'all' ? '重新生成摘要' : '开始补齐';
+            if (action === 'start') button.textContent = ['selected', 'selected-list', 'all'].includes(mode) ? '重新生成摘要' : '开始补齐';
             if (action === 'pause' || action === 'resume' || action === 'cancel') {
                 button.hidden = action === 'pause' ? s.status !== 'running' : action === 'resume' ? !['paused', 'pausing'].includes(s.status)
                     : !['running', 'pausing', 'paused'].includes(s.status);
@@ -2778,12 +2778,18 @@ export class CacheMemoryUI {
         const chatId = this.store.current().chatId;
         try {
             if (options.mode === 'selected') {
-                const floors = parseFloorSelection(options.selection, getAssistantMessages(this.getChat()).map(entry => entry.floor));
-                const preview = floors.slice(0, 12).join('、') + (floors.length > 12 ? '等' : '');
+                const { startFloor, endFloor, selection } = options;
+                const byRange = selection === undefined;
+                if (byRange && (!Number.isSafeInteger(startFloor) || !Number.isSafeInteger(endFloor) || startFloor < 1 || endFloor < startFloor)) {
+                    throw new Error('请填写有效的开始楼层和结束楼层，结束楼层需大于或等于开始楼层');
+                }
+                const floors = parseFloorSelection(byRange ? `${startFloor}-${endFloor}` : selection, getAssistantMessages(this.getChat()).map(entry => entry.floor));
+                const preview = byRange && startFloor !== endFloor ? `${startFloor} 至 ${endFloor}`
+                    : floors.slice(0, 12).join('、') + (floors.length > 12 ? '等' : '');
                 if (!await this.showPluginDialog({ title: '重新生成所选楼层', message: `将重新生成第 ${preview} 层，共 ${floors.length} 条楼层摘要。已有摘要会被替换，阶段与长期总结保留。`, confirmLabel: '确认重新生成' })) return;
                 options = { ...options, selection: floors.join(',') };
             }
-            if (options.mode === 'all' && !await this.showPluginDialog({ title: '重生成整个范围', message: `将重新生成第 ${options.startFloor} 至 ${options.endFloor} 层的摘要，已有摘要会被替换。`, confirmLabel: '确认重新生成' })) return;
+            if (options.mode === 'all' && !await this.showPluginDialog({ title: '重生成并补齐分层', message: `将重新生成第 ${options.startFloor} 至 ${options.endFloor} 层的摘要，完成后补齐可生成的阶段与长期总结。`, confirmLabel: '确认重新生成' })) return;
             if (chatId !== this.store.current().chatId) return;
             await this.backfill.start(options);
         }
@@ -3262,12 +3268,14 @@ export class CacheMemoryUI {
                 this.renderManager();
                 return;
             }
-            return this.startBackfill(action === 'start' ? {
-                startFloor: Number(this.manager.querySelector('[data-backfill-start]').value),
-                endFloor: Number(this.manager.querySelector('[data-backfill-end]').value),
-                selection: this.manager.querySelector('[data-backfill-selection]').value,
-                mode: this.manager.querySelector('[data-backfill-mode]').value,
-            } : { startFloor: 1, endFloor: latest.floor, mode: action });
+            const panel = batchButton.closest('.cache-memory-backfill');
+            const mode = panel.querySelector('[data-backfill-mode]').value;
+            if (mode === 'selected-list') return this.startBackfill({ mode: 'selected', selection: panel.querySelector('[data-backfill-selection]').value });
+            return this.startBackfill({
+                startFloor: panel.querySelector('[data-backfill-start]').valueAsNumber,
+                endFloor: panel.querySelector('[data-backfill-end]').valueAsNumber,
+                mode,
+            });
         }
         const fill = event.target.closest('[data-fill-missing]');
         if (fill) {

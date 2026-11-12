@@ -53,15 +53,26 @@ try {
     assert('备份、修复和分层操作直接显示', ['[data-export]', '[data-find-recovery]', '[data-audit-open]', '[data-aggregate-start]', '[data-fill-long-memories]']
         .every(selector => get(selector).getClientRects().length > 0 && !get(selector).closest('details')));
     set('[data-backfill-mode]', 'selected');
+    set('[data-backfill-start]', '3');
+    set('[data-backfill-end]', '4');
+    assert('重新生成所选楼层使用开始和结束楼层', !get('[data-backfill-range-fields]').hidden && get('[data-backfill-selection-field]').hidden);
+    click('[data-backfill-action="start"]');
+    assert('确认框显示连续范围及条数', ui.activeDialog.textContent.includes('第 3 至 4 层，共 2 条') && calls.length === 0);
+    click('.cache-memory-modal-panel button[type="submit"]');
+    await settle();
+    assert('连续范围只提交起止之间的摘要', calls.join() === '合成正文 3,合成正文 4');
+    calls.length = 0;
+
+    set('[data-backfill-mode]', 'selected-list');
     set('[data-backfill-selection]', '1、3–4');
-    assert('所选楼层模式只显示指定楼层', get('[data-backfill-range-fields]').hidden && !get('[data-backfill-selection-field]').hidden);
+    assert('不连续楼层模式显示楼层列表', get('[data-backfill-range-fields]').hidden && !get('[data-backfill-selection-field]').hidden);
     ui.renderManager();
     assert('重绘后保留当前批处理选择', get('[data-backfill-selection]').value === '1、3–4' && get('[data-backfill-action="start"]').textContent === '重新生成摘要');
     click('[data-backfill-action="start"]');
     assert('确认框展示所选楼层与条数', ui.activeDialog.textContent.includes('第 1、3、4 层，共 3 条') && calls.length === 0);
     click('.cache-memory-modal-panel button[type="submit"]');
     await settle();
-    assert('批量处理仅提交选中的楼层', calls.join() === '合成正文 1,合成正文 3,合成正文 4' && Object.values(store.current().summaries).map(row => row.floor).join() === '1,3,4');
+    assert('批量处理仅提交选中的楼层', calls.join() === '合成正文 1,合成正文 3,合成正文 4' && Object.values(store.current().summaries).map(row => row.floor).sort().join() === '1,3,4');
 
     const checkpoint = '[CHECKPOINT]\n无\n[Stage Story]\n- 时间：清晨\n守卫到达城门。\n- 时间：正午\n医师前来送药。\n[RESOLVED_KEEP]\n无';
     store.addCheckpoint({ id: 'checkpoint-001', startFloor: 1, endFloor: 5, content: checkpoint, status: 'frozen' });
