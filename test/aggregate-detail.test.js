@@ -28,7 +28,7 @@ test('official aggregate templates upgrade, custom prompts and existing length/t
 });
 
 test('narrative stage sections hide wire markers, preserve paragraphs, and round-trip without adding state tables', () => {
-    for (const content of [cpText, cpText.replace('[CHECKPOINT]\n', ''), cpText.replaceAll('\n', '\r\n')]) {
+    for (const content of [cpText, cpText.replace('[CHECKPOINT]', '[CHECKPOINT]\n无'), cpText.replace('[CHECKPOINT]\n', ''), cpText.replaceAll('\n', '\r\n')]) {
         const fields = parseCheckpointSections(content);
         assert.equal(fields.stageStory.replaceAll('\r\n', '\n'), story);
         assert.deepEqual(Object.keys(fields), ['stageStory']);
@@ -42,9 +42,22 @@ test('narrative stage sections hide wire markers, preserve paragraphs, and round
     const record = { content: cpText, status: 'frozen' }, before = structuredClone(record);
     CacheMemoryUI.prototype.checkpointDisplay.call(ui, body, record);
     const visible = descendants(body).map(node => node.textContent).join('\n');
-    assert.match(visible, /本阶段剧情总结/); assert.ok(visible.includes(story));
+    assert.match(visible, /本阶段剧情总结/);
+    assert.deepEqual(descendants(body).filter(node => node.tag === 'p').map(node => node.textContent), story.split('\n\n'));
     assert.doesNotMatch(visible, /\[CHECKPOINT\]|\[Stage Story\]/);
     assert.deepEqual(record, before);
+});
+
+test('legacy stage previews omit placeholders and internal fields while showing custom prose and scene times', () => {
+    const content = '[CHECKPOINT]\n无\n[Stage Story]\n- 时间：清晨\n旅人到达渡口。\n- 时间：正午\n旅人归还船只。\n[Custom Notes]\n船夫收到谢礼。\n[STATE_RESOLUTIONS]\n[{"value":"内部状态"}]\n[RESOLVED_KEEP]\n内部依据';
+    const record = Object.freeze({ content, status: 'frozen' });
+    const body = new Element('div');
+    CacheMemoryUI.prototype.checkpointDisplay.call({ element: (tag, _class, text) => new Element(tag, text) }, body, record);
+    assert.deepEqual(descendants(body).filter(node => node.tag === 'h5').map(node => node.textContent), ['本阶段剧情总结', 'Custom Notes']);
+    assert.deepEqual(descendants(body).filter(node => node.tag === 'p').map(node => node.textContent),
+        ['时间：清晨', '旅人到达渡口。', '时间：正午', '旅人归还船只。', '船夫收到谢礼。']);
+    assert.equal(parseCheckpointSections(content), null, 'editing a custom format still exposes its original content');
+    assert.equal(record.content, content);
 });
 
 test('stage card editing exposes only the narrative and keeps protocol markers out of the textarea', () => {

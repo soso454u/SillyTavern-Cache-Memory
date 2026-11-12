@@ -50,7 +50,8 @@ try {
         input.value = value;
         input.dispatchEvent(new Event('change', { bubbles: true }));
     };
-    assert('备份和检查默认折叠', [...panel('manager').querySelectorAll('.cache-memory-manager-tools details')].every(section => !section.open));
+    assert('备份、修复和分层操作直接显示', ['[data-export]', '[data-find-recovery]', '[data-audit-open]', '[data-aggregate-start]', '[data-fill-long-memories]']
+        .every(selector => get(selector).getClientRects().length > 0 && !get(selector).closest('details')));
     set('[data-backfill-mode]', 'selected');
     set('[data-backfill-selection]', '1、3–4');
     assert('所选楼层模式只显示指定楼层', get('[data-backfill-range-fields]').hidden && !get('[data-backfill-selection-field]').hidden);
@@ -62,17 +63,36 @@ try {
     await settle();
     assert('批量处理仅提交选中的楼层', calls.join() === '合成正文 1,合成正文 3,合成正文 4' && Object.values(store.current().summaries).map(row => row.floor).join() === '1,3,4');
 
+    const checkpoint = '[CHECKPOINT]\n无\n[Stage Story]\n- 时间：清晨\n守卫到达城门。\n- 时间：正午\n医师前来送药。\n[RESOLVED_KEEP]\n无';
+    store.addCheckpoint({ id: 'checkpoint-001', startFloor: 1, endFloor: 5, content: checkpoint, status: 'frozen' });
+    click('[data-manager-view="checkpoints"]');
+    await settle();
+    const checkpointCard = get('[data-memory-type="checkpoint"]');
+    checkpointCard.querySelector('summary').click();
+    await settle();
+    assert('阶段总结隐藏内部标记，并将场景时间分行显示', !checkpointCard.textContent.includes('[CHECKPOINT]') &&
+        checkpointCard.querySelectorAll('.cache-memory-scene-time').length === 2 && checkpointCard.textContent.includes('医师前来送药。'));
+    assert('读取阶段总结保留原文', store.current().checkpoints[0].content === checkpoint);
+
     click('[data-manager-view="tables"]');
     await settle();
-    assert('关闭自动维护时仍能浏览人物资料', !get('[data-role-tables-toggle]').checked && get('[data-character-table]').disabled && get('.cache-memory-table-records').textContent.includes('守卫'));
+    const tableOptions = [...ui.config.querySelectorAll('[data-character-table]')];
+    assert('每张表的维护开关都在表名正上方', tableOptions.length === 4 && tableOptions.every(input => {
+        const label = input.closest('label');
+        const button = label.nextElementSibling;
+        return button.dataset.viewCharacterTable === input.dataset.characterTable &&
+            label.getBoundingClientRect().bottom <= button.getBoundingClientRect().top;
+    }));
+    assert('关闭自动维护时仍能浏览人物资料', !get('[data-role-tables-toggle]').checked && tableOptions.every(input => input.disabled) && get('.cache-memory-table-records').textContent.includes('守卫'));
     set('[data-character-entity]', '医师');
     assert('按主体筛选角色表格', get('.cache-memory-table-records').textContent.includes('照看病人') && !get('.cache-memory-table-records').textContent.includes('驻守城门'));
     get('[data-role-tables-toggle]').click();
-    assert('角色表格在当前聊天开启且可以勾选分类', store.current().summaryMode === 'advanced' && !get('[data-character-table]').disabled);
+    assert('角色表格在当前聊天开启且可以勾选分类', store.current().summaryMode === 'advanced' && !get('[data-character-table="knowledge"]').disabled);
+    assert('空表可以独立勾选', !get('[data-character-table="knowledge"]').checked);
+    get('[data-character-table="knowledge"]').click();
+    assert('勾选写入对应的表，并保留正在浏览的分类', settings.characterTables.knowledge && get('[data-view-character-table="characters"]').getAttribute('aria-pressed') === 'true');
     click('[data-view-character-table="knowledge"] span');
-    assert('空表可查看并独立选择维护', get('[data-character-table]').dataset.characterTable === 'knowledge' && !get('[data-character-table]').checked);
-    get('[data-character-table]').click();
-    assert('勾选写入所选表设置', settings.characterTables.knowledge);
+    assert('切换表名可查看空表', get('.cache-memory-table-records').textContent.includes('暂无已存资料'));
     get('[data-role-tables-toggle]').click();
     assert('关闭维护保留表选择和人物资料，浏览不发模型请求', store.current().summaryMode === 'normal' && settings.characterTables.knowledge && Object.keys(store.current().stateOverrides).length === 2 && calls.length === 3);
 

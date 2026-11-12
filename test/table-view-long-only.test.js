@@ -44,6 +44,9 @@ test('all four tables have independent view buttons and counts; browsing unselec
     assert.equal(view.attributes['aria-pressed'], 'true');
     assert.deepEqual(view.children.map(node => node.textContent), ['秘密与认知', '1']);
     assert.equal(descendants(ui.rendered).find(node => node.dataset.characterTable === 'knowledge').disabled, true);
+    const choices = descendants(ui.rendered).filter(node => node.children[1]?.dataset.viewCharacterTable);
+    assert.equal(choices.length, 4);
+    assert.ok(choices.every(card => card.children[0].children[0].dataset.characterTable === card.children[1].dataset.viewCharacterTable));
     await ui.handleManagerClick({ target: { closest: selector => selector === '[data-view-character-table]' ? { dataset: { viewCharacterTable: 'relationships' } } : null } });
     assert.match(contents(ui.rendered), /这张表暂无已存资料/);
     assert.deepEqual(data, before); assert.deepEqual(settings, beforeSettings);

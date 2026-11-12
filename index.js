@@ -12,20 +12,20 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.27';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.28';
 import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.17';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.27';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.27';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.28';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.28';
 import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.18';
 import { chatInheritedThrough, getAssistantMessages } from './src/utils.js?v=1.27.16';
 import { MemoryStore } from './src/memory-store.js?v=1.27.26';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.27';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.27';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.28';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.28';
 import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.26';
 import { MemoryServerClient } from './src/memory-server.js?v=1.27.16';
 import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.26';
 import { chatFileIdentity } from './src/chat-file.js?v=1.27.26';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.27';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.28';
 import { memoryContentDigest } from './src/memory-store.js?v=1.27.26';
 
 const LOG_PREFIX = '[Cache Memory]';

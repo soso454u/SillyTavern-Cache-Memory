@@ -50,10 +50,12 @@ test('Long cards expose single-range regeneration for old manually edited record
     const body = bodies[0];
     assert.ok(descendants(body).some(node => node.dataset.managerAction === 'regenerate' && node.textContent === '重新生成本段'));
     assert.ok(descendants(body).some(node => node.textContent.includes('“生成缺失”会跳过已有记录')));
-    f.store.current().longMemories[1].content = story + '\n' + old;
+    f.store.current().longMemories[1].content = old + '\n' + story + '\n[STATE_RESOLUTIONS]\n[{"value":"内部状态"}]\n[自定义附注]\n仍可阅读。';
     bodies.length = 0; CacheMemoryUI.prototype.renderLongMemoryPage.call(context);
     const headings = descendants(bodies[0]).filter(node => node.tag === 'h5').map(node => node.textContent);
     assert.equal(headings[0], '本段剧情大总结'); assert.ok(!headings.includes('已结束的历史事实'));
+    assert.ok(headings.includes('自定义附注'));
+    assert.doesNotMatch(descendants(bodies[0]).map(node => node.textContent).join('\n'), /\[STORY_ARC\]|\[LONG_MEMORY\]|内部状态/);
 });
 
 test('explicit regeneration replaces exactly 51–100 using all current CPs even with missing, stale, or incomplete saved IDs', async () => {

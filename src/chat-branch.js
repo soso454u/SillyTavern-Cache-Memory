@@ -1,8 +1,8 @@
 import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.26';
 import { chatFileIdentity } from './chat-file.js?v=1.27.26';
 import { chatFloorOffset, chatInheritedThrough, getAssistantMessages } from './utils.js?v=1.27.16';
-import { currentInjectionBlocks } from './injection.js?v=1.27.27';
-import { refreshSnapshot } from './cache-control.js?v=1.27.27';
+import { currentInjectionBlocks } from './injection.js?v=1.27.28';
+import { refreshSnapshot } from './cache-control.js?v=1.27.28';
 import { getOpeningSource } from './opening-source.js?v=1.27.16';
 import { isUsableMemory } from './continuity.js?v=1.27.26';
 
