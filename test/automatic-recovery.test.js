@@ -87,7 +87,7 @@ test('translated and Markdown Summary headings recover only explicitly labelled 
         assert.equal(record.event, '医师收下信件。');
         assert.equal(record.open, '寄信人仍不明。');
     }
-    for (const text of ['医师收下信件。', '标题：交信', '剧情：暂无\n**状态增量：** []', '[Event]\n[STATE_RESOLUTIONS]\n[]',
+    for (const text of ['标题：交信', '剧情：暂无\n**状态增量：** []', '[Event]\n[STATE_RESOLUTIONS]\n[]',
         '### Event\n抱歉，我无法完成此请求。', '[Event]\n**暂无**']) {
         assert.throws(() => prepareMemoryResponse(text, 'Summary', { prompt }), { code: 'INVALID_MEMORY_RESPONSE' });
     }
@@ -112,7 +112,7 @@ test('a Summary format error changes the next prompt, preserving the source and 
     assert.ok(requests[2].systemPrompt.startsWith(requests[1].systemPrompt));
     assert.ok(requests.every(request => request.userContent === requests[0].userContent && request.maxTokens === requests[0].maxTokens));
     assert.deepEqual(f.waits, RETRY_DELAYS.slice(0, 2));
-    assert.ok(f.statuses.some(([state, message]) => state === 'busy' && /第 1 层.*缺少可识别的剧情栏/.test(message)));
+    assert.ok(f.statuses.some(([state, message]) => state === 'busy' && /第 1 层.*没有可用的剧情正文/.test(message)));
 });
 
 test('persistent format failures retain existing memory and point to the generation log', async () => {
@@ -126,6 +126,49 @@ test('persistent format failures retain existing memory and point to the generat
     assert.equal(requests.length, 4);
     assert.ok(requests.slice(1).every(request => request.systemPrompt === requests[1].systemPrompt));
     assert.ok(f.statuses.some(([state, message]) => state === 'error' && /第 1 层.*占位词.*生成日志/.test(message)));
+});
+
+test('plain narrative with no Event label is saved on the first attempt and unblocks CP generation', async () => {
+    const f = fixture(5);
+    const prose = '信使交出信件，医师收好后答应天亮前见面。';
+    const complete = f.summarizer.apiClient.complete;
+    f.summarizer.apiClient.complete = async request => {
+        if (request.userContent.startsWith('[PREVIOUS_CONTEXT]')) return complete(request);
+        f.calls.push({ kind: 'Summary', request });
+        return { content: '<think>internal only</think>\n' + prose + '\n[Changes]\n[]' };
+    };
+    for (const entry of getAssistantMessages(f.chat)) {
+        const result = await f.summarizer.summarizeMessage(entry.messageId, { deferAggregates: true });
+        assert.equal(result.event, prose);
+        assert.equal(result.frozen, true);
+        assert.doesNotMatch(result.event, /Changes|internal/);
+    }
+    const cp = await f.summarizer.generateCheckpoint(1, 5);
+    assert.equal(cp.frozen, true);
+    assert.equal(f.calls.filter(call => call.kind === 'Summary').length, 5);
+    assert.deepEqual(f.waits, []);
+    assert.deepEqual(f.summarizer.getMissingMemoryPlan().summaries, []);
+});
+
+test('Summary prose fallback preserves fields and deltas but rejects metadata-only and error responses', () => {
+    const prompt = '[SUMMARY]\n[Event]';
+    const prose = '信使把信交给医师，两人约好明晨会面。';
+    for (const text of [prose, '[SUMMARY]\n' + prose, '<summary>' + prose + '</summary>', '```markdown\n' + prose + '\n```',
+        '[SUMMARY]\n[正文]\n' + prose, JSON.stringify({ summary: prose, Changes: [] }),
+        '[SUMMARY]\n' + prose + '\n[Title]\n交信\n[Changes]\n[]']) {
+        const result = parseFloorSummary(prepareMemoryResponse(text, 'Summary', { prompt }));
+        assert.equal(result.event, prose);
+        assert.equal(result.format, 'structured');
+        if (text.includes('[Title]')) {
+            assert.equal(result.title, '交信');
+            assert.equal(result.changes, '[]');
+        }
+    }
+    for (const text of ['[SUMMARY]\n[Title]\n交信\n[Characters]\n信使、医师', '[Changes]\n[{"value":"信件"}]',
+        '[SUMMARY]\n无', '<think>信使交信。</think>', 'API error: failed', '抱歉，我无法完成此请求。',
+        '{"Title":"交信"}', '{"event":"抱歉，我无法完成此请求。"}', '{"event":"无"}', '[]', '[SUMMARY]\n[Event]\n无\n[State]\n医师收信。']) {
+        assert.throws(() => prepareMemoryResponse(text, 'Summary', { prompt }), { code: 'INVALID_MEMORY_RESPONSE' });
+    }
 });
 
 function screenshotFixture() {

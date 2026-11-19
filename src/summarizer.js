@@ -1,16 +1,16 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.31';
-import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.31';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.31';
-import { generationPrompt } from './generation-prompts.js?v=1.27.31';
+import { isOutputTruncated } from './api-client.js?v=1.27.32';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.32';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.32';
+import { generationPrompt } from './generation-prompts.js?v=1.27.32';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.31';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.32';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.31';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.31';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.31';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.31';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.31';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.32';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.32';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.32';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.32';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.32';
 import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.16';
 import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.16';
 

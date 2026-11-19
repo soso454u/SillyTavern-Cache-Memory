@@ -1,5 +1,5 @@
-import { parseStructuredSummary, stripStructuredSections, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.16';
-import { readSection } from './continuity.js?v=1.27.31';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.16';
+import { readSection } from './continuity.js?v=1.27.32';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
 const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
@@ -20,7 +20,7 @@ const MEMORY_MARKERS = new Map([...SUMMARY_SECTION_NAMES, 'Changes', 'SUMMARY', 
     .map(name => [name.toLowerCase(), name]));
 const SUMMARY_MARKERS = new Map([...SUMMARY_SECTION_NAMES, 'Changes', 'SUMMARY'].map(name => [name.toLowerCase(), name]));
 for (const [name, aliases] of Object.entries({ SUMMARY: ['小总结', '楼层摘要'], Title: ['标题'], Characters: ['人物', '主要人物'],
-    StoryTime: ['story time', '剧情时间', '剧情日期/时间', '时间'], Location: ['地点'], Event: ['events', '剧情', '事件', '剧情梗概', '剧情摘要', '关键事件'],
+    StoryTime: ['story time', '剧情时间', '剧情日期/时间', '时间'], Location: ['地点'], Event: ['events', '剧情', '事件', '剧情梗概', '剧情摘要', '关键事件', '正文', '摘要正文', '总结正文', '事件经过'],
     State: ['状态'], Open: ['未解决事项'], Quote: ['原话'], KEEP: ['不可丢失事项'], Changes: ['状态增量'] })) {
     for (const alias of aliases) SUMMARY_MARKERS.set(alias, name);
 }
@@ -93,6 +93,44 @@ export function summaryRetryInstruction(prompt) {
         : '';
 }
 
+// A missing label is not a missing story. Only recover prose outside metadata
+// sections; titles, state deltas and JSON payloads alone cannot supply an Event.
+function recoverSummaryProse(text) {
+    const blocks = text.split(/^\s*\[SUMMARY\]\s*$/im);
+    const block = blocks.at(-1).trim();
+    const prose = block.split(/^\s*\[[^\]\n]+\]\s*$/m, 1)[0]
+        .replace(/^\s*<(?:summary|content)>\s*/i, '').replace(/\s*<\/(?:summary|content)>\s*$/i, '').trim();
+    const meaningful = prose.split('\n').filter(line => line.trim() && !/^\s*(?:#{1,6}\s|```)/.test(line));
+    if (!meaningful.some(line => hasMemoryValue(line, true) && /[\p{L}\p{N}]/u.test(line)
+        && !/^\s*[\[\]{}<>]/.test(line))) return '';
+    // Data objects without a recognised story property must not become prose.
+    if (/^[\[{]/.test(prose)) return '';
+    return prose;
+}
+
+function summaryFields(text, event) {
+    const fields = Object.fromEntries(SUMMARY_SECTION_NAMES.map(name => [name === 'StoryTime' ? 'storyTime' : name.toLowerCase(), readSection(text, name)]));
+    fields.event = event;
+    const changes = readSection(text, 'Changes');
+    return buildStructuredSummary(fields) + (changes ? '\n[Changes]\n' + changes : '');
+}
+
+function summaryFromJSON(text) {
+    if (!text.startsWith('{')) return text;
+    let data;
+    try { data = JSON.parse(text); } catch { return text; }
+    if (!data || Array.isArray(data)) return text;
+    const fields = {};
+    for (const [key, value] of Object.entries(data)) {
+        const name = SUMMARY_MARKERS.get(key.toLowerCase());
+        if (!name) continue;
+        if (name === 'Changes' && Array.isArray(value)) fields.changes = JSON.stringify(value);
+        else if (typeof value === 'string') fields[name === 'SUMMARY' ? 'event' : name === 'StoryTime' ? 'storyTime' : name.toLowerCase()] = value;
+    }
+    if (!fields.event) return text;
+    return buildStructuredSummary(fields) + (fields.changes ? '\n[Changes]\n' + fields.changes : '');
+}
+
 export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } = {}) {
     const summary = kind === 'Summary';
     const raw = String(value ?? '');
@@ -100,6 +138,7 @@ export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } 
     if (summary && /\[(?:SUMMARY|Event)\]/i.test(prompt) && !/^\s*\[Event\]\s*$/im.test(text) && !/<event>/i.test(text)) {
         text = cleanGeneratedResponse(normalizeMemoryMarkers(raw, true), source);
     }
+    if (summary) text = cleanGeneratedResponse(summaryFromJSON(text), source);
     const fail = () => { throw Object.assign(new Error(`${kind} 响应缺少有效剧情字段，原记忆保留`), { code: 'INVALID_MEMORY_RESPONSE' }); };
     if (!text) throw Object.assign(new Error(`${kind} 输出为空或仅含拒绝/思考内容，原记忆保留`), { code: 'INVALID_MEMORY_RESPONSE' });
     if (summary) {
@@ -116,7 +155,11 @@ export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } 
         }
         const event = text.match(/<event>\s*([\s\S]*?)\s*<\/event>/i)?.[1];
         if (event !== undefined) { if (!hasMemoryValue(event, true)) return failSummary('的 <event> 剧情栏为空或只有占位词'); return text; }
-        if (/\[(?:SUMMARY|Event)\]|<event>/i.test(text + '\n' + prompt)) return failSummary('缺少可识别的剧情栏');
+        if (/\[(?:SUMMARY|Event)\]|<event>/i.test(text + '\n' + prompt)) {
+            const prose = recoverSummaryProse(text);
+            if (prose && !/\[Event\]|<event>/i.test(text)) return summaryFields(text, prose);
+            return failSummary('没有可用的剧情正文');
+        }
         if (!hasMemoryValue(stripStructuredSections(text, ['Changes']), true)) return failSummary('没有可用剧情');
     } else if (kind === 'Checkpoint') {
         const fields = CHECKPOINT_FIELDS.map(name => readSection(text, name));

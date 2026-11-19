@@ -1,6 +1,6 @@
-import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.31';
-import { isUsableMemory } from './continuity.js?v=1.27.31';
-import { summaryVersionMatches } from './memory-store.js?v=1.27.31';
+import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.32';
+import { isUsableMemory } from './continuity.js?v=1.27.32';
+import { summaryVersionMatches } from './memory-store.js?v=1.27.32';
 import { getAssistantMessages, isNormalAssistant, messageFingerprint, messageIdentity } from './utils.js?v=1.27.16';
 import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.16';
 
