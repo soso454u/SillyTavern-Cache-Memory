@@ -1,4 +1,4 @@
-import { normalizeOutputLimits, normalizeOutputTokenLimit } from './defaults.js?v=1.27.34';
+import { normalizeOutputLimits, normalizeOutputTokenLimit } from './defaults.js?v=1.27.35';
 
 export const API_PROFILE_FIELDS = Object.freeze(['apiBaseUrl', 'model', 'temperature', 'thinkingMode', 'summaryMaxTokens', 'checkpointMaxTokens', 'longMemoryMaxTokens', 'maxTokens', 'outputLimitVersion', 'limitOutputTokens', 'tokenLimitParameter', 'generationTransport']);
 
@@ -53,7 +53,7 @@ function isExplicitStreamUnsupported(error) {
         && /(?:stream(?:ing)?[^\n]{0,40}(?:unsupported|not supported|invalid|unknown|unavailable|not allowed)|(?:unsupported|not supported|invalid|unknown)[^\n]{0,40}stream)/i.test(error?.message ?? '');
 }
 
-export async function readOpenAISse(response, { signal, onFirstChunk = () => {}, onContent, allowJson = false } = {}) {
+export async function readOpenAISse(response, { signal, onFirstChunk = () => {}, onContent, onRaw, allowJson = false } = {}) {
     if (!response?.body?.getReader) throw new Error('流式响应没有可读取的 body');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -118,10 +118,14 @@ export async function readOpenAISse(response, { signal, onFirstChunk = () => {},
             const { done, value } = await reader.read();
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             if (done) break;
-            buffer += decoder.decode(value, { stream: true });
+            const decoded = decoder.decode(value, { stream: true });
+            try { onRaw?.(decoded); } catch { /* Raw tracing is observational. */ }
+            buffer += decoded;
             consumeBuffer();
         }
-        buffer += decoder.decode();
+        const final = decoder.decode();
+        try { onRaw?.(final); } catch { /* Raw tracing is observational. */ }
+        buffer += final;
         consumeBuffer(true);
         if (streamDone) await reader.cancel();
         return mode === 'json' ? { raw: buffer } : { content, reasoning, finishReason, eventCount };
@@ -212,6 +216,21 @@ function safeText(value, apiKey, maxLength = 500) {
     }
     text = text.replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [REDACTED]');
     return text.slice(0, maxLength);
+}
+
+function safeLogText(value, secrets) {
+    return safeText(value, secrets, Infinity).replace(
+        /("(?:authorization|proxy-authorization|api[_-]?key|x-api-key|access_token|refresh_token|csrf[_-]?token|x-csrf-token|cookie|set-cookie|password|passwd|client_secret)"\s*:\s*)"(?:\\.|[^"\\])*"/gi,
+        '$1"[REDACTED]"');
+}
+
+function safeLogValue(value, secrets) {
+    if (typeof value === 'string') return safeLogText(value, secrets);
+    if (Array.isArray(value)) return value.map(item => safeLogValue(item, secrets));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+        /^(?:authorization|proxy-authorization|api[_-]?key|x-api-key|access_token|refresh_token|csrf[_-]?token|x-csrf-token|cookie|set-cookie|password|passwd|client_secret)$/i.test(key)
+            ? '[REDACTED]' : safeLogValue(item, secrets)]));
 }
 
 function errorText(error) {
@@ -513,9 +532,9 @@ export class SummaryApiClient {
         finally { control?.cleanup(); this.responseControls.delete(response); }
     }
 
-    async consumeSse(response, onFirstChunk, onContent) {
+    async consumeSse(response, onFirstChunk, onContent, onRaw) {
         const control = this.responseControls.get(response);
-        try { return await readOpenAISse(response, { signal: control?.signal, onFirstChunk, onContent, allowJson: true }); }
+        try { return await readOpenAISse(response, { signal: control?.signal, onFirstChunk, onContent, onRaw, allowJson: true }); }
         catch (error) { throw control?.translate(error) ?? error; }
         finally { control?.cleanup(); this.responseControls.delete(response); }
     }
@@ -555,7 +574,7 @@ export class SummaryApiClient {
     }
 
     // Models, test and every generation share live ST headers, URL normalization and diagnostics.
-    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '', signal, connection, onContent } = {}) {
+    async requestOpenAICompatible({ kind = 'completion', payload, apiKeyOverride = '', signal, connection, onContent, onTrace } = {}) {
         const settings = connection?.settings ?? { ...this.getSettings() };
         const startedAt = now();
         const stream = kind === 'completion' && payload?.stream === true;
@@ -563,6 +582,12 @@ export class SummaryApiClient {
         const endpoint = kind === 'models' ? normalizeModelsUrl(settings.apiBaseUrl) : normalizeBaseUrl(settings.apiBaseUrl);
         const path = kind === 'models' ? ST_MODELS_PROXY_PATH : ST_GENERATE_PROXY_PATH;
         const secrets = [apiKey];
+        const logSecrets = [apiKey];
+        const trace = (type, detail = {}) => {
+            if (!onTrace) return;
+            try { onTrace(safeLogValue({ type, ...detail }, logSecrets)); }
+            catch { /* Diagnostics must never change the request or response. */ }
+        };
         const diagnostics = {
             endpoint: safeText(safeUrl(endpoint), secrets, Infinity), direct: '已禁用', directBody: '',
             directException: '', suspectedCors: false, proxy: '未请求', proxyEndpoint: path,
@@ -606,12 +631,30 @@ export class SummaryApiClient {
             diagnostics.proxy = `HTTP ${response.status}`;
             diagnostics.proxyEndpoint = safeText(safeUrl(response.url || diagnostics.proxyEndpoint), secrets, Infinity);
             diagnostics.contentType = responseContentType(response) || '未提供';
+            const responseHeaders = {};
+            response.headers?.forEach?.((value, name) => {
+                responseHeaders[name] = /auth|cookie|token|key|secret/i.test(name) ? '[REDACTED]' : value;
+            });
+            let rawResponse = '', liveContent = '';
+            const reportBody = body => trace('response-body', { body, status: response.status,
+                statusText: response.statusText, contentType: diagnostics.contentType, headers: responseHeaders });
+            const reportResult = (data, streamed = false) => trace('response', { text: String(data?.choices?.[0]?.message?.content
+                ?? data?.choices?.[0]?.text ?? data?.content?.[0]?.text ?? data?.response ?? ''), reasoning: chunkParts(data).reasoning,
+                finishReason: data?.choices?.[0]?.finish_reason, stream: streamed, requestedStream: stream,
+                status: response.status, totalMs: diagnostics.totalMs });
             let raw;
             if (kind === 'completion' && response.ok && response.body?.getReader) {
                 let streamed;
                 try {
-                    streamed = await this.consumeSse(response, () => { diagnostics.ttfcMs ??= elapsed(startedAt); }, onContent);
+                    streamed = await this.consumeSse(response, () => { diagnostics.ttfcMs ??= elapsed(startedAt); }, text => {
+                        if (onTrace) {
+                            liveContent += text;
+                            trace('chunk', { text: liveContent, replace: true });
+                        }
+                        try { onContent?.(text); } catch { /* Observers cannot interrupt the stream. */ }
+                    }, text => { if (onTrace) rawResponse += text; });
                 } catch (error) {
+                    reportBody(rawResponse);
                     diagnostics.proxyException = safeText(errorText(error), secrets);
                     const status = error.status ?? response.status;
                     if (error.status) diagnostics.upstream = `HTTP ${error.status}`;
@@ -619,6 +662,7 @@ export class SummaryApiClient {
                 }
                 if (streamed.raw !== undefined) raw = streamed.raw;
                 else {
+                    reportBody(rawResponse);
                     diagnostics.totalMs = elapsed(startedAt);
                     diagnostics.upstream = 'HTTP 200';
                     console.info('[Cache Memory] response diagnostics:', {
@@ -626,17 +670,24 @@ export class SummaryApiClient {
                         ttfbMs: diagnostics.ttfbMs, ttfcMs: diagnostics.ttfcMs, totalMs: diagnostics.totalMs,
                         sseEvents: streamed.eventCount, contentChars: streamed.content.length, reasoningChars: streamed.reasoning.length,
                     });
+                    const data = { choices: [{ message: { content: streamed.content, reasoning_content: streamed.reasoning }, finish_reason: streamed.finishReason }] };
+                    reportResult(data, true);
                     return {
-                        data: { choices: [{ message: { content: streamed.content, reasoning_content: streamed.reasoning }, finish_reason: streamed.finishReason }] },
+                        data,
                         response, diagnostics, source: 'proxy', streamed: true,
                     };
                 }
             }
             if (raw === undefined) {
                 try { raw = await this.consumeText(response); }
-                catch (error) { diagnostics.proxyException = safeText(errorText(error), secrets); throw fail(error.message, error.code, response.status); }
+                catch (error) {
+                    reportBody(rawResponse);
+                    diagnostics.proxyException = safeText(errorText(error), secrets);
+                    throw fail(error.message, error.code, response.status);
+                }
             }
             diagnostics.totalMs = elapsed(startedAt);
+            reportBody(raw);
             diagnostics.proxyBody = safeText(raw, secrets);
             const proxyRouteMissing = response.status === 405
                 || /Cannot POST\s+\/api\/backends\/chat-completions\/(status|generate)/i.test(raw);
@@ -667,11 +718,15 @@ export class SummaryApiClient {
                 transport: diagnostics.transport, stream, http: response.status, contentType: diagnostics.contentType,
                 ttfbMs: diagnostics.ttfbMs, ttfcMs: diagnostics.ttfcMs, totalMs: diagnostics.totalMs,
             });
+            reportResult(data);
             return { data, response, diagnostics, source: 'proxy' };
         };
         const { root, headers } = context;
         // Header values never enter a diagnostic. Include all returned values in the redactor.
         secrets.push(...headers.values());
+        for (const [name, value] of headers) {
+            if (!/^(?:accept(?:-.*)?|content-type|content-length|origin|referer|user-agent|cache-control|pragma|x-requested-with|sec-.*)$/i.test(name)) logSecrets.push(value);
+        }
         diagnostics.proxyEndpoint = safeText(safeUrl(new URL(path, root.location?.href || root.location?.origin).toString()), secrets, Infinity);
         const customBody = Object.fromEntries(Object.entries(payload ?? {})
             .filter(([key, value]) => !ST_NATIVE_BODY_KEYS.has(key) && value !== undefined));
@@ -686,6 +741,8 @@ export class SummaryApiClient {
                 ...(Object.keys(customBody).length ? { custom_include_body: JSON.stringify(customBody) } : {}),
             } : {}),
         };
+        trace('request', { endpoint: diagnostics.endpoint, proxyEndpoint: diagnostics.proxyEndpoint,
+            payload: JSON.stringify({ ...proxyPayload, custom_url: safeUrl(proxyPayload.custom_url), custom_include_headers: '[REDACTED]' }, null, 2) });
         let response;
         try {
             response = await this.fetchResponse(path, {
@@ -709,10 +766,18 @@ export class SummaryApiClient {
             ? request.transportMode
             : settings.generationTransport ?? 'auto';
         const report = (type, detail = {}) => {
-            try { request.onGeneration?.({ type, ...detail }); } catch { /* Observers cannot affect generation. */ }
+            try { request.onGeneration?.(safeLogValue({ type, ...detail }, [connection.key])); } catch { /* Observers cannot affect generation. */ }
         };
-        const send = payload => this.requestOpenAICompatible({ payload, signal: request.signal, connection,
-            onContent: text => report('chunk', { text }) });
+        const send = async payload => {
+            try {
+                return await this.requestOpenAICompatible({ payload, signal: request.signal, connection,
+                    onTrace: request.onGeneration ? event => report(event.type, event) : undefined });
+            } catch (error) {
+                report('request-error', { message: safeLogText(error.message, [connection.key]), code: error.code,
+                    status: error.status, diagnostics: error.diagnostics });
+                throw error;
+            }
+        };
         const run = async stream => {
             report('transport', { stream });
             const attemptPayload = { ...payload, stream };
@@ -739,8 +804,6 @@ export class SummaryApiClient {
         const { data, response, diagnostics, source } = result;
         const content = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text
             ?? data?.content?.[0]?.text ?? data?.response ?? '';
-        report('response', { stream: result.streamed === true, requestedStream: diagnostics.stream,
-            status: response.status, totalMs: diagnostics.totalMs, text: String(content) });
         if (!String(content).trim()) {
             const truncated = isOutputTruncated(data?.choices?.[0]?.finish_reason);
             const error = new Error(truncated ? '模型接口报告输出达到 token 上限，尚未返回可用正文' : 'API 返回成功，但没有可用文本');
@@ -748,6 +811,7 @@ export class SummaryApiClient {
             error.category = 'invalid_response';
             error.status = response.status;
             error.diagnostics = diagnostics;
+            report('request-error', { message: error.message, code: error.code, status: error.status, diagnostics });
             throw error;
         }
         return { content: String(content).trim(), reasoning: String(data?.choices?.[0]?.message?.reasoning_content ?? ''),

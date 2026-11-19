@@ -1,7 +1,7 @@
 import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages } from './utils.js?v=1.27.16';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.34';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.34';
-import { isRejectedSummary } from './response-quality.js?v=1.27.34';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.35';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.35';
+import { isRejectedSummary } from './response-quality.js?v=1.27.35';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {

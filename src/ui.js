@@ -1,21 +1,20 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.34';
+import { generationPrompt } from './generation-prompts.js?v=1.27.35';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.34';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.34';
-import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.34';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.35';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.35';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.35';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.34';
-import { cleanGeneratedResponse } from './response-cleanup.js?v=1.27.34';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.35';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.34';
-import { parseFloorSummary } from './summarizer.js?v=1.27.34';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.34';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.35';
+import { parseFloorSummary } from './summarizer.js?v=1.27.35';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.35';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.34';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.34';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.35';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.35';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -528,8 +527,8 @@ export function configTemplate() {
                                 <label>生成传输<select data-setting="generationTransport"><option value="${GENERATION_TRANSPORTS.AUTO}">自动（推荐，优先流式）</option><option value="${GENERATION_TRANSPORTS.STREAM}">流式</option><option value="${GENERATION_TRANSPORTS.NON_STREAM}">非流式</option></select></label>
                                 <details class="cache-memory-generation-log">
                                     <summary>生成日志</summary>
-                                    <p class="cache-memory-help">显示当前聊天最近六次记忆生成。流式响应会逐段更新，日志随聊天切换清空。</p>
-                                    <button type="button" class="menu_button" data-clear-generation-log>清空日志</button>
+                                    <p class="cache-memory-help">完整记录当前聊天最近六次生成的发送请求、原始响应、接口返回的思考内容和错误，密钥与认证信息脱敏。每次实际发送分别保留；日志只在当前页面，随聊天切换清空。</p>
+                                    <button type="button" class="menu_button" data-export-generation-log>下载完整日志</button><button type="button" class="menu_button" data-clear-generation-log>清空日志</button>
                                     <pre data-generation-log aria-label="记忆生成日志">暂无生成记录</pre>
                                 </details>
                                 <label>思考模式<select data-setting="thinkingMode"><option value="${THINKING_MODES.DISABLED}">关闭思考（推荐）</option><option value="${THINKING_MODES.AUTO}">自动</option><option value="${THINKING_MODES.ENABLED}">开启思考</option></select></label>
@@ -646,7 +645,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.34', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.35', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -818,32 +817,43 @@ export class CacheMemoryUI {
         this.renderGenerationLog();
     }
 
-    recordGeneration({ type, chatId, label, text, stream, requestedStream, status, totalMs, parameterRetry, waitMs, attempt, maxRetries }) {
+    recordGeneration({ type, chatId, label, text, stream, requestedStream, status, totalMs, parameterRetry, waitMs, attempt, maxRetries,
+        endpoint, proxyEndpoint, payload, body, headers, contentType, statusText, reasoning, finishReason, message, code, diagnostics, replace }) {
         if (this.destroyed || chatId !== this.store.current().chatId) return;
         if (chatId !== this.generationLogChatId) this.clearGenerationLog(chatId);
         let entry = this.generationLog.findLast(item => item.label === label);
         if (type === 'start' || !entry) {
-            entry = { label, time: new Date().toLocaleTimeString(), events: ['开始生成'], output: '', clipped: false };
+            entry = { label, time: new Date().toLocaleTimeString(), events: ['开始生成'], output: '', attempts: [] };
             this.generationLog.push(entry);
             if (this.generationLog.length > 6) this.generationLog.shift();
         }
         if (type === 'transport') {
-            if (parameterRetry) entry.output = '';
             entry.events.push(parameterRetry ? '更换输出上限参数后重发' : stream ? '请求流式传输' : '请求非流式传输');
         }
         if (type === 'fallback') {
-            entry.output = '';
             entry.events.push('接口拒绝流式请求，回退到非流式');
         }
-        if (type === 'chunk' || type === 'response') {
-            const output = type === 'chunk' ? entry.output + text : text;
-            entry.clipped ||= output.length > 12000;
-            entry.output = output.slice(0, 12000);
+        if (type === 'request') entry.attempts.push({ endpoint, proxyEndpoint, payload, output: '' });
+        let sent = entry.attempts.at(-1);
+        if (!sent && ['chunk', 'response', 'response-body', 'request-error'].includes(type)) {
+            sent = { output: '' }; entry.attempts.push(sent);
         }
-        if (type === 'response') entry.events.push(`${stream ? '收到流式响应' : requestedStream ? '接口返回整段 JSON' : '收到非流式响应'} · HTTP ${status} · ${totalMs} ms`);
+        if (type === 'chunk' || type === 'response') {
+            sent.output = type === 'chunk' && !replace ? sent.output + (text ?? '') : text ?? '';
+            entry.output = sent.output;
+        }
+        if (type === 'response-body') Object.assign(sent, { body, headers, contentType, status, statusText });
+        if (type === 'request-error') {
+            sent.error = { message, code, status, diagnostics };
+            entry.events.push(`请求失败：${message}`);
+        }
+        if (type === 'response') {
+            Object.assign(sent, { reasoning, finishReason, stream, status, totalMs });
+            entry.events.push(`${stream ? '收到流式响应' : requestedStream ? '接口返回整段 JSON' : '收到非流式响应'} · HTTP ${status} · ${totalMs} ms`);
+        }
         if (type === 'validated') entry.events.push('记忆格式已通过检查');
-        if (type === 'retry') entry.events.push(`本次生成未通过，${waitMs / 1000} 秒后重试 ${attempt}/${maxRetries}`);
-        if (type === 'failed') entry.events.push('生成未完成');
+        if (type === 'retry') entry.events.push(`本次生成未通过，${waitMs / 1000} 秒后重试 ${attempt}/${maxRetries}${message ? '：' + message : ''}`);
+        if (type === 'failed') entry.events.push(`生成未完成${message ? '：' + message : ''}`);
         if (type === 'saved') entry.events.push('记忆已保存');
         if (type === 'save-pending') entry.events.push('保存尚未确认');
         if (this.generationLogFrame != null) return;
@@ -853,15 +863,27 @@ export class CacheMemoryUI {
         });
     }
 
+    generationLogText() {
+        return this.generationLog.map(entry => [`[${entry.time}] ${entry.label}`, entry.events.join(' · '),
+            ...entry.attempts.map((sent, index) => [
+                `── 实际请求 ${index + 1} ──`, sent.endpoint ? `模型接口：${sent.endpoint}` : '',
+                sent.proxyEndpoint ? `酒馆代理：${sent.proxyEndpoint}` : '',
+                '[发送请求 JSON（插件 → 酒馆代理）]', sent.payload ?? '没有捕获到发送记录',
+                '[响应状态与响应头]', JSON.stringify({ status: sent.status, statusText: sent.statusText,
+                    contentType: sent.contentType, headers: sent.headers, finishReason: sent.finishReason, totalMs: sent.totalMs }, null, 2),
+                '[接口原始响应（JSON / SSE）]', sent.body ?? '尚未收到完整响应',
+                sent.reasoning ? '[接口返回的思考内容]\n' + sent.reasoning : '',
+                sent.output ? '[模型正文（未经剧情清理）]\n' + sent.output : '',
+                sent.error ? '[请求错误]\n' + JSON.stringify(sent.error, null, 2) : '',
+            ].filter(Boolean).join('\n')),
+        ].filter(Boolean).join('\n')).join('\n\n') || '暂无生成记录';
+    }
+
     renderGenerationLog(scope = this.config) {
         const panel = scope?.querySelector('[data-generation-log]');
         if (!panel || !panel.closest('details')?.open) return;
         const follow = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 24;
-        panel.textContent = this.generationLog.map(entry => {
-            const output = cleanGeneratedResponse(entry.output.replace(/<[^>]*$/u, ''));
-            return [`[${entry.time}] ${entry.label}`, entry.events.join(' · '), output,
-                entry.clipped ? '日志预览已达到显示上限' : ''].filter(Boolean).join('\n');
-        }).join('\n\n') || '暂无生成记录';
+        panel.textContent = this.generationLogText();
         if (follow) panel.scrollTop = panel.scrollHeight;
     }
 
@@ -1212,6 +1234,10 @@ export class CacheMemoryUI {
             this.markSettingsDirty();
         }, { signal: this.controller.signal });
         root.addEventListener('click', async event => {
+            if (event.target.closest('[data-export-generation-log]')) {
+                downloadText(`cache-memory-generation-log-${Date.now()}.txt`, this.generationLogText(), 'text/plain;charset=utf-8', this.doc);
+                return;
+            }
             if (event.target.closest('[data-clear-generation-log]')) {
                 this.clearGenerationLog();
                 return;

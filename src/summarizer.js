@@ -1,17 +1,17 @@
 import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.34';
-import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.34';
-import { isRejectedSummary } from './response-quality.js?v=1.27.34';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.34';
-import { generationPrompt } from './generation-prompts.js?v=1.27.34';
+import { isOutputTruncated } from './api-client.js?v=1.27.35';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.35';
+import { isRejectedSummary } from './response-quality.js?v=1.27.35';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.35';
+import { generationPrompt } from './generation-prompts.js?v=1.27.35';
 import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.34';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.35';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.34';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.34';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.34';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.34';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.34';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.35';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.35';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.35';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.35';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.35';
 import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.16';
 import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.16';
 
@@ -224,11 +224,11 @@ export class MemorySummarizer {
         }, { signal: request.signal, assertActive, delay: retryDelay,
             onRetry: info => {
                 needsFormatReminder ||= Boolean(formatRetry && info.error.code === 'INVALID_MEMORY_RESPONSE');
-                report({ type: 'retry', waitMs: info.waitMs, attempt: info.attempt, maxRetries: info.maxRetries });
+                report({ type: 'retry', waitMs: info.waitMs, attempt: info.attempt, maxRetries: info.maxRetries, message: info.error.message });
                 this.onStatus('busy', `${label}：${info.error.message}；${info.waitMs / 1000} 秒后重试（${info.attempt}/${info.maxRetries}）`);
                 onRetry(info);
             } }).catch(error => {
-                report({ type: 'failed' });
+                report({ type: 'failed', message: error.message });
                 throw error;
             });
         this.unsavedResponses.set(key, result);

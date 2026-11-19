@@ -263,9 +263,10 @@ test('SSE chunks are joined across transport boundaries; reasoning-only chunks a
     const progress = [];
     const result = await client.complete({ systemPrompt: '只返回摘要', userContent: '私密正文',
         onGeneration: event => { progress.push(event); if (event.type === 'chunk') throw new Error('模拟日志区已卸载'); } });
-    assert.deepEqual(progress.map(event => event.type), ['transport', 'chunk', 'chunk', 'response']);
-    assert.deepEqual(progress.filter(event => event.type === 'chunk').map(event => event.text), ['[SUMMARY]\n', '[Event]\n事实']);
-    assert.doesNotMatch(JSON.stringify(progress), /内部思考|先分析|private-ark-key|私密正文/);
+    assert.deepEqual(progress.map(event => event.type), ['transport', 'request', 'chunk', 'chunk', 'response-body', 'response']);
+    assert.deepEqual(progress.filter(event => event.type === 'chunk').map(event => event.text), ['[SUMMARY]\n', '[SUMMARY]\n[Event]\n事实']);
+    assert.doesNotMatch(JSON.stringify(progress), /private-ark-key|csrf-1/);
+    assert.match(JSON.stringify(progress), /私密正文|内部思考|先分析/);
     assert.equal(result.content, '[SUMMARY]\n[Event]\n事实');
     assert.equal(result.reasoning, '先分析内部思考');
     assert.equal(result.finishReason, 'stop');
@@ -300,7 +301,7 @@ test('auto transport falls back once only for an explicit unsupported-stream 4xx
     };
     const progress = [];
     const result = await client.complete({ userContent: 'body', onGeneration: event => progress.push(event) });
-    assert.deepEqual(progress.map(event => event.type), ['transport', 'fallback', 'transport', 'response']);
+    assert.deepEqual(progress.map(event => event.type), ['transport', 'request', 'response-body', 'request-error', 'fallback', 'transport', 'request', 'response-body', 'response']);
     assert.equal(progress.at(-1).stream, false);
     assert.equal(progress.at(-1).text, 'fallback ok');
     assert.equal(result.content, 'fallback ok');
