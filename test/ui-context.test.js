@@ -191,7 +191,7 @@ test('Long Memory inline save uses the existing store edit path and keeps its ca
     assert.equal(calls[1][2].content, '完整旧格式正文\n[Extra]\n独有信息');
 });
 
-test('mobile modal geometry stays fixed through keyboard pan, Android layout shrink and delayed blur', () => {
+test('mobile modal geometry fits keyboard pan, Android layout shrink and delayed blur', () => {
     const vvListeners = {}, overlayListeners = {}, frames = new Map(); let sequence = 0;
     const vv = { width: 390, height: 844, offsetLeft: 0, offsetTop: 0,
         addEventListener: (name, fn) => { vvListeners[name] = fn; }, removeEventListener: name => { delete vvListeners[name]; } };
@@ -207,18 +207,18 @@ test('mobile modal geometry stays fixed through keyboard pan, Android layout shr
     vv.height = 400; vv.offsetTop = 38;
     for (let n = 0; n < 30; n++) vvListeners.resize();
     assert.equal(frames.size, 1); const frame = [...frames.values()][0]; frames.clear(); frame();
-    assert.equal(style.height, '844px'); assert.equal(style.top, '0px'); assert.equal(overlay.dataset.keyboardOpen, 'true'); assert.ok(scroller.scrollTop > 0);
-    // Android may shrink the layout viewport too; this must not resize either window.
+    assert.equal(style.height, '400px'); assert.equal(style.top, '38px'); assert.equal(overlay.dataset.keyboardOpen, 'true'); assert.ok(scroller.scrollTop > 0);
+    // Android can shrink the layout viewport too; use the current visible area.
     root.innerHeight = 400; vv.offsetTop = 0; vvListeners.resize(); [...frames.values()][0](); frames.clear();
-    assert.equal(style.height, '844px'); assert.equal(style.top, '0px');
+    assert.equal(style.height, '400px'); assert.equal(style.top, '0px');
     root.document.activeElement = null; overlayListeners.focusout(); [...frames.values()][0](); frames.clear();
-    assert.equal(style.height, '844px'); // Blur can arrive before keyboard dismissal.
+    assert.equal(style.height, '400px'); // Blur can arrive before keyboard dismissal.
     root.innerHeight = vv.height = 844; root.document.activeElement = null; overlayListeners.focusout(); [...frames.values()][0](); frames.clear();
     assert.equal(style.height, '844px'); assert.equal(overlay.dataset.keyboardOpen, 'false');
     dispose(); assert.equal(Object.keys(vvListeners).length, 0); assert.equal(Object.keys(overlayListeners).length, 0);
 });
 
-test('main mobile settings keeps its height when keyboard opens and scrolls only content', () => {
+test('main mobile settings fits above the keyboard and scrolls only plugin content', () => {
     const listeners = {}, frames = [];
     const vv = { width:390, height:844, offsetLeft:0, offsetTop:0, addEventListener(n,f){ listeners[n]=f; }, removeEventListener(n){ delete listeners[n]; } };
     const scroller = { scrollTop:0, getBoundingClientRect(){return {top:0,bottom:844};}, querySelector(){return {getBoundingClientRect(){return {bottom:55};}};} };
@@ -235,14 +235,14 @@ test('main mobile settings keeps its height when keyboard opens and scrolls only
     assert.equal(style.height,'844px');
     root.document.activeElement = input; vv.height = 400; vv.offsetTop = 38;
     listeners.resize(); frames.shift()();
-    assert.equal(style.height,'844px');
+    assert.equal(style.height,'400px');
     assert.equal(style['--cm-keyboard-inset'],'444px');
     assert.equal(overlay.dataset.keyboardOpen,'true');
     assert.ok(scroller.scrollTop > 0);
     stop();
 });
 
-test('mobile main settings never repositions on focus, keyboard pan or partial viewport resize', () => {
+test('mobile main settings follow browser chrome, keyboard pan and dismissal', () => {
     const listeners = {}, frames = [], rootHandlers = {}, overlayHandlers = {};
     const vv = { width:390, height:844, offsetLeft:0, offsetTop:0,
         addEventListener(k,fn){listeners[k]=fn;}, removeEventListener(k){delete listeners[k];} };
@@ -264,10 +264,10 @@ test('mobile main settings never repositions on focus, keyboard pan or partial v
     root.document.activeElement = input; overlayHandlers.focusin(); frames.shift()();
     assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
     vv.height = 760; vv.offsetTop = 22; listeners.resize(); frames.shift()();
-    assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
+    assert.equal(style.top, '22px'); assert.equal(style.height, '760px');
     vv.height = 390; vv.offsetTop = 87; listeners.scroll(); frames.shift()();
     assert.equal(overlay.dataset.keyboardOpen,'true');
-    assert.deepEqual({top:style.top,left:style.left,width:style.width,height:style.height},initial);
+    assert.equal(style.top, '87px'); assert.equal(style.height, '390px');
     assert.equal(style['--cm-keyboard-inset'],'454px');
     assert.ok(scroller.scrollTop > 0);
     root.document.activeElement = null; vv.height = 844; vv.offsetTop = 0;
@@ -288,7 +288,7 @@ test('initial pixel dimensions lock once and do not overwrite a later manual siz
     assert.equal(panel.style.height, '480px'); assert.equal(reads, 1);
 });
 
-test('focusing a child dialog never shrinks the parent; closing it before keyboard dismissal also keeps both dimensions', () => {
+test('mobile parent and child dialogs fit the same visible area and restore independently', () => {
     const frames = new Map(), vvHandlers = new Map(); let nextFrame = 0;
     const vv = { width: 390, height: 844, offsetTop: 0, offsetLeft: 0,
         addEventListener(k, f) { const set = vvHandlers.get(k) ?? new Set(); set.add(f); vvHandlers.set(k, set); },
@@ -308,13 +308,15 @@ test('focusing a child dialog never shrinks the parent; closing it before keyboa
     bindDialogViewport(main, root, parentCtrl.signal);
     bindDialogViewport(modal, root, modalCtrl.signal, { getBoundingClientRect: () => ({ left:0,right:390,top:100,bottom:700 }) });
     const geometry = target => [target.style.top, target.style.left, target.style.width, target.style.height];
-    const parentBefore = geometry(main), modalBefore = geometry(modal);
+    const parentBefore = geometry(main);
     root.document.activeElement = input; vv.height = root.innerHeight = 390; vv.offsetTop = 38;
     for (const fn of vvHandlers.get('resize')) fn();
     for (const fn of [...frames.values()]) fn(); frames.clear();
-    assert.deepEqual(geometry(main), parentBefore); assert.deepEqual(geometry(modal), modalBefore);
+    assert.deepEqual(geometry(main), ['38px', '0px', '390px', '390px']);
+    assert.deepEqual(geometry(modal), ['38px', '0px', '390px', '390px']);
     assert.equal(panel.style.height, '620px'); assert.ok(scroller.scrollTop > 0);
     root.document.activeElement = null; modalCtrl.abort();
+    vv.height = root.innerHeight = 844; vv.offsetTop = 0;
     for (const fn of vvHandlers.get('scroll')) fn();
     for (const fn of [...frames.values()]) fn(); frames.clear();
     assert.deepEqual(geometry(main), parentBefore);

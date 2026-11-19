@@ -1,9 +1,9 @@
-import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.35';
-import { isUsableMemory } from './continuity.js?v=1.27.35';
-import { summaryVersionMatches } from './memory-store.js?v=1.27.35';
+import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.36';
+import { isUsableMemory } from './continuity.js?v=1.27.36';
+import { summaryVersionMatches } from './memory-store.js?v=1.27.36';
 import { getAssistantMessages, isNormalAssistant, messageFingerprint, messageIdentity } from './utils.js?v=1.27.16';
 import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.16';
-import { isRejectedSummary } from './response-quality.js?v=1.27.35';
+import { isRejectedSummary } from './response-quality.js?v=1.27.36';
 
 export const RECENT_RAW_FLOORS = 5;
 

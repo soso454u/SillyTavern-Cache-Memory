@@ -34,7 +34,8 @@ export function lockDialogSize(panel) {
     panel.dataset.memorySizeLocked = 'true';
 }
 
-// Keyboard/focus events may scroll content, never change a window's geometry.
+// Phones must fit the visual viewport, including browser chrome and keyboard.
+// Desktop dialogs retain their anchored layout and manually chosen dimensions.
 export function bindDialogViewport(overlay, root, signal, anchor = null) {
     let frame = null;
     const view = layoutViewport(root);
@@ -44,9 +45,12 @@ export function bindDialogViewport(overlay, root, signal, anchor = null) {
     const top = rect ? Math.max(view.top, rect.top) : view.top;
     const right = rect ? Math.min(view.width, rect.right) : view.width;
     const bottom = rect ? Math.min(view.height, rect.bottom) : view.height;
-    Object.assign(overlay.style, { top: `${top}px`, left: `${left}px`,
-        width: `${Math.max(0, right - left)}px`, height: `${Math.max(0, bottom - top)}px`, right: 'auto', bottom: 'auto' });
-    overlay.style.setProperty('--cm-dialog-height', `${Math.max(0, bottom - top)}px`);
+    const fit = bounds => {
+        Object.assign(overlay.style, { top: `${bounds.top}px`, left: `${bounds.left}px`,
+            width: `${Math.max(0, bounds.width)}px`, height: `${Math.max(0, bounds.height)}px`, right: 'auto', bottom: 'auto' });
+        overlay.style.setProperty('--cm-dialog-height', `${Math.max(0, bounds.height)}px`);
+    };
+    fit(mobile ? viewportSize(root) : { left, top, width: right - left, height: bottom - top });
     lockDialogSize(overlay.querySelector?.('.cache-memory-modal-panel'));
     const editable = () => {
         const input = root.document?.activeElement;
@@ -72,6 +76,7 @@ export function bindDialogViewport(overlay, root, signal, anchor = null) {
     const update = () => {
         frame = null;
         const visible = viewportSize(root);
+        if (mobile) fit(visible);
         const input = editable();
         const inset = Math.max(0, view.height - visible.height);
         const keyboard = mobile && Boolean(input) && inset > 100;

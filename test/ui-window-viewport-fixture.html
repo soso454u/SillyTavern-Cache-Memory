@@ -1,0 +1,38 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>手机窗口可见范围回归</title>
+<style>body{margin:0;background:#e5e7eb;font:16px/1.5 system-ui}#simulated-browser-bar{position:fixed;left:0;right:0;bottom:0;z-index:2147483646;background:#334155;color:white;pointer-events:none;text-align:center}#window-last-control{padding:12px}</style>
+<div id="extensions_settings2"></div><div id="chat"></div><div id="simulated-browser-bar">模拟手机浏览器底栏</div>
+<script type="module">
+import { CacheMemoryUI } from '../src/ui.js';
+import { MemoryStore } from '../src/memory-store.js';
+import { normalizeSettings } from '../src/defaults.js';
+import { MemorySummarizer } from '../src/summarizer.js';
+const fakeViewport = Object.assign(new EventTarget(), { width: innerWidth, height: innerHeight - 100, offsetLeft: 0, offsetTop: 20 });
+Object.defineProperty(window, 'visualViewport', { configurable: true, value: fakeViewport });
+const metadata = {}, settings = normalizeSettings();
+const chat = Array.from({ length: 30 }, (_, index) => ({ name: '合成医师', mes: `第${index + 1}层合成剧情`, gen_started: `synthetic-${index}` }));
+const store = new MemoryStore({ getChatId: () => 'window-viewport-synthetic', getMetadata: () => metadata, saveMetadata() {} });
+for (const entry of store.syncMessages(chat)) store.addSummary({ ...entry, title: `合成剧情${entry.floor}`, characters: '医师、信使', event: '信使将信件交给医师，两人确定下一次会面的时间。'.repeat(6), status: 'frozen', frozen: true });
+const apiClient = { hasApiKey: () => false, complete: () => { throw Error('布局检查不调用模型'); } };
+const summarizer = new MemorySummarizer({ store, apiClient, getChat: () => chat, getSettings: () => settings });
+const ui = window.windowFixtureUI = new CacheMemoryUI({ store, apiClient, getChat: () => chat, getSettings: () => settings,
+    summarizer, updateSettings: patch => Object.assign(settings, patch), persistSettings: async () => {}, updateInjection() {},
+    persistence: { getState: () => ({ state: 'confirmed', detail: '合成记忆' }) } });
+ui.mountSettings();
+if (!ui.style.sheet) await new Promise(resolve => ui.style.addEventListener('load', resolve, { once: true }));
+ui.openSettings();
+ui.managerView = 'summaries'; ui.renderManager();
+const last = document.createElement('button'); last.id = 'window-last-control'; last.textContent = '列表最底部的测试按钮';
+ui.config.querySelector('.cache-memory-manager-tools').append(last);
+window.setFixtureViewport = values => { Object.assign(fakeViewport, values); document.querySelector('#simulated-browser-bar').style.height = `${Math.max(0, innerHeight - fakeViewport.offsetTop - fakeViewport.height)}px`; fakeViewport.dispatchEvent(new Event('resize')); fakeViewport.dispatchEvent(new Event('scroll')); };
+window.inspectWindowViewport = () => {
+    const panel = ui.config.querySelector('.cache-memory-config-panel'); panel.scrollTop = panel.scrollHeight;
+    const box = panel.getBoundingClientRect(), end = last.getBoundingClientRect();
+    return { viewport: { top: fakeViewport.offsetTop, bottom: fakeViewport.offsetTop + fakeViewport.height },
+        panel: { top: box.top, bottom: box.bottom, width: box.width }, end: { top: end.top, bottom: end.bottom },
+        scrollTop: panel.scrollTop, bottomReachable: end.bottom <= fakeViewport.offsetTop + fakeViewport.height && end.top >= box.top,
+        horizontalOverflow: document.documentElement.scrollWidth > innerWidth };
+};
+window.setFixtureViewport({});
+window.windowViewportReady = true;
+</script></html>

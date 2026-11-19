@@ -1,5 +1,5 @@
 import { getAssistantMessages } from './utils.js?v=1.27.16';
-import { isRejectedSummary } from './response-quality.js?v=1.27.35';
+import { isRejectedSummary } from './response-quality.js?v=1.27.36';
 
 import { waitForRetry } from './retry.js?v=1.27.16';
 export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.16';

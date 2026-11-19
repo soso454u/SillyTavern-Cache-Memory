@@ -392,7 +392,7 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-state-history { display: block; overflow-wrap: anywhere; }
 
 /* One vertical scroll surface; the close button, notice and tabs stay visible. */
-.cache-memory-config-panel { display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 135px; }
+.cache-memory-config-panel { display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 135px; scroll-padding-bottom: 24px; padding-bottom: 24px; -webkit-overflow-scrolling: touch; }
 .cache-memory-pinned { position: sticky; top: 0; z-index: 5; background: var(--cm-canvas, #f8fafc); padding-top: 1px; }
 .cache-memory-config-panel .cache-memory-config-content,
 .cache-memory-config-panel .cache-memory-config-content.is-manager-view,
@@ -504,7 +504,7 @@ body.cache-memory-config-open { overflow: hidden; }
     #cache-memory-config .cache-memory-dialog-title > div > small:first-of-type { display: none; }
 }
 
-/* Input focus and keyboard changes must not resize windows or collapse tabs. */
+/* Prevent iOS input auto-zoom while the mobile window follows the visible viewport. */
 @media (max-width: 650px), (pointer: coarse) {
     #cache-memory-config input:not([type="checkbox"]):not([type="radio"]),
     #cache-memory-config textarea, #cache-memory-config select,
@@ -535,11 +535,11 @@ body.cache-memory-config-open { overflow: hidden; }
 .cache-memory-audit-progress { font-weight:650; padding:9px; background:var(--cm-accent-soft); border-radius:7px; }
 @media (max-width:650px), (pointer:coarse) {
   .cache-memory-overlay[data-keyboard-open="true"] .cache-memory-config-panel {
-      padding-bottom:calc(var(--cm-keyboard-inset, 0px) + 28px);
+      padding-bottom:24px;
       scroll-padding-bottom:24px;
   }
   .cache-memory-modal-overlay[data-keyboard-open="true"] .cache-memory-modal-content {
-      padding-bottom:calc(var(--cm-keyboard-inset, 0px) + 12px);
+      padding-bottom:12px;
       scroll-padding-bottom:24px;
   }
 }

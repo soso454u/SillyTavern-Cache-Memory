@@ -1,10 +1,10 @@
-import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.35';
-import { chatFileIdentity } from './chat-file.js?v=1.27.35';
+import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.36';
+import { chatFileIdentity } from './chat-file.js?v=1.27.36';
 import { chatFloorOffset, chatInheritedThrough, getAssistantMessages } from './utils.js?v=1.27.16';
-import { currentInjectionBlocks } from './injection.js?v=1.27.35';
-import { refreshSnapshot } from './cache-control.js?v=1.27.35';
+import { currentInjectionBlocks } from './injection.js?v=1.27.36';
+import { refreshSnapshot } from './cache-control.js?v=1.27.36';
 import { getOpeningSource } from './opening-source.js?v=1.27.16';
-import { isUsableMemory } from './continuity.js?v=1.27.35';
+import { isUsableMemory } from './continuity.js?v=1.27.36';
 
 const clone = value => structuredClone(value);
 function uniqueId() {

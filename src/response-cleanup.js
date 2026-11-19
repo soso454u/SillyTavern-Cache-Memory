@@ -1,6 +1,6 @@
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.16';
-import { readSection } from './continuity.js?v=1.27.35';
-import { isGeneratedFailureLine } from './response-quality.js?v=1.27.35';
+import { readSection } from './continuity.js?v=1.27.36';
+import { isGeneratedFailureLine } from './response-quality.js?v=1.27.36';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
 const EMPTY = /^(?:无|无新增|无更新|无退休|none|null|n\/a|\[\])[。.!]?$/i;
