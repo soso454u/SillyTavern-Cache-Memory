@@ -180,7 +180,33 @@ test('global prompt modes retain custom text and prepend exactly once to all thr
     const html = configTemplate();
     assert.ok(html.indexOf('<summary>全局提示词</summary>') < html.indexOf('<summary>小总结提示词</summary>'));
     assert.match(html, /<details class="cache-memory-global-prompt"><summary>全局提示词/);
-    assert.match(html, /value="blank">空白[\s\S]*value="default">默认记忆规则[\s\S]*value="custom">自定义/);
+    assert.match(html, /value="blank">空白[\s\S]*value="default">默认摘要身份（Selene）[\s\S]*value="custom">自定义/);
+});
+
+test('Selene memory identity reaches all three independent stages without changing stored story or budgets', async () => {
+    const settings = normalizeSettings({ checkpointInterval: 1, longMemoryInterval: 1 });
+    const metadata = {}, requests = [], chat = [{ name: '信使', mes: '信使归还钥匙，守卫说：“明晨才能借船。”信使尚不知修船的原因。', gen_started: 'synthetic-selene' }];
+    const before = structuredClone(chat);
+    const store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'selene-memory', saveMetadata() {} });
+    const summarizer = new MemorySummarizer({ store, getSettings: () => settings, getChat: () => chat,
+        apiClient: { complete: async request => {
+            requests.push(request);
+            return { content: requests.length === 1 ? '[SUMMARY]\n[Event]\n信使归还钥匙，守卫告知明晨才能借船。'
+                : requests.length === 2 ? '[CHECKPOINT]\n[Stage Story]\n信使还钥匙后获知借船时间，尚不知修船原因。'
+                    : '[STORY_ARC]\n信使归还钥匙，守卫把借船时间定在次日清晨，未说明修船原因。\n[LONG_MEMORY]\n无' };
+        } } });
+    await summarizer.summarizeEntry(getAssistantMessages(chat)[0]);
+    assert.equal(requests.length, 3);
+    for (const request of requests) {
+        assert.ok(request.systemPrompt.startsWith(DEFAULT_GLOBAL_PROMPT + '\n\n'));
+        assert.equal(request.systemPrompt.split(DEFAULT_GLOBAL_PROMPT).length - 1, 1);
+        assert.match(request.systemPrompt, /已经存在的故事[\s\S]*不续写[\s\S]*不自动成为已确认事实[\s\S]*实际后果/);
+        assert.equal(request.maxTokens, null);
+        assert.doesNotMatch(request.userContent, /Selene|directive_layer|setvar::/);
+    }
+    assert.deepEqual(chat, before);
+    assert.doesNotMatch(JSON.stringify(store.current()), /Selene|directive_layer|setvar::/);
+    assert.equal(store.current().longMemories[0].status, 'frozen');
 });
 
 test('Long Memory with existing tracked and checkpoint sections shows separate Chinese fields without dropping content', () => {

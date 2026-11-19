@@ -1,21 +1,21 @@
 import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
 import { applyUITheme } from './ui-theme.js?v=1.27.16';
 import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.33';
+import { generationPrompt } from './generation-prompts.js?v=1.27.34';
 import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.16';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.33';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.33';
-import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.33';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.34';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.34';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.34';
 import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.33';
-import { cleanGeneratedResponse } from './response-cleanup.js?v=1.27.33';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.34';
+import { cleanGeneratedResponse } from './response-cleanup.js?v=1.27.34';
 import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.33';
-import { parseFloorSummary } from './summarizer.js?v=1.27.33';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.33';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.34';
+import { parseFloorSummary } from './summarizer.js?v=1.27.34';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.34';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.33';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.33';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.34';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.34';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -561,7 +561,7 @@ export function configTemplate() {
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="prompts" hidden>
                         <div class="cache-memory-section-heading"><div><h4>提示词</h4><p>基础摘要、阶段总结、长期总结共用一套剧情模板；角色表格规则单独设置。</p></div></div>
                         <small class="cache-memory-help" data-prompt-mode-help></small>
-                        <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认记忆规则</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
+                        <details class="cache-memory-global-prompt"><summary>全局提示词</summary><label class="cache-memory-field">使用方式<select data-setting="globalPromptMode"><option value="blank">空白</option><option value="default">默认摘要身份（Selene）</option><option value="custom">自定义</option></select></label><textarea rows="1" data-global-prompt aria-label="全局提示词内容"></textarea></details>
                         <details><summary>小总结提示词</summary><textarea rows="1" data-prompt="summary"></textarea><button type="button" class="menu_button" data-reset-prompt="summary"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="summary" aria-label="实际完整提示词"></textarea></details></details>
                         <details><summary>状态提取提示词（小总结）</summary><p class="cache-memory-help">持续状态开启时，普通模式随小总结发送此提示词。进阶模式用它维护勾选的角色表格。</p><textarea rows="1" data-prompt="state"></textarea><button type="button" class="menu_button" data-reset-prompt="state"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看完整提取规则</summary><textarea rows="16" readonly data-effective-prompt="state" aria-label="状态追踪提示词"></textarea></details></details>
                         <details><summary>阶段记忆提示词</summary><textarea rows="1" data-prompt="checkpoint"></textarea><button type="button" class="menu_button" data-reset-prompt="checkpoint"><i class="fa-solid fa-arrow-rotate-left"></i> 恢复默认</button><details class="cache-memory-prompt-preview"><summary>查看实际完整提示词</summary><textarea rows="16" readonly data-effective-prompt="checkpoint" aria-label="实际完整提示词"></textarea></details></details>
@@ -646,7 +646,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.33', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.34', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
