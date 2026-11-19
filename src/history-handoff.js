@@ -1,8 +1,9 @@
-import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.32';
-import { isUsableMemory } from './continuity.js?v=1.27.32';
-import { summaryVersionMatches } from './memory-store.js?v=1.27.32';
+import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.33';
+import { isUsableMemory } from './continuity.js?v=1.27.33';
+import { summaryVersionMatches } from './memory-store.js?v=1.27.33';
 import { getAssistantMessages, isNormalAssistant, messageFingerprint, messageIdentity } from './utils.js?v=1.27.16';
 import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.16';
+import { isRejectedSummary } from './response-quality.js?v=1.27.33';
 
 export const RECENT_RAW_FLOORS = 5;
 
@@ -207,7 +208,8 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
             : row.sourceFingerprint && (fingerprints ??= sameBodySourceFingerprints(entry)).has(row.sourceFingerprint);
         const sameFloor = summariesByFloor.get(entry.floor) ?? [];
         const matchingSummaries = adaptive && !changedUser ? sameFloor.filter(row =>
-            (!shortHistory || isUsableMemory(row) && Boolean(row.sourceContentFingerprint || row.sourceFingerprint))
+            !isRejectedSummary(row)
+            && (!shortHistory || isUsableMemory(row) && Boolean(row.sourceContentFingerprint || row.sourceFingerprint))
             && row.status !== 'failed' && row.frozen !== false
             && (!Object.hasOwn(row, 'userSourceFingerprint') || row.userSourceFingerprint === userFingerprint)
             && (bodyMatches(row) || !row.sourceContentFingerprint && !row.sourceFingerprint

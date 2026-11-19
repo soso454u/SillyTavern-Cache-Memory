@@ -1,12 +1,13 @@
 import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { playerCorrectionEvidence } from './summary-source.js?v=1.27.32';
+import { playerCorrectionEvidence } from './summary-source.js?v=1.27.33';
 import { fnv1a } from './utils.js?v=1.27.16';
+import { isRejectedSummary } from './response-quality.js?v=1.27.33';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';
 export const isContinuityChange = item => item.kind === 'state' && ['milestone', 'staffing', 'ownership', 'profile'].includes(item.category);
 const clean = value => String(value ?? '').trim();
-const validSummary = item => item && item.frozen !== false && item.status !== 'failed';
+const validSummary = item => item && !isRejectedSummary(item) && item.frozen !== false && item.status !== 'failed';
 
 export function threadKey(value) {
     const key = clean(value);

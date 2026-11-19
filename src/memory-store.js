@@ -1,6 +1,7 @@
 import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages } from './utils.js?v=1.27.16';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.32';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.32';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.33';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.33';
+import { isRejectedSummary } from './response-quality.js?v=1.27.33';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -746,7 +747,7 @@ export class MemoryStore {
     }
 }
 
-export const summaryIsCurrent = item => item && item.frozen !== false && item.status !== 'failed';
+export const summaryIsCurrent = item => item && !isRejectedSummary(item) && item.frozen !== false && item.status !== 'failed';
 const summaryFields = item => [item?.sourceFingerprint, item?.raw, item?.event, item?.state, item?.open, item?.stateChanges, item?.keep];
 export const summaryVersion = item => `s2:${fnv1a(JSON.stringify(stableClone([...summaryFields(item), item?.floor, item?.title, item?.characters, item?.storyTime, item?.location,
     ...(item && Object.hasOwn(item, 'userSourceFingerprint') ? [item.userSourceFingerprint] : []),
@@ -758,6 +759,7 @@ export const aggregateVersion = item => item ? fnv1a(JSON.stringify(stableClone(
 export function memoryHealth(item) {
     if (!item) return { code: 'missing', label: '尚未生成 / 记录不存在' };
     if (item.status === 'failed') return { code: 'failed', label: `生成失败：${item.error || '未提供错误'}` };
+    if (isRejectedSummary(item)) return { code: 'invalid-response', label: '拒答或检索失败 · 待重生成' };
     if (item.startFloor !== undefined && !hasAggregateContent(item)) return { code: 'missing', label: '内容为空，待生成' };
     if (item.startFloor === undefined && !['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(item[key] ?? '').trim())) return { code: 'empty', label: '摘要内容为空，原记录保留' };
     return { code: 'valid', label: item.status === 'manual-edited' ? '已冻结 · 人工编辑' : '已冻结' };

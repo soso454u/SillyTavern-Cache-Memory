@@ -1,4 +1,4 @@
-import { memoryContentDigest, normalizeStore } from './memory-store.js?v=1.27.32';
+import { memoryContentDigest, normalizeStore } from './memory-store.js?v=1.27.33';
 
 export function chatFileIdentity(context, chatId = context?.chatId) {
     if (!chatId || String(context?.chatId ?? '') !== String(chatId)) return '';

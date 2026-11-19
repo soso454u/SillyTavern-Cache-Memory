@@ -1,12 +1,8 @@
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections, SUMMARY_SECTION_NAMES } from './summary-format.js?v=1.27.16';
-import { readSection } from './continuity.js?v=1.27.32';
+import { readSection } from './continuity.js?v=1.27.33';
+import { isGeneratedFailureLine } from './response-quality.js?v=1.27.33';
 
 // Only generated responses pass through here. Stored history and source prose stay intact.
-const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
-const REFUSAL_TARGET = /(?:(?:this|that|your|the) (?:request|prompt)|requested (?:content|text)|content you(?:['’]re| are) (?:asking|requesting)|(?:sexual|explicit|pornographic|violent|illegal|disallowed|unsafe) content|(?:content|safety) polic(?:y|ies)|as an? (?:ai|large language) model)/i;
-const isRefusal = text => REFUSAL.test(text) && (REFUSAL_TARGET.test(text) || /\b(?:assist|help|comply|engage)\s+(?:you\s+)?(?:with\s+)?(?:that|this)[.!]?\s*$/i.test(text));
-const CHINESE_REFUSAL = /^(?:(?:很抱歉|抱歉|对不起)[，,。！!：:]\s*)?(?:我|作为(?:一个)?(?:人工智能|AI)(?:助手|模型)?[，,]\s*我?)?(?:无法|不能|不便)(?:协助|处理|满足|完成|继续|提供|生成|总结|回应|执行)[^。！？\n]*(?:(?:这个|该|此|您的|你的)请求|(?:上述|所请求的|这类|此类)内容|相关政策|内容政策|安全政策)/i;
-const RESPONSE_ERROR = /^(?:(?:api |upstream |generation |request )error\s*[:：]|(?:request|generation) failed\s*[:：]|HTTP\s+(?:401|403|429|5\d\d)\b|\{\s*"error"\s*:|(?:this (?:request|prompt|content)|your (?:request|prompt)) (?:violates|is (?:not allowed|blocked))\b|please (?:try (?:again|a different prompt)|rephrase your (?:request|prompt))\b)/i;
 const EMPTY = /^(?:无|无新增|无更新|无退休|none|null|n\/a|\[\])[。.!]?$/i;
 const EMPTY_SUMMARY = /^(?:暂无|未知|不详|未提供|无剧情|无事件|无有效剧情|无可总结内容|[-—–]+)[。.!]?$/;
 const hasMemoryValue = (value, summary = false) => String(value).split('\n').some(line => {
@@ -56,8 +52,7 @@ export function cleanGeneratedResponse(value, source = '') {
                 }
             }
             if (reasoning) continue;
-            const detail = line.trim().replace(/^[-*•]\s+/, '');
-            if (isRefusal(detail) || CHINESE_REFUSAL.test(detail) || RESPONSE_ERROR.test(detail)) continue;
+            if (isGeneratedFailureLine(line)) continue;
         }
         output.push(line);
     }
@@ -95,11 +90,11 @@ export function summaryRetryInstruction(prompt) {
 
 // A missing label is not a missing story. Only recover prose outside metadata
 // sections; titles, state deltas and JSON payloads alone cannot supply an Event.
-function recoverSummaryProse(text) {
+function recoverSummaryProse(text, source) {
     const blocks = text.split(/^\s*\[SUMMARY\]\s*$/im);
     const block = blocks.at(-1).trim();
-    const prose = block.split(/^\s*\[[^\]\n]+\]\s*$/m, 1)[0]
-        .replace(/^\s*<(?:summary|content)>\s*/i, '').replace(/\s*<\/(?:summary|content)>\s*$/i, '').trim();
+    const prose = cleanGeneratedResponse(block.split(/^\s*\[[^\]\n]+\]\s*$/m, 1)[0]
+        .replace(/^\s*<(?:summary|content)>\s*/i, '').replace(/\s*<\/(?:summary|content)>\s*$/i, ''), source);
     const meaningful = prose.split('\n').filter(line => line.trim() && !/^\s*(?:#{1,6}\s|```)/.test(line));
     if (!meaningful.some(line => hasMemoryValue(line, true) && /[\p{L}\p{N}]/u.test(line)
         && !/^\s*[\[\]{}<>]/.test(line))) return '';
@@ -143,7 +138,9 @@ export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } 
     if (!text) throw Object.assign(new Error(`${kind} 输出为空或仅含拒绝/思考内容，原记忆保留`), { code: 'INVALID_MEMORY_RESPONSE' });
     if (summary) {
         const failSummary = detail => {
-            throw Object.assign(new Error(`模型返回的小总结${detail}，原记忆保留`), { code: 'INVALID_MEMORY_RESPONSE' });
+            const rejected = normalizeMemoryMarkers(raw, true).split('\n').some(isGeneratedFailureLine);
+            throw Object.assign(new Error(rejected ? '模型接口返回拒答或检索失败，未写入剧情，原记忆保留'
+                : `模型返回的小总结${detail}，原记忆保留`), { code: 'INVALID_MEMORY_RESPONSE' });
         };
         if (!/^\s*\[SUMMARY\]\s*$/im.test(text) && /^\s*\[Event\]\s*$/im.test(text)) text = '[SUMMARY]\n' + text;
         const parsed = parseStructuredSummary(text);
@@ -154,9 +151,13 @@ export function prepareMemoryResponse(value, kind, { source = '', prompt = '' } 
             return parsed.raw;
         }
         const event = text.match(/<event>\s*([\s\S]*?)\s*<\/event>/i)?.[1];
-        if (event !== undefined) { if (!hasMemoryValue(event, true)) return failSummary('的 <event> 剧情栏为空或只有占位词'); return text; }
+        if (event !== undefined) {
+            const plot = cleanGeneratedResponse(event, source);
+            if (!hasMemoryValue(plot, true)) return failSummary('的 <event> 剧情栏为空或只有占位词');
+            return text.replace(/(<event>)\s*[\s\S]*?\s*(<\/event>)/i, (_, open, close) => open + plot + close);
+        }
         if (/\[(?:SUMMARY|Event)\]|<event>/i.test(text + '\n' + prompt)) {
-            const prose = recoverSummaryProse(text);
+            const prose = recoverSummaryProse(text, source);
             if (prose && !/\[Event\]|<event>/i.test(text)) return summaryFields(text, prose);
             return failSummary('没有可用的剧情正文');
         }

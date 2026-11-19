@@ -1,11 +1,12 @@
 import { fnv1a } from './utils.js?v=1.27.16';
 import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { storyTimeForEvidence } from './story-metadata.js?v=1.27.32';
-import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedHistory, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.32';
+import { storyTimeForEvidence } from './story-metadata.js?v=1.27.33';
+import { isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedHistory, matchesTrackedValue, projectActiveState } from './active-state.js?v=1.27.33';
+import { isRejectedSummary } from './response-quality.js?v=1.27.33';
 
 export const hasAggregateContent = item => Boolean(String(item?.content ?? '').trim() || item?.memoryKind === 'facts' && Array.isArray(item.factUpdates));
 
-export const isUsableMemory = item => item && item.frozen !== false && ['frozen', 'manual-edited', 'stale', 'orphaned'].includes(item.status ?? 'frozen')
+export const isUsableMemory = item => item && !isRejectedSummary(item) && item.frozen !== false && ['frozen', 'manual-edited', 'stale', 'orphaned'].includes(item.status ?? 'frozen')
     && (item.startFloor !== undefined || item.endFloor !== undefined || item.memoryKind === 'facts'
         ? hasAggregateContent(item) : ['raw', 'event', 'state', 'open', 'keep', 'quote'].some(key => String(item[key] ?? '').trim()));
 

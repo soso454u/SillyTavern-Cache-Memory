@@ -1,4 +1,5 @@
 import { getAssistantMessages } from './utils.js?v=1.27.16';
+import { isRejectedSummary } from './response-quality.js?v=1.27.33';
 
 import { waitForRetry } from './retry.js?v=1.27.16';
 export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.16';
@@ -104,8 +105,9 @@ export class HistoryBackfill {
                 await this.boundary();
                 this.publish({ currentFloor: entry.floor }, runId);
                 const existing = this.store.getSummaryForEntry(entry);
+                const failed = existing?.status === 'failed' || isRejectedSummary(existing);
                 const selected = mode === 'all' || mode === 'selected' || (!existing && ['missing', 'missing-failed'].includes(mode))
-                    || (existing?.status === 'failed' && ['failed', 'missing-failed'].includes(mode));
+                    || (failed && ['failed', 'missing-failed'].includes(mode));
                 if (!selected) this.state.skipped++;
                 else {
                     await this.boundary();
