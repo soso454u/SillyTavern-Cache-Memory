@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.27.38';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.38';
-import { fnv1a } from './utils.js?v=1.27.38';
-import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.38';
+import { INJECTION_MODES } from './defaults.js?v=1.27.39';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.39';
+import { fnv1a } from './utils.js?v=1.27.39';
+import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.39';
 
 export function effectiveInjectionMode(settings) {
     if ([INJECTION_MODES.ROLLING, INJECTION_MODES.CHECKPOINT_SHORT_HISTORY].includes(settings.injectionMode)) return settings.injectionMode;
@@ -49,7 +49,9 @@ export function refreshSnapshot(store, settings, reason = 'manual edit', sourceS
     const changed = value !== (previous?.value ?? '');
     const coverageChanged = mode === INJECTION_MODES.CHECKPOINT_SHORT_HISTORY && (previousMode !== mode
         || JSON.stringify(previous?.blocks) !== JSON.stringify(blocks));
-    store.injectionSnapshot = { signature, mode, blocks, value, recentRawFloors: settings.recentRawFloors, historyHandoff, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
+    store.injectionSnapshot = { signature, mode, blocks, value,
+        summaryFloorOffset: settings.summaryFloorOffset ?? (Object.values(sourceStore.summaries ?? {}).some(row => row.floor === 0) ? 1 : 0),
+        recentRawFloors: settings.recentRawFloors, historyHandoff, reason: reason === 'manual reinject' ? reason : changed ? reason : previous?.reason ?? reason };
     return { value, changed, ...(coverageChanged ? { coverageChanged: true } : {}), migrated: Boolean(previous && previous.signature !== signature) };
 }
 

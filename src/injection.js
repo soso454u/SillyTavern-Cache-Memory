@@ -1,17 +1,17 @@
-import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.38';
-import { INJECTION_MODES } from './defaults.js?v=1.27.38';
-import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.38';
-import { stripStructuredSections } from './summary-format.js?v=1.27.38';
-import { hasLastingResult, isContinuityChange, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedHistory, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.38';
-import { historyPublicationLimit } from './history-handoff.js?v=1.27.38';
-import { stageStartLabel } from './opening-source.js?v=1.27.38';
-import { summaryStoryBlock } from './summary-source.js?v=1.27.38';
-import { aggregateVersion } from './memory-store.js?v=1.27.38';
+import { characterTablesEnabled, selectedTableRecords, CHARACTER_TABLES, tableForRecord } from './character-tables.js?v=1.27.39';
+import { INJECTION_MODES } from './defaults.js?v=1.27.39';
+import { checkpointHistoricalFacts, collectKeepItems, formatKeepItems, formatLongFacts, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.39';
+import { stripStructuredSections } from './summary-format.js?v=1.27.39';
+import { hasLastingResult, isContinuityChange, isTrackedActive, isAtomicTrackedEntry, matchesTrackedFact, matchesTrackedHistory, matchesTrackedValue, projectActiveState, reconcileTrackedCheckpoint } from './active-state.js?v=1.27.39';
+import { historyPublicationLimit } from './history-handoff.js?v=1.27.39';
+import { stageStartLabel } from './opening-source.js?v=1.27.39';
+import { summaryStoryBlock } from './summary-source.js?v=1.27.39';
+import { aggregateVersion } from './memory-store.js?v=1.27.39';
 
 export function memoryReadingRules() { return '历史事件用于继承，不要求重演；当前结果以明确的新证据为准，逐人区分认知，任务完成与奖励领取分别判断。'; }
 
 // Original CP5 / Long50 coverage. Never inject all per-floor Summary Events.
-export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
+export function historicalStoryBlocks(store, throughFloor, includeCP = true, floorOffset = 0) {
     const valid = item => isUsableMemory(item) && item.endFloor <= throughFloor;
     const meaningful = text => Boolean(text?.trim()) && !/^(?:无|无新增|none)[。.!]?$/iu.test(text.trim());
     const arcKeys = new Set();
@@ -23,7 +23,7 @@ export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
     const result = arcs.map(({ memory, story }) => ({ id: `story:long:${memory.id}`, type: 'long-story', coversHistory: true,
         ...(memory.openingContentFingerprint ? { openingContentFingerprint: memory.openingContentFingerprint } : {}),
         startFloor: memory.startFloor, endFloor: memory.endFloor,
-        text: `[LONG_STORY_${stageStartLabel(memory)}_${memory.endFloor}]\n${story.trim()}` }));
+        text: `[LONG_STORY_${stageStartLabel(memory) + floorOffset}_${memory.endFloor + floorOffset}]\n${story.trim()}` }));
     if (!includeCP) return result.sort((a, b) => a.startFloor - b.startFloor);
     const seen = new Set();
     for (const cp of store.checkpoints.filter(valid).sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor)) {
@@ -42,7 +42,7 @@ export function historicalStoryBlocks(store, throughFloor, includeCP = true) {
         const block = { id: `checkpoint:${cp.id}`, type: 'checkpoint', startFloor: cp.startFloor, endFloor: cp.endFloor,
             coversHistory: Boolean(story || meaningful(prose.replace(/^\s*\[CHECKPOINT\]\s*/iu, ''))),
             ...(cp.openingContentFingerprint ? { openingContentFingerprint: cp.openingContentFingerprint } : {}),
-            text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${stageStartLabel(cp)}–${cp.endFloor}层 · 历史剧情]\n${narrative}` };
+            text: `[CHECKPOINT_${String(cp.id).split('-').at(-1)} | 第${stageStartLabel(cp) + floorOffset}–${cp.endFloor + floorOffset}层 · 历史剧情]\n${narrative}` };
         if (meaningful(narrative.replace(/^\s*\[CHECKPOINT\]\s*/iu, ''))) result.push(block);
     }
     return result.sort((a, b) => a.startFloor - b.startFloor || a.endFloor - b.endFloor);
@@ -157,6 +157,7 @@ function freezeStorySources(blocks, store) {
 }
 
 export function currentInjectionBlocks(store, settings, mode = settings.injectionMode) {
+    const floorOffset = settings.summaryFloorOffset ?? (Object.values(store.summaries ?? {}).some(row => row.floor === 0) ? 1 : 0);
     const useCP = checkpointModes.includes(mode);
     const rolling = mode === INJECTION_MODES.ROLLING;
     const completed = settings.injectionFloor ?? Math.max(0,
@@ -171,14 +172,16 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
         .sort((a, b) => a.endFloor - b.endFloor || a.startFloor - b.startFloor).at(-1) : null;
     const through = rolling ? limit : Math.max(latest?.endFloor || 0, ...store.longMemories.filter(eligible).map(row => row.endFloor), 0);
     // One CP5/Long50 story per uncovered range; never all per-floor Summary.
-    const blocks = historicalStoryBlocks(store, through, useCP);
+    const blocks = historicalStoryBlocks(store, through, useCP, floorOffset);
     if (shortHistory) freezeStorySources(blocks, store);
     if (rolling) {
         const covered = floor => blocks.some(block => block.coversHistory && block.startFloor <= floor && block.endFloor >= floor);
         const seen = new Set();
         for (const row of Object.values(store.summaries ?? {}).filter(isUsableMemory).sort((a, b) => a.floor - b.floor)) {
-            if (!Number.isInteger(row.floor) || row.floor < 1 || row.floor > limit || covered(row.floor) || seen.has(row.floor)) continue;
-            const block = summaryStoryBlock(row);
+            if (!Number.isInteger(row.floor) || row.floor < 0 || row.floor > limit || covered(row.floor) || seen.has(row.floor)) continue;
+            if (row.floor === 0 && (completed < settings.recentRawFloors && !settings.inheritedThrough
+                || blocks.some(block => block.openingContentFingerprint && block.openingContentFingerprint === row.sourceContentFingerprint))) continue;
+            const block = summaryStoryBlock(row, floorOffset);
             if (!block) continue;
             seen.add(row.floor);
             blocks.push(block);
@@ -222,7 +225,7 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
             return lines.length ? [`【${table.label}】`, ...lines] : [];
         });
         if (tables.length) blocks.push({ id: 'tables:current', type: 'table', startFloor: through, endFloor: through,
-            text: `[CHARACTER_TABLES | 截至第${through}层]\n${tables.join('\n')}` });
+            text: `[CHARACTER_TABLES | 截至第${through + floorOffset}层]\n${tables.join('\n')}` });
     }
     const printed = blocks.map(row => row.text).join('\n');
     const seen = new Set(printed.split('\n').map(canonical));
@@ -260,7 +263,7 @@ export function currentInjectionBlocks(store, settings, mode = settings.injectio
                     + (row.condition ? `；条件：${row.condition}` : '');
             }).filter(uncovered);
         if (lines.length) blocks.push({ id: 'continuity:tracked', type: 'continuity', startFloor: through, endFloor: through,
-            text: `[TRACKED_STATE | 截至第${through}层]\n${lines.map(line => '- ' + line).join('\n')}` });
+            text: `[TRACKED_STATE | 截至第${through + floorOffset}层]\n${lines.map(line => '- ' + line).join('\n')}` });
     }
     const facts = projection.facts.filter(row => row.status === 'active'
         || row.status === 'superseded' && /(?:永久|不可逆|终身|失去.{0,8}(?:右臂|左臂|双腿|视力)|摧毁|重大损失|重大债务)/u.test(row.text))

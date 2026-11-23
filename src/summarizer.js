@@ -1,19 +1,19 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.38';
-import { isOutputTruncated } from './api-client.js?v=1.27.38';
-import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.38';
-import { isRejectedSummary } from './response-quality.js?v=1.27.38';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.38';
-import { generationPrompt } from './generation-prompts.js?v=1.27.38';
-import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.38';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.38';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.38';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.38';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.38';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.38';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.38';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.38';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.38';
-import { getOpeningSource, getSummaryEntries, displayFloor, stageStartLabel } from './opening-source.js?v=1.27.38';
+import { selectedTableRecords } from './character-tables.js?v=1.27.39';
+import { isOutputTruncated } from './api-client.js?v=1.27.39';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.39';
+import { isRejectedSummary } from './response-quality.js?v=1.27.39';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.39';
+import { generationPrompt } from './generation-prompts.js?v=1.27.39';
+import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.39';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.39';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.39';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.39';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.39';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.39';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.39';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.39';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.39';
+import { getOpeningSource, getSummaryEntries, displayFloor, stageStartLabel } from './opening-source.js?v=1.27.39';
 
 function pad(value) {
     return String(value).padStart(3, '0');

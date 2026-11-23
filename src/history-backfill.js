@@ -1,8 +1,8 @@
-import { getAssistantMessages } from './utils.js?v=1.27.38';
-import { isRejectedSummary } from './response-quality.js?v=1.27.38';
+import { getAssistantMessages } from './utils.js?v=1.27.39';
+import { isRejectedSummary } from './response-quality.js?v=1.27.39';
 
-import { waitForRetry } from './retry.js?v=1.27.38';
-export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.38';
+import { waitForRetry } from './retry.js?v=1.27.39';
+export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.39';
 
 function aborted() {
     return Object.assign(new Error('历史补齐已取消'), { code: 'REQUEST_ABORTED' });

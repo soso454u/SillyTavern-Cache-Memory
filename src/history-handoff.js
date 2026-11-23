@@ -1,9 +1,9 @@
-import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.38';
-import { isUsableMemory } from './continuity.js?v=1.27.38';
-import { summaryVersionMatches } from './memory-store.js?v=1.27.38';
-import { getAssistantMessages, isNormalAssistant, messageFingerprint, messageIdentity } from './utils.js?v=1.27.38';
-import { getOpeningSource, publishedOpeningCoverage } from './opening-source.js?v=1.27.38';
-import { isRejectedSummary } from './response-quality.js?v=1.27.38';
+import { summaryStoryBlock, summaryUserSource } from './summary-source.js?v=1.27.39';
+import { isUsableMemory } from './continuity.js?v=1.27.39';
+import { summaryVersionMatches } from './memory-store.js?v=1.27.39';
+import { getAssistantMessages, isNormalAssistant, messageFingerprint, messageIdentity } from './utils.js?v=1.27.39';
+import { getOpeningSource, getSummaryEntries, publishedOpeningCoverage } from './opening-source.js?v=1.27.39';
+import { isRejectedSummary } from './response-quality.js?v=1.27.39';
 
 export const RECENT_RAW_FLOORS = 5;
 
@@ -108,6 +108,12 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
     const originalById = unique(chat);
     const sourceFor = promptSourceResolver(chat);
     const openingMessage = getOpeningSource(chat)?.message;
+    const entries = adaptive ? getSummaryEntries(chat) : getAssistantMessages(chat);
+    const separateOpening = entries.find(entry => entry.isOpening)?.message;
+    const availableSources = adaptive ? new Set(coreChat.map(sourceFor)) : null;
+    const openingRecent = adaptive && entries.filter(entry => availableSources.has(entry.message))
+        .slice(-recentRawFloors).some(entry => entry.message === openingMessage);
+    const floorLabelOffset = snapshot?.summaryFloorOffset ?? (Object.values(summaries).some(row => row.floor === 0) ? 1 : 0);
     const latestUser = (adaptive ? coreChat.map(sourceFor) : chat).findLast(row => row && row !== openingMessage && row.is_user === true
         && !row.is_system && !Array.isArray(row.extra?.tool_invocations));
     const openingCovered = (!shortHistory || !hasNonTextContext(openingMessage)) && publishedOpeningCoverage(chat, snapshot, publishedValue);
@@ -115,19 +121,17 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
         if (row.is_system || Array.isArray(row.extra?.tool_invocations)) return true;
         const source = sourceFor(row);
         if (!source) return true;
-        // Do not silently discard the only copy of the initial facts while
-        // upgrading old CPs or before the first stage has been published.
-        if (source === openingMessage) return !openingCovered;
+        // Opening is a normal layer of the selected mode. Rolling caps its
+        // raw text too; short history may replace it with its own Summary.
+        if (source === openingMessage) return adaptive && openingRecent || !openingCovered;
         return !lastUserOnly || source.is_user !== true || source === latestUser;
     });
-    const entries = getAssistantMessages(chat);
     const contentCounts = new Map();
     if (adaptive) for (const entry of entries) {
         contentCounts.set(entry.contentFingerprint, (contentCounts.get(entry.contentFingerprint) ?? 0) + 1);
     }
     const entryBySource = rolling ? new Map(entries.map(entry => [entry.message, entry])) : null;
-    const separateOpening = rolling && openingMessage && !entryBySource.has(openingMessage);
-    const isRollingReply = row => isNormalAssistant(row) && (!separateOpening || sourceFor(row) !== openingMessage);
+    const isRollingReply = row => isNormalAssistant(row) || Boolean(separateOpening && sourceFor(row) === separateOpening);
     const rollingReplies = rolling ? selected.filter(isRollingReply) : [];
     const available = shortHistory ? new Set(selected.map(sourceFor)) : null;
     const recent = rolling ? new Set(rollingReplies.slice(-recentRawFloors).map(sourceFor))
@@ -231,7 +235,7 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
             && (!shortHistory || source && !block.missingFloors?.includes(entry.floor)
                 && Object.hasOwn(block.sourceVersions ?? {}, source.messageId)
                 && summaryVersionMatches(source, block.sourceVersions[source.messageId])));
-        const story = shortHistory && !covered && source ? summaryStoryBlock(source) : null;
+        const story = shortHistory && !covered && source ? summaryStoryBlock(source, floorLabelOffset) : null;
         if (!covered && !story) { retainedReasons.set(entry.message, 'no-verified-story-coverage'); continue; }
         if (story) {
             // Replace in the same history slot, after the frozen prompt.
@@ -243,7 +247,7 @@ export function filterCoveredHistory(coreChat, chat, snapshot, publishedValue, {
         // the independent latest-user-only selection already excluded it.
         for (let i = startIndex; i <= entry.messageIndex; i++) {
             const original = chat[i];
-            if (original === openingMessage) continue; // only the opening-coverage policy may remove it
+            if (original === openingMessage && !entry.isOpening) continue;
             if (i !== entry.messageIndex && original.is_user !== true) continue;
             if ((lastUserOnly || adaptive) && original === latestUser) continue;
             if (original.is_system || Array.isArray(original.extra?.tool_invocations)) continue;

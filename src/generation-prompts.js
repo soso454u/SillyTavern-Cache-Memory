@@ -1,6 +1,6 @@
-import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.27.38';
-import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.38';
-import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.38';
+import { CHARACTER_TABLES, normalizeCharacterTables } from './character-tables.js?v=1.27.39';
+import { DEFAULT_PROMPTS, withGlobalPrompt, NORMAL_SUMMARY_LENGTH_RULES } from './defaults.js?v=1.27.39';
+import { STATE_EXTRACTION_RULES } from './active-state.js?v=1.27.39';
 
 const DELTA_SCHEMA = STATE_EXTRACTION_RULES.replace(
     '沿用 Summary 的 Open 和 State 叙述，在最后可附 [Changes]，值为 JSON 数组，无变化写 []。',

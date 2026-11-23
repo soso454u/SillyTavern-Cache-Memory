@@ -1,5 +1,5 @@
-import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.38';
-import { parseStructuredSummary } from './summary-format.js?v=1.27.38';
+import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.39';
+import { parseStructuredSummary } from './summary-format.js?v=1.27.39';
 
 export const SUMMARY_FILTER_MODES = Object.freeze({
     DEFAULT: 'default',
@@ -93,12 +93,14 @@ export function playerCorrectionEvidence(source) {
         ))).slice(0, 3);
 }
 
-export function summaryStoryBlock(row) {
+export function summaryStoryBlock(row, floorOffset = 0) {
     const fields = { ...(parseStructuredSummary(row.raw) ?? {}), ...row };
     const meaningful = text => text && !/^(?:无|none)[。.]?$/iu.test(String(text).trim());
     if (!meaningful(fields.event)) return null;
     const story = [['标题', fields.title], ['人物', fields.characters], ['时间', fields.storyTime], ['地点', fields.location],
         ['事件', fields.event], ['原话', fields.quote]].filter(([, text]) => meaningful(text)).map(([label, text]) => `${label}：${text}`).join('\n');
     return { id: `summary:${row.messageId ?? row.floor}`, type: 'summary-story', coversHistory: true,
-        startFloor: row.floor, endFloor: row.floor, text: `[SUMMARY_STORY_${row.floor}]\n${story}` };
+        startFloor: row.floor, endFloor: row.floor,
+        ...(row.floor === 0 && row.sourceContentFingerprint ? { openingContentFingerprint: row.sourceContentFingerprint } : {}),
+        text: `[SUMMARY_STORY_${row.floor + floorOffset}]\n${story}` };
 }

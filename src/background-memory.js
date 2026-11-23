@@ -1,8 +1,8 @@
-import { MemoryStore, normalizeStore, memoryContentDigest } from './memory-store.js?v=1.27.38';
-import { MemorySummarizer } from './summarizer.js?v=1.27.38';
-import { MemoryPersistenceCoordinator } from './persistence.js?v=1.27.38';
-import { chatFileIdentity } from './chat-file.js?v=1.27.38';
-import { trimBranchTimeline } from './utils.js?v=1.27.38';
+import { MemoryStore, normalizeStore, memoryContentDigest } from './memory-store.js?v=1.27.39';
+import { MemorySummarizer } from './summarizer.js?v=1.27.39';
+import { MemoryPersistenceCoordinator } from './persistence.js?v=1.27.39';
+import { chatFileIdentity } from './chat-file.js?v=1.27.39';
+import { trimBranchTimeline } from './utils.js?v=1.27.39';
 
 const clone = value => structuredClone(value);
 const filename = value => String(value ?? '').replace(/\.jsonl$/iu, '');

@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.38';
-import { applyUITheme } from './ui-theme.js?v=1.27.38';
-import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.38';
-import { generationPrompt } from './generation-prompts.js?v=1.27.38';
-import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.38';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.38';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.38';
-import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.38';
-import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.38';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.38';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.38';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.38';
-import { parseFloorSummary } from './summarizer.js?v=1.27.38';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.38';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.39';
+import { applyUITheme } from './ui-theme.js?v=1.27.39';
+import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.39';
+import { generationPrompt } from './generation-prompts.js?v=1.27.39';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.39';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.39';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.39';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.39';
+import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.39';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.39';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.39';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.39';
+import { parseFloorSummary } from './summarizer.js?v=1.27.39';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.39';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.38';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.38';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.39';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.39';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -665,7 +665,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.38', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.39', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();

@@ -1,4 +1,4 @@
-import { getAssistantMessages, messageIdentity, messageContentFingerprint, messageFingerprint } from './utils.js?v=1.27.38';
+import { getAssistantMessages, messageIdentity, messageContentFingerprint, messageFingerprint } from './utils.js?v=1.27.39';
 
 // Opening is an extra source of the first stage, never a permanent prompt block
 // or a renumbering of the existing assistant floors / CP5 / Long50 ranges.
@@ -30,7 +30,7 @@ export function sourceFloor(chat, floor) {
 export function publishedOpeningCoverage(chat, snapshot, publishedValue) {
     const opening = getOpeningSource(chat);
     return Boolean(opening && publishedValue && snapshot?.value === publishedValue
-        && snapshot.blocks?.some(block => ['checkpoint', 'long-story'].includes(block.type)
+        && snapshot.blocks?.some(block => ['checkpoint', 'long-story', 'summary-story'].includes(block.type)
             && block.coversHistory === true && block.openingContentFingerprint === opening.contentFingerprint
             && block.text?.trim() && publishedValue.includes(block.text)));
 }

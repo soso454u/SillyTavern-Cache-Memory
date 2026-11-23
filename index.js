@@ -1,4 +1,4 @@
-import { getSummaryEntries } from './src/opening-source.js?v=1.27.38';
+import { getSummaryEntries, displayFloor } from './src/opening-source.js?v=1.27.39';
 import {
     chat,
     chat_metadata,
@@ -13,23 +13,23 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.38';
-import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.38';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.38';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.38';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.38';
-import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, trimBranchTimeline, resetBranchNumbering } from './src/utils.js?v=1.27.38';
-import { MemoryStore } from './src/memory-store.js?v=1.27.38';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.38';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.38';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.38';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.38';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.38';
-import { chatFileIdentity } from './src/chat-file.js?v=1.27.38';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.38';
-import { memoryContentDigest } from './src/memory-store.js?v=1.27.38';
-import { BackgroundMemoryTasks } from './src/background-memory.js?v=1.27.38';
-import { hydrateHostChat } from './src/host-chat.js?v=1.27.38';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.39';
+import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.39';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.39';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.39';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.39';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, trimBranchTimeline, resetBranchNumbering } from './src/utils.js?v=1.27.39';
+import { MemoryStore } from './src/memory-store.js?v=1.27.39';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.39';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.39';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.39';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.39';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.39';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.39';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.39';
+import { memoryContentDigest } from './src/memory-store.js?v=1.27.39';
+import { BackgroundMemoryTasks } from './src/background-memory.js?v=1.27.39';
+import { hydrateHostChat } from './src/host-chat.js?v=1.27.39';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -249,7 +249,8 @@ function updateInjection(reason = 'manual edit', injectionFloor = promptHistoryF
     if (!settings || !shouldRefreshInjection(settings, reason)) return;
     const current = store.current();
     const sourceStore = store.effectiveStore(chat);
-    const result = refreshSnapshot(current, { ...settings, injectionFloor, inheritedThrough: chatInheritedThrough(chat) }, reason, sourceStore);
+    const result = refreshSnapshot(current, { ...settings, injectionFloor, inheritedThrough: chatInheritedThrough(chat),
+        summaryFloorOffset: displayFloor(chat, 0) }, reason, sourceStore);
     // Publish this format migration once through the existing confirmed save
     // queue; ordinary reloads still never upload an unchanged window snapshot.
     const migration = reason === 'chat changed' && result.migrated;
@@ -374,12 +375,12 @@ function applyHistorySelection(coreChat, type, snapshot, publishedValue, summari
     });
     if (result.removed || result.replacedWithSummaries) coreChat.splice(0, coreChat.length, ...result.messages);
     if (result.retainedOlderDetails?.length) {
-        const details = result.retainedOlderDetails.slice(0, 6).map(({ floor, reason }) => `第${floor}层（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
+        const details = result.retainedOlderDetails.slice(0, 6).map(({ floor, reason }) => `第${displayFloor(chat, floor)}层（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
         ui?.setStatus('warning', `最近${settings.recentRawFloors}层模式额外保留 ${result.retainedOlderDetails.length} 层原文：${details.join('、')}。`);
     }
     if (result.omittedOlderDetails?.length) {
         const details = result.omittedOlderDetails.slice(0, 6).map(({ floor, reason }) =>
-            `${floor === null ? '未定位楼层' : `第${floor}层`}（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
+            `${floor === null ? '未定位楼层' : `第${displayFloor(chat, floor)}层`}（${HISTORY_RETENTION_LABELS[reason] ?? '未确认覆盖'}）`);
         ui?.setStatus('warning', `本次按设定只发送最近 ${result.recentRawCount} 层 char 正文。${result.omittedOlderDetails.length} 层旧正文的记忆覆盖未核实，已按上限省略：${details.join('、')}。`);
     }
     reportCacheDebug('historyHandoff', {

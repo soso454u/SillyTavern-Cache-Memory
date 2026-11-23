@@ -5,7 +5,7 @@ import { aggregateVersion, createEmptyStore, MemoryStore, summaryVersion } from 
 import { refreshSnapshot, effectiveInjectionMode, shouldRefreshInjection } from '../src/cache-control.js';
 import { filterCoveredHistory, promptHistoryFloor } from '../src/history-handoff.js';
 import { getAssistantMessages, messageFingerprint } from '../src/utils.js';
-import { getOpeningSource } from '../src/opening-source.js';
+import { getOpeningSource, getSummaryEntries } from '../src/opening-source.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { summaryUserSource } from '../src/summary-source.js';
 import { memoryOverviewStats, configTemplate } from '../src/ui.js';
@@ -38,6 +38,43 @@ function send(f, core = structuredClone(f.chat), type = 'normal') {
 const storyBlocks = store => store.injectionSnapshot.blocks.filter(block => block.coversHistory);
 const rawFloors = result => result.messages.filter(row => /^正文\d+：/.test(row.mes)).map(row => Number(row.mes.match(/^正文(\d+)/)[1]));
 
+function openingSummary(f) {
+    const entry = getSummaryEntries(f.chat)[0];
+    f.store.summaries[entry.messageId] = { messageId: entry.messageId, floor: 0, status: 'frozen',
+        sourceContentFingerprint: entry.contentFingerprint, sourceFingerprint: entry.fingerprint,
+        userSourceFingerprint: summaryUserSource(f.chat, entry).fingerprint, event: '合成开场：守卫收好通行证，旅人约定清晨归还。' };
+}
+
+for (const isUser of [false, true]) for (const count of [1, 3, 5]) test(`opening obeys the same rolling raw window and its summary enters once outside it (user=${isUser}, N=${count})`, () => {
+    const inside = fixture(count - 1, { recentRawFloors: count }); inside.chat[0].is_user = isUser; openingSummary(inside);
+    const visible = send(inside);
+    assert.equal(visible.messages.some(row => row.send_date === 'opening'), true);
+    assert.equal(storyBlocks(inside.store).some(block => block.startFloor === 0), false);
+    const outside = fixture(count, { recentRawFloors: count }); outside.chat[0].is_user = isUser; openingSummary(outside);
+    const saved = structuredClone(outside.chat), result = send(outside);
+    assert.equal(result.messages.some(row => row.send_date === 'opening'), false);
+    assert.equal(result.recentRawCount, count);
+    const block = storyBlocks(outside.store).find(block => block.startFloor === 0);
+    assert.match(block.text, /^\[SUMMARY_STORY_1\]/); assert.match(block.text, /合成开场/);
+    assert.equal(storyBlocks(outside.store).filter(block => block.startFloor === 0).length, 1);
+    assert.deepEqual(outside.chat, saved);
+});
+
+test('opening Summary and CP/Long take over in order without a permanent duplicate opening block', () => {
+    const f = fixture(7); openingSummary(f); send(f);
+    assert.deepEqual(storyBlocks(f.store).filter(block => block.type === 'summary-story').map(block => block.startFloor), [0, 1, 2, 3, 4]);
+    assert.deepEqual(f.store.injectionSnapshot.value.match(/\[SUMMARY_STORY_\d+\]/g),
+        [1, 2, 3, 4, 5].map(floor => `[SUMMARY_STORY_${floor}]`));
+    const cp = fixture(8); openingSummary(cp); const cpResult = send(cp);
+    assert.equal(storyBlocks(cp.store).some(block => block.startFloor === 0), false);
+    assert.match(cp.store.injectionSnapshot.value, /第1–6层/);
+    assert.equal(cpResult.messages.some(row => row.send_date === 'opening'), false);
+    const long = fixture(53); openingSummary(long); send(long);
+    assert.equal(storyBlocks(long.store).filter(block => block.openingContentFingerprint).length, 1);
+    assert.match(long.store.injectionSnapshot.value, /LONG_STORY_1_51/);
+    assert.equal(storyBlocks(long.store).some(block => block.type === 'summary-story' && block.startFloor === 0), false);
+});
+
 const shortMode = INJECTION_MODES.CHECKPOINT_SHORT_HISTORY;
 function prepareShortSources(f) {
     for (const entry of getAssistantMessages(f.chat)) {
@@ -58,6 +95,17 @@ function sendShort(f, core = structuredClone(f.chat), type = 'normal', published
     return filterCoveredHistory(core, f.chat, f.store.injectionSnapshot, published,
         { summaries: f.store.summaries, type, injectionMode: shortMode, recentRawFloors: f.settings.recentRawFloors });
 }
+
+test('short history replaces the out-of-window opening with its own Summary while its frozen prefix stays unchanged', () => {
+    const f = fixture(4, { injectionMode: shortMode }); openingSummary(f); prepareShortSources(f);
+    refreshSnapshot(f.store, f.settings, 'manual reinject'); const frozen = structuredClone(f.store.injectionSnapshot);
+    const result = sendShort(f);
+    assert.equal(result.messages.some(row => row.send_date === 'opening'), false);
+    assert.match(result.messages[0].mes, /^\[SUMMARY_STORY_1\]/);
+    assert.match(result.messages[0].mes, /合成开场/);
+    assert.deepEqual(rawFloors(result), [2, 3, 4]);
+    assert.deepEqual(f.store.injectionSnapshot, frozen);
+});
 
 test('checkpoint short history holds the CP/Long prefix at 5, 6, 9, 10, 11, 120 and 121 while the tail advances', () => {
     const f = fixture(0, { injectionMode: shortMode, strictCacheMode: false });
@@ -88,7 +136,7 @@ test('checkpoint short history holds the CP/Long prefix at 5, 6, 9, 10, 11, 120 
         assert.equal(result.messages.at(-1).mes, '本轮输入');
         assert.equal(result.messages.some(row => row.mes === '初始背景'), floor < 10);
         assert.doesNotMatch(f.store.injectionSnapshot.value, /\[SUMMARY_STORY_/);
-        assert.deepEqual(result.retainedOlderFloors, []);
+        assert.deepEqual(result.retainedOlderFloors, floor < 10 ? [0] : []);
         for (let n = 1; n <= floor; n++) assert.equal(Number(raw.includes(n)) + Number(tail.includes(n))
             + blocks.filter(block => block.startFloor <= n && block.endFloor >= n).length, 1);
         if (floor >= 120) assert.deepEqual(blocks.filter(block => block.type === 'long-story').map(block => block.endFloor), [50, 100]);
@@ -120,7 +168,7 @@ test('checkpoint short history keeps missing, failed or unverified floors and pr
     const result = sendShort(f);
     assert.deepEqual(rawFloors(result), [2, 6, 7, 9, 10, 11]);
     assert.deepEqual(tailFloors(result), [3, 8]);
-    assert.deepEqual(result.retainedOlderFloors, [2, 6, 7]);
+    assert.deepEqual(result.retainedOlderFloors, [0, 2, 6, 7]);
     assert.equal(result.messages[0].mes, '开场白已更换');
     assert.deepEqual(f.store.injectionSnapshot, frozen);
     assert.equal(sendShort(f, structuredClone(f.chat), 'normal', 'different prefix').removed, 0);
@@ -142,7 +190,7 @@ test('default rolling publication has exactly one story source per floor for 105
         if (floor >= 4) assert.notEqual(f.store.injectionSnapshot.value, previous);
         previous = f.store.injectionSnapshot.value;
         assert.deepEqual(result.retainedOlderFloors, []);
-        assert.equal(result.messages.some(row => row.mes === '初始背景'), floor < 8);
+        assert.equal(result.messages.some(row => row.mes === '初始背景'), floor < 3);
         for (const key of ['summaries', 'checkpoints', 'longMemories', 'keepRegistry']) assert.deepEqual(f.store[key], records[key]);
     }
     assert.deepEqual(storyBlocks(f.store).filter(b => b.type === 'long-story').map(b => [b.startFloor, b.endFloor]), [[1, 50], [51, 100]]);
@@ -172,12 +220,12 @@ test('missing or failed CP uses summaries; unavailable old summaries are reporte
     delete f.store.summaries[entry.messageId];
     result = send(f);
     assert.deepEqual(rawFloors(result), [10, 11, 12]);
-    assert.deepEqual(result.omittedOlderDetails, [{ floor: 4, reason: 'summary-missing' }]);
+    assert.deepEqual(result.omittedOlderDetails, [{ floor: 0, reason: 'summary-missing' }, { floor: 4, reason: 'summary-missing' }]);
     for (const record of [{ status: 'failed', event: '旧的失败结果' }, { status: 'frozen', state: '只有状态，不能代替剧情' }]) {
         f.store.summaries[entry.messageId] = { messageId: entry.messageId, floor: 4, ...record };
         result = send(f);
         assert.deepEqual(rawFloors(result), [10, 11, 12]);
-        assert.deepEqual(result.omittedOlderDetails.map(row => row.floor), [4]);
+        assert.deepEqual(result.omittedOlderDetails.map(row => row.floor), [0, 4]);
     }
 });
 
@@ -228,12 +276,12 @@ test('Rolling caps the request even when the projection is empty or unpublished 
     const snapshot = f.store.injectionSnapshot;
     const unpublished = filterCoveredHistory(structuredClone(f.chat), f.chat, snapshot, 'not published', { summaries: f.store.summaries });
     assert.deepEqual(rawFloors(unpublished), [10, 11, 12]);
-    assert.equal(unpublished.omittedOlderDetails.length, 9);
-    assert.ok(unpublished.messages.some(row => row.mes === '初始背景'));
+    assert.equal(unpublished.omittedOlderDetails.length, 10);
+    assert.equal(unpublished.messages.some(row => row.mes === '初始背景'), false);
     const empty = fixture(12); empty.store.summaries = {}; empty.store.checkpoints = [];
     const original = structuredClone(empty.chat);
     assert.equal(send(empty).recentRawCount, 3);
-    assert.equal(send(empty, empty.chat.slice()).omittedOlderDetails.length, 9);
+    assert.equal(send(empty, empty.chat.slice()).omittedOlderDetails.length, 10);
     assert.deepEqual(empty.chat, original);
     f.chat.find(row => row.send_date === 'a4').mes = '正文4：人工改写的新事实';
     assert.deepEqual(rawFloors(send(f)), [10, 11, 12]);

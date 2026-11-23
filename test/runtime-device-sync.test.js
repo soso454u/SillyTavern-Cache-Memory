@@ -1,4 +1,4 @@
-import { getSummaryEntries } from '../src/opening-source.js';
+import { getSummaryEntries, displayFloor } from '../src/opening-source.js';
 import { trimBranchTimeline } from '../src/utils.js';
 import { hydrateHostChat } from '../src/host-chat.js';
 import test from 'node:test';
@@ -31,7 +31,7 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
     let remote = createEmptyStore(imported ? JSON.stringify(['character', 'original-avatar.png', 'original-filename']) : chatId), writes = 0;
     for (const entry of getAssistantMessages(chat)) remote.summaries[entry.messageId] = {messageId:entry.messageId, floor:entry.floor, event:`合成事件${entry.floor}`, status:'frozen', frozen:true, sourceFingerprint:entry.fingerprint, sourceContentFingerprint:entry.contentFingerprint};
     remote.checkpoints.push({id:'checkpoint-1', startFloor:1, endFloor:5, content:'已保存历史', status:'frozen', openingContentFingerprint:getOpeningSource(chat).contentFingerprint});
-    cache.refreshSnapshot(remote, settings, 'manual reinject');
+    cache.refreshSnapshot(remote, { ...settings, summaryFloorOffset: displayFloor(chat, 0) }, 'manual reinject');
     const metadata = {integrity: 'synthetic-file-integrity', cache_memory: clone(remote)};
     if (!imported) metadata.cache_memory.summaries[getAssistantMessages(chat)[0].messageId].event = '旧窗口缓存';
     const published = [], branchFiles = new Map();
@@ -51,7 +51,7 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
     class Server extends EmptyClient {available=false;}
     class Publisher {publish(value){published.push(value);return {};}dispose(){}}
     const bindings = {chat, chat_metadata:metadata, eventSource:{on:(name, fn)=>handlers.set(name,fn), off:name=>handlers.delete(name)}, event_types:{CHAT_CHANGED:'changed', CHAT_LOADED:'loaded'}, extension_prompt_roles:{}, extension_prompt_types:{}, getCurrentChatId:()=> 'synthetic', isGenerating:()=>false, saveSettingsDebounced:()=>{}, setExtensionPrompt:()=>{}, extension_settings:{[defaults.MODULE_ID]:settings}, getContext:()=>context, promptManager:null,
-        SummaryApiClient:EmptyClient, ApiCacheAdapterBridge:EmptyClient, CacheMemoryInjectionPublisher:Publisher, MemoryStore, MemorySummarizer:EmptyClient, CacheMemoryUI:UI, MemoryPersistenceCoordinator, readSillyTavernRemoteStore, chatFileIdentity, captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch, memoryContentDigest, MemoryServerClient:Server, chatInheritedThrough, getAssistantMessages, getSummaryEntries, trimBranchTimeline, hydrateHostChat, window, document,
+        SummaryApiClient:EmptyClient, ApiCacheAdapterBridge:EmptyClient, CacheMemoryInjectionPublisher:Publisher, MemoryStore, MemorySummarizer:EmptyClient, CacheMemoryUI:UI, MemoryPersistenceCoordinator, readSillyTavernRemoteStore, chatFileIdentity, captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch, memoryContentDigest, MemoryServerClient:Server, chatInheritedThrough, getAssistantMessages, getSummaryEntries, displayFloor, trimBranchTimeline, hydrateHostChat, window, document,
         requestAnimationFrame:fn=>setTimeout(fn,0), cancelAnimationFrame:clearTimeout,
         API_KEY_STORAGE_KEY:defaults.API_KEY_STORAGE_KEY, INJECTION_KEY:defaults.INJECTION_KEY, INJECTION_MODES:defaults.INJECTION_MODES, MODULE_ID:defaults.MODULE_ID, normalizeLoadedSettings:defaults.normalizeLoadedSettings, normalizeSettings:defaults.normalizeSettings,
         CacheDiagnostics:cache.CacheDiagnostics, refreshSnapshot:cache.refreshSnapshot, shouldRefreshInjection:cache.shouldRefreshInjection, filterCoveredHistory, promptHistoryFloor};
@@ -86,7 +86,7 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
         assert.equal(toggled.filter(row=>row.is_user).length,!lastUserOnly ? 1 : injectionMode === 'rolling' ? 4 : historyHandoff ? 6 : 11);
         assert.deepEqual(runtime.store.current().injectionSnapshot,snapshotBefore);
         runtime.updateSettings({lastUserOnly});
-        remote.checkpoints[0].content='服务器最新重大历史';cache.refreshSnapshot(remote, settings,'manual reinject');
+        remote.checkpoints[0].content='服务器最新重大历史';cache.refreshSnapshot(remote, { ...settings, summaryFloorOffset: displayFloor(chat, 0) },'manual reinject');
         window.dispatchEvent(new Event('focus'));await settle();
         assert.equal(writes,imported ? 1 : 0);assert.equal(published.at(-1),remote.injectionSnapshot.value);
         handlers.get('loaded')();await new Promise(resolve=>setTimeout(resolve,5));await settle();assert.equal(writes,imported ? 1 : 0);

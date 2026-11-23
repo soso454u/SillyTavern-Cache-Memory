@@ -63,7 +63,7 @@ for(const role of [false,true]) test(`opening joins only the first CP, then Long
 });
 
 for(const role of [false,true]) test(`old first CP is untouched until explicit regeneration; unpublished opening stays (user=${role})`,async()=>{
-    const f=fixture(role);
+    const f=fixture(role); f.settings.injectionMode='checkpoint_boundary';
     const old={id:'checkpoint-001',startFloor:1,endFloor:5,status:'frozen',content:'[Stage Story]\n旧首段。',manualEdited:true};
     f.store.addCheckpoint(old);
     assert.deepEqual(await f.summarizer.generateCheckpoint(1,5),f.store.current().checkpoints[0]);
