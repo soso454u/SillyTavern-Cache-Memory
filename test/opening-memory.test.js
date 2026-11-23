@@ -4,7 +4,7 @@ import { MemoryStore } from '../src/memory-store.js';
 import { normalizeSettings } from '../src/defaults.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { getAssistantMessages } from '../src/utils.js';
-import { getOpeningSource, publishedOpeningCoverage, stageStartLabel } from '../src/opening-source.js';
+import { getOpeningSource, getSummaryEntries, displayFloor, sourceFloor, publishedOpeningCoverage, stageStartLabel } from '../src/opening-source.js';
 import { refreshSnapshot } from '../src/cache-control.js';
 import { filterCoveredHistory } from '../src/history-handoff.js';
 
@@ -93,4 +93,35 @@ test('opening changes during aggregation reject the response and keep the old fi
     f.apiClient.complete=async()=>{f.chat[0].mes='改后的开场白';return {finishReason:'stop',content:'[Stage Story]\n过期结果'};};
     await assert.rejects(f.summarizer.generateCheckpoint(1,5,{overwrite:true}),error=>error.code==='SOURCE_CHANGED');
     assert.deepEqual(f.store.current().checkpoints[0],before);
+});
+
+test('opening gets its own editable Summary displayed as layer one without renumbering saved reply sources', async () => {
+    const f = fixture(), original = structuredClone(f.store.current().summaries);
+    const opening = getSummaryEntries(f.chat)[0];
+    assert.equal(opening.isOpening, true); assert.equal(displayFloor(f.chat, opening.floor), 1);
+    assert.equal(displayFloor(f.chat, getAssistantMessages(f.chat)[0].floor), 2);
+    assert.equal(sourceFloor(f.chat, 1), opening.floor); assert.equal(sourceFloor(f.chat, 2), 1);
+    f.apiClient.complete = async () => ({ content: '[SUMMARY]\n[Title]\n开场约定\n[Event]\n旅人已交出钥匙，约定天亮归还，医师尚不知情。' });
+    const record = await f.summarizer.summarizeMessage(opening.messageId, { deferAggregates: true });
+    assert.equal(record.floor, 0); assert.equal(record.sourceContentFingerprint, opening.contentFingerprint);
+    assert.equal(f.store.currentSummaries(f.chat).length, 56);
+    for (const [key, value] of Object.entries(original)) assert.deepEqual(f.store.current().summaries[key], value);
+    f.store.updateSummary(record.messageId, { event: '人工修正的开场约定', manualEdited: true });
+    assert.equal(f.store.getSummaryForEntry(opening).event, '人工修正的开场约定');
+    f.chat[0].mes = '新的开场事实';
+    assert.equal(f.store.changedTimelineFloor(f.chat), 0);
+    f.store.discardTimelineFrom(0); assert.deepEqual(f.store.current().summaries, {});
+});
+
+test('a chat containing only an opening can be filled, and a generated first reply is never duplicated as an opening', async () => {
+    const f = fixture(); f.chat.splice(1); f.store.clearCurrentChat(f.chat);
+    f.apiClient.complete = async () => ({ content: '[SUMMARY]\n[Event]\n旅人交出钥匙并约定归还。' });
+    assert.equal(f.summarizer.getMissingMemoryPlan().summaries.length, 1);
+    const result = await f.summarizer.fillMissingMemories();
+    assert.equal(result.created, 1); assert.equal(result.failed, 0);
+    assert.equal(f.store.currentSummaries(f.chat).length, 1);
+    const generated = [{ mes: '模型生成的首条普通回复', gen_started: 'g1' }];
+    assert.equal(getSummaryEntries(generated).length, 1);
+    assert.equal(getSummaryEntries(generated)[0].isOpening, undefined);
+    assert.equal(displayFloor(generated, 1), 1);
 });

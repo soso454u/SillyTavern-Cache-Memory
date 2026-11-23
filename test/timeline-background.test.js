@@ -45,17 +45,33 @@ function backgroundFixture({ authority = false } = {}) {
     return f;
 }
 
+test('chat preview reads only displayed messages without selecting, generating, switching or saving', async () => {
+    const f = backgroundFixture(), before = clone(f.disk.get('one'));
+    f.disk.get('one')[3].mes = '<img src=x onerror=alert(1)> 原文标签按文字查看';
+    const messages = await f.tasks.previewChat('b.png', 'one');
+    assert.deepEqual(messages[1], { name: '用户', text: '请送信' });
+    assert.equal(messages[2].name, '合成B'); assert.match(messages[2].text, /<img/);
+    assert.equal(messages[0].chat_metadata, undefined);
+    assert.equal(f.calls.length, 0); assert.equal(f.writes.length, 0); assert.equal(f.context.chatId, 'playing');
+    assert.equal(f.tasks.state.status, 'idle');
+    assert.deepEqual(f.disk.get('one')[0], before[0]);
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(f.tasks.previewChat('b.png', 'one', { signal: controller.signal }), /cancelled/);
+    f.disk.set('one', {});
+    await assert.rejects(f.tasks.previewChat('b.png', 'one'), /读取不完整/);
+});
+
 for (const authority of [false, true]) test(`background tasks save each selected chat without switching the foreground (authority=${authority})`, async () => {
     const f = backgroundFixture({ authority }), before = clone({ chat: f.context.chat, chatMetadata: f.context.chatMetadata });
     const state = await f.tasks.start('b.png', ['one', 'two']);
     assert.equal(state.status, 'completed', state.message);
     assert.equal(state.completed, 2);
     assert.deepEqual(f.context.chat, before.chat); assert.deepEqual(f.context.chatMetadata, before.chatMetadata);
-    assert.equal(f.context.chatId, 'playing'); assert.equal(f.calls.length, 8);
+    assert.equal(f.context.chatId, 'playing'); assert.equal(f.calls.length, 10);
     for (const file of ['one', 'two']) {
         const rows = f.disk.get(file), memory = rows[0].chat_metadata.cache_memory;
         assert.equal(memory.chatId, JSON.stringify(['character', 'b.png', file]));
-        assert.equal(Object.keys(memory.summaries).length, 2);
+        assert.equal(Object.keys(memory.summaries).length, 3);
         assert.equal(memory.checkpoints.length, 1); assert.equal(memory.longMemories.length, 1);
         assert.deepEqual(rows[0].chat_metadata.unrelated, { keep: true });
         assert.equal(rows[3].mes, '信使接过信件。');

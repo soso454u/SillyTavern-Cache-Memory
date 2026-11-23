@@ -1,8 +1,8 @@
-import { MemoryStore, normalizeStore, memoryContentDigest } from './memory-store.js?v=1.27.37';
-import { MemorySummarizer } from './summarizer.js?v=1.27.37';
-import { MemoryPersistenceCoordinator } from './persistence.js?v=1.27.37';
-import { chatFileIdentity } from './chat-file.js?v=1.27.37';
-import { trimBranchTimeline } from './utils.js?v=1.27.37';
+import { MemoryStore, normalizeStore, memoryContentDigest } from './memory-store.js?v=1.27.38';
+import { MemorySummarizer } from './summarizer.js?v=1.27.38';
+import { MemoryPersistenceCoordinator } from './persistence.js?v=1.27.38';
+import { chatFileIdentity } from './chat-file.js?v=1.27.38';
+import { trimBranchTimeline } from './utils.js?v=1.27.38';
 
 const clone = value => structuredClone(value);
 const filename = value => String(value ?? '').replace(/\.jsonl$/iu, '');
@@ -39,6 +39,18 @@ export class BackgroundMemoryTasks {
         if (!Array.isArray(rows) && (!rows || typeof rows !== 'object')) throw new Error('酒馆未返回有效聊天列表');
         const files = (Array.isArray(rows) ? rows : Object.values(rows)).map(row => filename(row?.file_name ?? row?.file_id)).filter(Boolean);
         return [...new Set(files)].sort((a, b) => a.localeCompare(b));
+    }
+
+    async previewChat(avatar, file, { signal } = {}) {
+        const character = this.characters().find(row => row.avatar === avatar);
+        if (!character || !file || typeof file !== 'string') throw new Error('请选择有效的角色聊天');
+        const rows = await this.request('/api/chats/get', { avatar_url: avatar, ch_name: character.name, file_name: file }, signal);
+        if (!Array.isArray(rows) || !rows[0]?.chat_metadata
+            || rows.slice(1).some(row => !row || typeof row.mes !== 'string')) throw new Error('聊天内容读取不完整，请重试');
+        // Preview needs no metadata, memory, Swipe alternatives or generated
+        // markup. Keep just the visible transcript in the current page.
+        return rows.slice(1).map(row => ({ text: row.mes,
+            name: String(row.name || (row.is_system ? '系统' : row.is_user ? '用户' : character.name)) }));
     }
 
     cancel() {

@@ -15,7 +15,7 @@ const storage = () => {
 };
 const source = (await readFile(new URL('../index.js', import.meta.url), 'utf8'))
     .replace(/^import[\s\S]*?from ['"][^'"]+['"];\n/gm, '').replaceAll('export function ', 'function ');
-const modules = Object.assign({}, ...await Promise.all(['defaults', 'cache-control', 'utils', 'memory-store', 'summarizer', 'persistence', 'history-handoff', 'chat-file', 'chat-branch', 'host-chat']
+const modules = Object.assign({}, ...await Promise.all(['defaults', 'cache-control', 'utils', 'memory-store', 'summarizer', 'persistence', 'history-handoff', 'chat-file', 'chat-branch', 'host-chat', 'opening-source']
     .map(name => import(`../src/${name}.js`))));
 async function runtimeFixture(t, { blocked = false, invalid = false, shortHistory = false, generating = true } = {}) {
     t.mock.method(console, 'info', () => {}); t.mock.method(console, 'warn', () => {});

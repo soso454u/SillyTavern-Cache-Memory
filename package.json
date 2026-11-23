@@ -1,6 +1,6 @@
 {
   "name": "sillytavern-cache-memory",
-  "version": "1.27.37",
+  "version": "1.27.38",
   "description": "Compact rolling story memory for SillyTavern.",
   "type": "module",
   "scripts": {

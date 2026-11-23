@@ -1,19 +1,19 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.37';
-import { isOutputTruncated } from './api-client.js?v=1.27.37';
-import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.37';
-import { isRejectedSummary } from './response-quality.js?v=1.27.37';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.37';
-import { generationPrompt } from './generation-prompts.js?v=1.27.37';
-import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.37';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.37';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.37';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.37';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.37';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.37';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.37';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.37';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.37';
-import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.37';
+import { selectedTableRecords } from './character-tables.js?v=1.27.38';
+import { isOutputTruncated } from './api-client.js?v=1.27.38';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.38';
+import { isRejectedSummary } from './response-quality.js?v=1.27.38';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.38';
+import { generationPrompt } from './generation-prompts.js?v=1.27.38';
+import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.38';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.38';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.38';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.38';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.38';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.38';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.38';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.38';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.38';
+import { getOpeningSource, getSummaryEntries, displayFloor, stageStartLabel } from './opening-source.js?v=1.27.38';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -299,7 +299,7 @@ export class MemorySummarizer {
     async summarizeMessage(messageId, options = {}) {
         const chatId = this.store.current().chatId;
         const revision = this.contextRevision;
-        const selected = getAssistantMessages(this.getChat()).find(item => item.messageId === messageId);
+        const selected = getSummaryEntries(this.getChat()).find(item => item.messageId === messageId);
         const fingerprint = options.expectedFingerprint ?? selected?.fingerprint ?? '';
         // A pending old Swipe must not swallow the new current text.
         const userFingerprint = summaryUserSource(this.getChat(), selected).fingerprint;
@@ -308,7 +308,7 @@ export class MemorySummarizer {
         const pending = this.enqueue(() => {
             if (revision !== this.contextRevision || this.store.current().chatId !== chatId) throw chatChangedError('摘要');
             if (options.signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
-            const entry = getAssistantMessages(this.getChat()).find(item => item.messageId === messageId);
+            const entry = getSummaryEntries(this.getChat()).find(item => item.messageId === messageId);
             if (!entry) throw new Error('原文不存在，无法生成');
             if (fingerprint && fingerprint !== entry.fingerprint) {
                 throw Object.assign(new Error('原文已编辑或切换备选回复，请重新选择楼层'), { code: 'SOURCE_CHANGED' });
@@ -401,7 +401,7 @@ export class MemorySummarizer {
         const assertContext = () => {
             if (this.store.current().chatId !== chatId || revision !== this.contextRevision) throw chatChangedError('摘要');
             if (signal?.aborted) throw Object.assign(new Error('请求已取消'), { code: 'REQUEST_ABORTED' });
-            const current = getAssistantMessages(this.getChat()).find(item => item.messageId === entry.messageId);
+            const current = getSummaryEntries(this.getChat()).find(item => item.messageId === entry.messageId);
             if (!current || current.fingerprint !== entry.fingerprint || current.floor !== entry.floor
                 || summaryUserSource(this.getChat(), current).fingerprint !== userSource.fingerprint) {
                 throw Object.assign(new Error('请求期间原文已编辑、删除或切换备选回复，请重试本层'), { code: 'SOURCE_CHANGED' });
@@ -410,7 +410,7 @@ export class MemorySummarizer {
                 throw Object.assign(new Error('请求期间既有状态已变化，请重新生成本层'), { code: 'SOURCE_CHANGED' });
             if (targetVersions() !== expectedTargets) throw Object.assign(new Error('另一窗口或设备已更新本层记忆，未覆盖较新摘要'), { code: 'SOURCE_CHANGED' });
         };
-        this.onStatus('busy', `正在总结第 ${entry.floor} 层`);
+        this.onStatus('busy', `正在总结第 ${displayFloor(this.getChat(), entry.floor)} 层`);
         try {
             assertContext();
             const systemPrompt = replacePromptVariables(generationPrompt(settings, 'summary'), {
@@ -432,7 +432,7 @@ export class MemorySummarizer {
                 storyTimeFound: Boolean(sourceMetadata.storyTime),
                 locationFound: Boolean(sourceMetadata.location),
             });
-            const trackChanges = settings.activeStateEnabled || settings.continuityEnabled;
+            const trackChanges = !entry.isOpening && (settings.activeStateEnabled || settings.continuityEnabled);
             const generationStore = this.generationStore();
             const known = trackChanges ? projectActiveState(generationStore, entry.floor - 1) : [];
             stateInput = trackChanges ? trackedContext(generationTrackedRows(known, settings)) : undefined;
@@ -447,7 +447,7 @@ export class MemorySummarizer {
                 signal,
             };
             responseKey = JSON.stringify([flightKey, revision, expectedTargets, request]);
-            const parsed = await this.completeWithRetry(request, assertContext, responseKey, { label: `小总结 · 第 ${entry.floor} 层`, retryDelay, onRetry,
+            const parsed = await this.completeWithRetry(request, assertContext, responseKey, { label: `小总结 · 第 ${displayFloor(this.getChat(), entry.floor)} 层`, retryDelay, onRetry,
                 formatRetry: summaryRetryInstruction(settings.prompts.summary),
                 validate: result => {
                     const cleaned = prepareMemoryResponse(result.content, 'Summary', { source: evidenceSource, prompt: settings.prompts.summary });
@@ -507,7 +507,7 @@ export class MemorySummarizer {
                 const saved = this.store.addSummary(record, { overwrite, entry, background: deferAggregates || this.aggregateDeferrals > 0 });
                 return saved;
             }, assertContext);
-            this.reportSaved(chatId, `小总结 · 第 ${entry.floor} 层`);
+            this.reportSaved(chatId, `小总结 · 第 ${displayFloor(this.getChat(), entry.floor)} 层`);
             this.unsavedResponses.delete(responseKey);
             let aggregateFailure = '';
             try {
@@ -517,11 +517,11 @@ export class MemorySummarizer {
                 aggregateFailure = error.message;
             }
             this.onStatus(aggregateFailure ? 'warning' : 'success', aggregateFailure
-                ? `第 ${entry.floor} 层摘要已冻结，但分层记忆生成失败：${aggregateFailure}`
-                : `第 ${entry.floor} 层摘要已冻结`);
+                ? `第 ${displayFloor(this.getChat(), entry.floor)} 层摘要已冻结，但分层记忆生成失败：${aggregateFailure}`
+                : `第 ${displayFloor(this.getChat(), entry.floor)} 层摘要已冻结`);
             return record;
         } catch (error) {
-            if (error.code === 'SAVE_UNCONFIRMED') this.reportSaved(chatId, `小总结 · 第 ${entry.floor} 层`, 'save-pending');
+            if (error.code === 'SAVE_UNCONFIRMED') this.reportSaved(chatId, `小总结 · 第 ${displayFloor(this.getChat(), entry.floor)} 层`, 'save-pending');
             if (error.code !== 'SAVE_UNCONFIRMED') this.unsavedResponses.delete(responseKey);
             // Network failures can arrive after a chat switch or source edit too.
             try { assertContext(); } catch (contextError) { error = contextError; }
@@ -550,7 +550,7 @@ export class MemorySummarizer {
                 errorDiagnostics: error.diagnostics,
             }, { overwrite: true });
             const hint = error.code === 'INVALID_MEMORY_RESPONSE' ? '。可在「模型接口 → 高级生成设置 → 生成日志」查看模型输出。' : '';
-            this.onStatus('error', `第 ${entry.floor} 层摘要失败：${error.message}${hint}`, error);
+            this.onStatus('error', `第 ${displayFloor(this.getChat(), entry.floor)} 层摘要失败：${error.message}${hint}`, error);
             throw error;
         } finally {
             this.inFlight.delete(flightKey);
@@ -572,7 +572,7 @@ export class MemorySummarizer {
 
     getMissingMemoryPlan({ onlyLong = false } = {}) {
         const settings = this.getSettings(), store = this.store.current();
-        const chat = this.getChat(), assistants = getAssistantMessages(chat);
+        const chat = this.getChat(), assistants = getSummaryEntries(chat);
         const latest = Math.max(assistants.at(-1)?.floor ?? 0, chatInheritedThrough(chat));
         const latestFloor = onlyLong ? Math.max(latest, ...store.checkpoints.filter(isUsableMemory).map(row => row.endFloor)) : latest;
         const checkpointInterval = Math.max(1, Number(settings.checkpointInterval) || 5);

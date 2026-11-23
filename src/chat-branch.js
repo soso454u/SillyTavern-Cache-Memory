@@ -1,10 +1,10 @@
-import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.37';
-import { chatFileIdentity } from './chat-file.js?v=1.27.37';
-import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, resetBranchNumbering } from './utils.js?v=1.27.37';
-import { currentInjectionBlocks } from './injection.js?v=1.27.37';
-import { refreshSnapshot } from './cache-control.js?v=1.27.37';
-import { getOpeningSource } from './opening-source.js?v=1.27.37';
-import { isUsableMemory } from './continuity.js?v=1.27.37';
+import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.38';
+import { chatFileIdentity } from './chat-file.js?v=1.27.38';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, resetBranchNumbering } from './utils.js?v=1.27.38';
+import { currentInjectionBlocks } from './injection.js?v=1.27.38';
+import { refreshSnapshot } from './cache-control.js?v=1.27.38';
+import { getOpeningSource, getSummaryEntries } from './opening-source.js?v=1.27.38';
+import { isUsableMemory } from './continuity.js?v=1.27.38';
 
 const clone = value => structuredClone(value);
 function uniqueId() {
@@ -35,7 +35,7 @@ export function chatFileDownload(rows, name) {
 
 export function prepareChatBranch(rows, { mode = 'through', count, endFloor, name = '平行线' }, settings,
     { uuid = uniqueId, now = () => new Date() } = {}) {
-    const original = rows[0].chat_metadata.cache_memory, chat = rows.slice(1), entries = getAssistantMessages(chat);
+    const original = rows[0].chat_metadata.cache_memory, chat = rows.slice(1), normalEntries = getAssistantMessages(chat), entries = getSummaryEntries(chat);
     if (!entries.length) throw new Error('当前聊天还没有可选择的正常 char 楼层');
     const latest = entries.at(-1).floor;
     let start = entries[0].floor, end = latest, selected;
@@ -47,7 +47,7 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
         selected = chat.slice(sliceStart);
         const opening = getOpeningSource(chat)?.message;
         // A generated first reply is a normal floor, not an extra greeting.
-        if (sliceStart > 0 && opening && !entries.some(row => row.message === opening)) selected.unshift(opening);
+        if (sliceStart > 0 && opening && !normalEntries.some(row => row.message === opening)) selected.unshift(opening);
     } else if (mode === 'through' || mode === 'cutoff' || mode === 'empty') {
         endFloor ??= latest;
         if (!Number.isSafeInteger(endFloor) || !entries.some(row => row.floor === endFloor)) throw new Error(`请选择第 ${entries[0].floor}–${latest} 层中仍有正文的楼层`);
@@ -55,7 +55,7 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
         selected = chat.slice(0, entries.find(row => row.floor === end).messageIndex + 1);
     } else throw new Error('请选择有效的平行线保留方式');
     selected = clone(selected);
-    const offset = mode === 'empty' ? 0 : mode === 'recent' ? start - 1 : chatFloorOffset(chat);
+    const offset = mode === 'empty' ? 0 : mode === 'recent' ? Math.max(0, start - 1) : chatFloorOffset(chat);
     const parentInheritedThrough = chatInheritedThrough(chat);
     const trimMemory = mode === 'cutoff' && end < Math.max(latest, parentInheritedThrough);
     // A cutoff rebuilds KEEP from retained sources. Current overrides and
@@ -78,13 +78,13 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
         for (const block of blocks) { if (block.startFloor > next) break; next = Math.max(next, block.endFloor + 1); }
         if (next <= offset) throw new Error(`第 ${next} 层起尚无完整剧情记忆，请先补齐记忆或保留更多正文`);
     }
-    const hasOpening = getOpeningSource(chat)?.message === chat[0] && !entries.some(row => row.message === chat[0]);
+    const hasOpening = getOpeningSource(chat)?.message === chat[0] && !normalEntries.some(row => row.message === chat[0]);
     if (mode === 'empty') resetBranchNumbering(selected);
     // Resolve the copied message indexes before enabling the new numbering.
     // The copied raw entries correspond to the selected interval in order.
     selected[0].extra = { ...selected[0].extra, cache_memory_branch: { version: 1, floorOffset: offset, hasOpening } };
     const selectedEntries = getAssistantMessages(selected);
-    const originalEntries = entries.filter(entry => entry.floor >= start && entry.floor <= end);
+    const originalEntries = normalEntries.filter(entry => entry.floor >= start && entry.floor <= end);
     const selectedIndexes = new Map();
     for (const [index, entry] of selectedEntries.entries()) {
         const originalFloor = originalEntries[index].floor;

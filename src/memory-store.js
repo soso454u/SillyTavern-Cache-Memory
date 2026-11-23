@@ -1,8 +1,9 @@
-import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages, resetBranchNumbering } from './utils.js?v=1.27.37';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.37';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.37';
-import { isRejectedSummary } from './response-quality.js?v=1.27.37';
-import { summaryUserSource } from './summary-source.js?v=1.27.37';
+import { getSummaryEntries } from './opening-source.js?v=1.27.38';
+import { chatFloorOffset, chatInheritedThrough, fnv1a, resetBranchNumbering } from './utils.js?v=1.27.38';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.38';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.38';
+import { isRejectedSummary } from './response-quality.js?v=1.27.38';
+import { summaryUserSource } from './summary-source.js?v=1.27.38';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -243,7 +244,7 @@ export class MemoryStore {
 
     syncMessages(chat) {
         // Loading, rendering and source metadata changes never edit saved memory.
-        return getAssistantMessages(chat);
+        return getSummaryEntries(chat);
     }
 
     validateDependencies() { return false; }
@@ -258,14 +259,14 @@ export class MemoryStore {
 
     changedTimelineFloor(chat) {
         if (!Array.isArray(chat) || !chat.length || chat.some(row => row == null)) return null;
-        const entries = getAssistantMessages(chat), byFloor = new Map(entries.map(row => [row.floor, row]));
+        const entries = getSummaryEntries(chat), byFloor = new Map(entries.map(row => [row.floor, row]));
         const inherited = Math.max(chatFloorOffset(chat), chatInheritedThrough(chat));
         const changed = Object.values(this.current().summaries).filter(row => {
             const entry = byFloor.get(row.floor);
-            if (!entry) return row.floor > inherited;
+            if (!entry) return row.floor === 0 || row.floor > inherited;
             return row.sourceContentFingerprint && row.sourceContentFingerprint !== entry.contentFingerprint
                 || Object.hasOwn(row, 'userSourceFingerprint') && row.userSourceFingerprint !== summaryUserSource(chat, entry).fingerprint;
-        }).map(row => row.floor).filter(floor => Number.isSafeInteger(floor) && floor > 0);
+        }).map(row => row.floor).filter(floor => Number.isSafeInteger(floor) && floor >= 0);
         const latest = Math.max(entries.at(-1)?.floor ?? 0, inherited);
         if ([...this.current().checkpoints, ...this.current().longMemories].some(row => row.endFloor > latest)) changed.push(latest + 1);
         return changed.length ? Math.min(...changed) : null;
@@ -276,7 +277,7 @@ export class MemoryStore {
     }
 
     rebindSummaryAtMessageIndex(messageIndex, chat) {
-        const assistants = getAssistantMessages(chat);
+        const assistants = getSummaryEntries(chat);
         const entry = assistants.find(item => item.messageIndex === Number(messageIndex));
         if (!entry) return null;
         const store = this.current();
@@ -301,7 +302,7 @@ export class MemoryStore {
             const rows = byFloor.get(item.floor) ?? [];
             rows.push(item); byFloor.set(item.floor, rows);
         }
-        const entries = getAssistantMessages(chat);
+        const entries = getSummaryEntries(chat);
         const records = entries.flatMap(entry => {
             const record = this.getSummaryForEntry(entry, store, byFloor);
             return isUsableMemory(record) ? [record] : [];
@@ -320,7 +321,7 @@ export class MemoryStore {
     }
 
     summarySourceIndex(chat) {
-        const entries = getAssistantMessages(chat), ids = new Map(), sources = new Map(), floors = new Map();
+        const entries = getSummaryEntries(chat), ids = new Map(), sources = new Map(), floors = new Map();
         const store = this.current(), chatId = store.chatId;
         const records = Object.values(store.summaries);
         // Legacy exports sometimes lost the stable swipe key. Use a positional
@@ -368,7 +369,7 @@ export class MemoryStore {
 
     cleanupSuperseded(chat, { persist = true } = {}) {
         const store = this.current();
-        for (const entry of getAssistantMessages(chat)) {
+        for (const entry of getSummaryEntries(chat)) {
             const direct = store.summaries[entry.messageId];
             const current = isUsableMemory(direct) && summaryMatchesEntry(direct, entry) ? direct
                 : Object.values(store.summaries).filter(item => item.floor === entry.floor
@@ -393,7 +394,7 @@ export class MemoryStore {
     // Later summaries and aggregates may have used the changed floor as model
     // background. Retire that suffix rather than guessing which prose mentions it.
     discardTimelineFrom(floor) {
-        if (!Number.isSafeInteger(floor) || floor < 1) return false;
+        if (!Number.isSafeInteger(floor) || floor < 0) return false;
         const store = this.current(), deletedAt = new Date().toISOString();
         const retire = (type, id) => { store.tombstones[`${type}:${id}`] = { deletedAt, sourceFloor: floor }; };
         for (const [key, item] of Object.entries(store.summaries)) {

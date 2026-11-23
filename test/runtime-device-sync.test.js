@@ -1,3 +1,4 @@
+import { getSummaryEntries } from '../src/opening-source.js';
 import { trimBranchTimeline } from '../src/utils.js';
 import { hydrateHostChat } from '../src/host-chat.js';
 import test from 'node:test';
@@ -50,7 +51,7 @@ for (const { injectionMode, strictCacheMode, historyHandoff, lastUserOnly, impor
     class Server extends EmptyClient {available=false;}
     class Publisher {publish(value){published.push(value);return {};}dispose(){}}
     const bindings = {chat, chat_metadata:metadata, eventSource:{on:(name, fn)=>handlers.set(name,fn), off:name=>handlers.delete(name)}, event_types:{CHAT_CHANGED:'changed', CHAT_LOADED:'loaded'}, extension_prompt_roles:{}, extension_prompt_types:{}, getCurrentChatId:()=> 'synthetic', isGenerating:()=>false, saveSettingsDebounced:()=>{}, setExtensionPrompt:()=>{}, extension_settings:{[defaults.MODULE_ID]:settings}, getContext:()=>context, promptManager:null,
-        SummaryApiClient:EmptyClient, ApiCacheAdapterBridge:EmptyClient, CacheMemoryInjectionPublisher:Publisher, MemoryStore, MemorySummarizer:EmptyClient, CacheMemoryUI:UI, MemoryPersistenceCoordinator, readSillyTavernRemoteStore, chatFileIdentity, captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch, memoryContentDigest, MemoryServerClient:Server, chatInheritedThrough, getAssistantMessages, trimBranchTimeline, hydrateHostChat, window, document,
+        SummaryApiClient:EmptyClient, ApiCacheAdapterBridge:EmptyClient, CacheMemoryInjectionPublisher:Publisher, MemoryStore, MemorySummarizer:EmptyClient, CacheMemoryUI:UI, MemoryPersistenceCoordinator, readSillyTavernRemoteStore, chatFileIdentity, captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch, memoryContentDigest, MemoryServerClient:Server, chatInheritedThrough, getAssistantMessages, getSummaryEntries, trimBranchTimeline, hydrateHostChat, window, document,
         requestAnimationFrame:fn=>setTimeout(fn,0), cancelAnimationFrame:clearTimeout,
         API_KEY_STORAGE_KEY:defaults.API_KEY_STORAGE_KEY, INJECTION_KEY:defaults.INJECTION_KEY, INJECTION_MODES:defaults.INJECTION_MODES, MODULE_ID:defaults.MODULE_ID, normalizeLoadedSettings:defaults.normalizeLoadedSettings, normalizeSettings:defaults.normalizeSettings,
         CacheDiagnostics:cache.CacheDiagnostics, refreshSnapshot:cache.refreshSnapshot, shouldRefreshInjection:cache.shouldRefreshInjection, filterCoveredHistory, promptHistoryFloor};

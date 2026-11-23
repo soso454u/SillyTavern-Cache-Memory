@@ -1,8 +1,8 @@
-import { getAssistantMessages } from './utils.js?v=1.27.37';
-import { isRejectedSummary } from './response-quality.js?v=1.27.37';
+import { getAssistantMessages } from './utils.js?v=1.27.38';
+import { isRejectedSummary } from './response-quality.js?v=1.27.38';
 
-import { waitForRetry } from './retry.js?v=1.27.37';
-export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.37';
+import { waitForRetry } from './retry.js?v=1.27.38';
+export { isRetryableError as isRetryableSummaryError, waitForRetry } from './retry.js?v=1.27.38';
 
 function aborted() {
     return Object.assign(new Error('历史补齐已取消'), { code: 'REQUEST_ABORTED' });
@@ -87,7 +87,7 @@ export class HistoryBackfill {
         const assistants = this.store.syncMessages(this.getChat());
         const selectedFloors = mode === 'selected' ? new Set(parseFloorSelection(selection, assistants.map(entry => entry.floor))) : null;
         endFloor ??= assistants.at(-1)?.floor ?? 0;
-        if (!selectedFloors && (!Number.isInteger(startFloor) || !Number.isInteger(endFloor) || startFloor < 1 || endFloor < startFloor || endFloor > (assistants.at(-1)?.floor ?? 0))) {
+        if (!selectedFloors && (!Number.isInteger(startFloor) || !Number.isInteger(endFloor) || startFloor < (assistants[0]?.floor ?? 1) || endFloor < startFloor || endFloor > (assistants.at(-1)?.floor ?? 0))) {
             throw new Error('请选择当前聊天内有效的开始和结束楼层');
         }
         const entries = assistants.filter(entry => selectedFloors ? selectedFloors.has(entry.floor) : entry.floor >= startFloor && entry.floor <= endFloor);

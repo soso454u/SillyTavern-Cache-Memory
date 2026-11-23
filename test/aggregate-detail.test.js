@@ -66,7 +66,7 @@ test('stage card editing exposes only the narrative and keeps protocol markers o
     const context = {
         statusLabel: () => '已冻结', line: (name, value) => new Element('p', `${name}：${value ?? ''}`),
         foldCard: ({ renderBody }) => { const body = new Element('div'); renderBody(body); return body; },
-        isEditing: () => true, inlineEditor: (_body, fields) => { editor = fields; },
+        isEditing: () => true, shownFloor: floor => floor, inlineEditor: (_body, fields) => { editor = fields; },
     };
     CacheMemoryUI.prototype.checkpointCard.call(context, item);
     assert.equal(editor.length, 1); assert.equal(editor[0].key, 'stageStory');

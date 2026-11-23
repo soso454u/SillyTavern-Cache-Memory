@@ -7,6 +7,7 @@ import { createEmptyStore, normalizeStore, MemoryStore } from '../src/memory-sto
 import { normalizeSettings } from '../src/defaults.js';
 import { CacheMemoryUI, configTemplate } from '../src/ui.js';
 import { getOpeningSource } from '../src/opening-source.js';
+import { getSummaryEntries, displayFloor } from '../src/opening-source.js';
 import { filterCoveredHistory, promptHistoryFloor } from '../src/history-handoff.js';
 import { MemorySummarizer } from '../src/summarizer.js';
 import { refreshSnapshot } from '../src/cache-control.js';
@@ -57,6 +58,15 @@ test('a memory-free parallel chat copies the selected raw prefix with an empty i
     assert.deepEqual(getAssistantMessages(chat).map(row => row.floor), [1, 2]);
     assert.doesNotMatch(JSON.stringify(branch.rows), /未来才获得|未来剧情|未来状态/);
     assert.deepEqual(f.rows, before);
+});
+
+test('a branch may retain only the opening, shown as layer one, and its next reply is layer two', () => {
+    const f = fixture(), branch = f.build({ mode: 'empty', endFloor: 0 });
+    const chat = branch.rows.slice(1);
+    assert.equal(chat.length, 1); assert.equal(getSummaryEntries(chat)[0].isOpening, true);
+    assert.equal(displayFloor(chat, getSummaryEntries(chat)[0].floor), 1);
+    chat.push({ mes: '开场后的首条回复', gen_started: 'first-after-opening' });
+    assert.equal(displayFloor(chat, getSummaryEntries(chat)[1].floor), 2);
 });
 
 test('a memory-free branch of a recent-only branch renumbers its remaining raw replies from one', () => {
@@ -183,7 +193,7 @@ test('recent truncation refuses a gap in earlier story coverage and accepts a la
     assert.throws(() => f.build({ mode: 'recent', count: 3 }), /第 6 层/);
     assert.equal(f.build({ mode: 'recent', count: 7 }).startFloor, 6);
     assert.throws(() => prepareChatBranch(f.rows, { mode: 'recent', count: 3 }, { ...f.settings, enabled: false }), /每层更新记忆/);
-    for (const options of [{ mode: 'recent', count: 0 }, { mode: 'recent', count: 1.5 }, { mode: 'recent', count: 13 }, { mode: 'through', endFloor: 99 }]) assert.throws(() => f.build(options));
+    for (const options of [{ mode: 'recent', count: 0 }, { mode: 'recent', count: 1.5 }, { mode: 'recent', count: 14 }, { mode: 'through', endFloor: 99 }]) assert.throws(() => f.build(options));
 });
 
 test('a branch can be branched again while floor numbering and coverage stay consistent', () => {
@@ -246,16 +256,16 @@ test('branch dialog defaults to retaining the prefix and creating without switch
     const f = fixture(); let options;
     assert.match(configTemplate(), /data-export-chat/); assert.match(configTemplate(), /data-create-branch/);
     const ui = Object.assign(Object.create(CacheMemoryUI.prototype), {
-        captureChat: () => f.rows,
+        captureChat: () => f.rows, getChat: () => f.context.chat,
         showPluginDialog: async spec => {
             assert.equal(spec.fields.find(field => field.key === 'switch').value, 'stay');
             const mode = spec.fields.find(field => field.key === 'mode');
             assert.equal(mode.value, 'through');
             assert.deepEqual(mode.options.map(([key]) => key), ['through', 'recent', 'cutoff', 'empty']);
             const endFloor = spec.fields.find(field => field.key === 'endFloor');
-            assert.equal(endFloor.value, 12);
+            assert.equal(endFloor.value, 13);
             assert.deepEqual(endFloor.visibleWhen.value, ['through', 'cutoff', 'empty']);
-            return { name: '测试分支', mode: 'cutoff', endFloor: '7', switch: 'stay' };
+            return { name: '测试分支', mode: 'cutoff', endFloor: '8', switch: 'stay' };
         },
         createChatBranch: async (_rows, value) => { options = value; return { filename: '新聊天', switched: false }; },
         setManagerActionStatus() {},
