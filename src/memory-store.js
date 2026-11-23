@@ -1,7 +1,8 @@
-import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages } from './utils.js?v=1.27.16';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.36';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.36';
-import { isRejectedSummary } from './response-quality.js?v=1.27.36';
+import { chatFloorOffset, chatInheritedThrough, fnv1a, getAssistantMessages, resetBranchNumbering } from './utils.js?v=1.27.37';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.37';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.37';
+import { isRejectedSummary } from './response-quality.js?v=1.27.37';
+import { summaryUserSource } from './summary-source.js?v=1.27.37';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -255,6 +256,21 @@ export class MemoryStore {
 
     reconcileDeletion(chat) { return this.syncMessages(chat); }
 
+    changedTimelineFloor(chat) {
+        if (!Array.isArray(chat) || !chat.length || chat.some(row => row == null)) return null;
+        const entries = getAssistantMessages(chat), byFloor = new Map(entries.map(row => [row.floor, row]));
+        const inherited = Math.max(chatFloorOffset(chat), chatInheritedThrough(chat));
+        const changed = Object.values(this.current().summaries).filter(row => {
+            const entry = byFloor.get(row.floor);
+            if (!entry) return row.floor > inherited;
+            return row.sourceContentFingerprint && row.sourceContentFingerprint !== entry.contentFingerprint
+                || Object.hasOwn(row, 'userSourceFingerprint') && row.userSourceFingerprint !== summaryUserSource(chat, entry).fingerprint;
+        }).map(row => row.floor).filter(floor => Number.isSafeInteger(floor) && floor > 0);
+        const latest = Math.max(entries.at(-1)?.floor ?? 0, inherited);
+        if ([...this.current().checkpoints, ...this.current().longMemories].some(row => row.endFloor > latest)) changed.push(latest + 1);
+        return changed.length ? Math.min(...changed) : null;
+    }
+
     markSummaryOrphanedAtMessageIndex(messageIndex) {
         return Object.values(this.current().summaries).find(item => item.messageIndex === Number(messageIndex)) ?? null;
     }
@@ -374,35 +390,46 @@ export class MemoryStore {
         if (persist) this.persist('memory replacement');
     }
 
-    // Only an explicit assistant text change may retire the Summary of that floor.
-    // No source invalidation or changes to CP, Long, KEEP or frozen injection.
+    // Later summaries and aggregates may have used the changed floor as model
+    // background. Retire that suffix rather than guessing which prose mentions it.
+    discardTimelineFrom(floor) {
+        if (!Number.isSafeInteger(floor) || floor < 1) return false;
+        const store = this.current(), deletedAt = new Date().toISOString();
+        const retire = (type, id) => { store.tombstones[`${type}:${id}`] = { deletedAt, sourceFloor: floor }; };
+        for (const [key, item] of Object.entries(store.summaries)) {
+            if (item.floor >= floor) { retire('Summary', key); delete store.summaries[key]; }
+        }
+        for (const [section, type] of [['checkpoints', 'Checkpoint'], ['longMemories', 'Long Memory']]) {
+            store[section] = store[section].filter(item => {
+                if (item.endFloor < floor) return true;
+                retire(type, item.id); return false;
+            });
+        }
+        // KEEP lifecycle and manual state can themselves contain later evidence.
+        // Rebuild KEEP from the surviving summaries instead of retaining a future resolution.
+        for (const key of Object.keys(store.keepRegistry)) retire('KEEP', key);
+        store.keepRegistry = {};
+        for (const row of Object.values(store.summaries)) this.registerSummaryKeeps(row);
+        for (const key of Object.keys(store.stateOverrides)) retire('stateOverrides', key);
+        store.stateOverrides = {};
+        delete store.injectionSnapshot;
+        this.summaryLinks.clear();
+        this.persist('timeline changed');
+        return true;
+    }
+
     discardChangedSummary(entry, { previouslyDifferent = false } = {}) {
         if (!entry?.contentFingerprint) return false;
         const store = this.current();
         const rows = Object.entries(store.summaries).filter(([, item]) => item?.floor === entry.floor);
-        if (!rows.length || !(previouslyDifferent || rows.some(([, item]) =>
+        if (!(previouslyDifferent || rows.some(([, item]) =>
             item.sourceContentFingerprint && item.sourceContentFingerprint !== entry.contentFingerprint))) return false;
-        for (const [key, item] of rows) {
-            store.tombstones[`Summary:${key}`] = { deletedAt: new Date().toISOString(), sourceFloor: item.floor };
-            delete store.summaries[key];
-        }
-        this.persist('summary body changed');
-        return true;
+        return this.discardTimelineFrom(entry.floor);
     }
 
     discardDeletedSummary(prior) {
         if (!prior) return false;
-        const store = this.current();
-        const ids = new Set([prior.messageId, ...(prior.relatedMessageIds ?? [])]);
-        const rows = Object.entries(store.summaries).filter(([key, item]) => item?.floor === prior.floor
-            && (ids.has(key) || ids.has(item.messageId) || item.messageIndex === prior.messageIndex));
-        if (!rows.length) return false;
-        for (const [key, item] of rows) {
-            store.tombstones[`Summary:${key}`] = { deletedAt: new Date().toISOString(), sourceFloor: item.floor };
-            delete store.summaries[key];
-        }
-        this.persist('summary body changed');
-        return true;
+        return this.discardTimelineFrom(prior.floor);
     }
 
     getSummary(messageId) {
@@ -714,7 +741,7 @@ export class MemoryStore {
         return true;
     }
 
-    clearCurrentChat() {
+    clearCurrentChat(chat) {
         const chatId = this.getChatId();
         const previous = this.current();
         const cleared = createEmptyStore(chatId);
@@ -724,6 +751,7 @@ export class MemoryStore {
             for (const id of ids) cleared.tombstones[`${type}:${id}`] = { deletedAt: new Date().toISOString() };
         }
         this.aggregateBatches.delete(String(chatId ?? ''));
+        resetBranchNumbering(chat);
         this.getMetadata().cache_memory = cleared;
         this.saveMetadata(cleared, 'current chat cleared');
         this.onChange(cleared, 'current chat cleared');

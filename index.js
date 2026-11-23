@@ -12,21 +12,23 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.36';
-import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.17';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.36';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.36';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.18';
-import { chatInheritedThrough, getAssistantMessages } from './src/utils.js?v=1.27.16';
-import { MemoryStore } from './src/memory-store.js?v=1.27.36';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.36';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.36';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.36';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.16';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.36';
-import { chatFileIdentity } from './src/chat-file.js?v=1.27.36';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.36';
-import { memoryContentDigest } from './src/memory-store.js?v=1.27.36';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.37';
+import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.37';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.37';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.37';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.37';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, trimBranchTimeline } from './src/utils.js?v=1.27.37';
+import { MemoryStore } from './src/memory-store.js?v=1.27.37';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.37';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.37';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.37';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.37';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.37';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.37';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.37';
+import { memoryContentDigest } from './src/memory-store.js?v=1.27.37';
+import { BackgroundMemoryTasks } from './src/background-memory.js?v=1.27.37';
+import { hydrateHostChat } from './src/host-chat.js?v=1.27.37';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -57,6 +59,31 @@ let activeChatId = null;
 let onlineHandler = null;
 let refreshRevision = 0;
 let publishedMemoryValue = null;
+let backgroundTasks = null;
+
+function getBackgroundTasks() {
+    return backgroundTasks ??= new BackgroundMemoryTasks({
+        getContext, getSettings: () => settings, memoryServer,
+        fetchImpl: (...args) => window.fetch(...args),
+        createApiClient: getSettings => {
+            // Keep the startup endpoint paired with its own credentials even
+            // if the foreground switches or deletes an API profile mid-job.
+            const profileId = apiClient.profileIndex()?.activeId;
+            const saved = new Map();
+            for (let index = 0; index < window.localStorage.length; index++) {
+                const key = window.localStorage.key(index);
+                if (key?.startsWith(API_KEY_STORAGE_KEY)) saved.set(key, window.localStorage.getItem(key));
+            }
+            const storage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, String(value)),
+                removeItem: key => saved.delete(key), key: index => [...saved.keys()][index], get length() { return saved.size; } };
+            const client = new SummaryApiClient({ getSettings, storage, storageKey: API_KEY_STORAGE_KEY,
+                observeInternalRequest: (signal, payload) => apiCacheAdapter.trackInternal(signal, payload) });
+            client.activeProfileId = profileId;
+            return client;
+        },
+        onChange: state => ui?.renderBackgroundState(state),
+    });
+}
 
 // ST chat filenames are only unique inside a character/group, not globally.
 function memoryChatId() {
@@ -238,6 +265,9 @@ async function refreshChatState({ serverLoaded = false } = {}) {
     const revision = ++refreshRevision;
     await persistence.ready;
     if (revision !== refreshRevision || !memoryChatId()) return;
+    try { await hydrateHostChat(getContext, window); }
+    catch (error) { ui?.setStatus('error', error.message); return; }
+    if (revision !== refreshRevision) return;
     let current, rebound = false;
     try { current = store.current(); }
     catch (error) {
@@ -268,6 +298,8 @@ async function refreshChatState({ serverLoaded = false } = {}) {
         }
     }
     store.persistMigration();
+    const changedFloor = store.changedTimelineFloor(chat);
+    if (changedFloor !== null) retireTimeline(changedFloor);
     store.syncMessages(chat);
     observedAssistantEntries = new Map(getAssistantMessages(chat).map(entry => [entry.messageIndex, entry]));
     if (revision !== refreshRevision || memoryChatId() !== chatId) return;
@@ -330,6 +362,7 @@ function observeMainRequest(data, connection) {
 }
 
 async function prepareInjection() {
+    await hydrateHostChat(getContext, window);
     return summarizer.completeBeforeInjection({ signal: runtimeController.signal });
 }
 
@@ -397,21 +430,43 @@ async function historyInterceptor(coreChat, _contextSize, abort, type) {
     applyHistorySelection(coreChat, type, current.injectionSnapshot, publishedMemoryValue, current.summaries);
 }
 
-// Actual assistant text changes affect only the selected floor's Summary.
+function invalidateTimelineWork() {
+    summarizer.invalidateContext();
+    apiClient.abortAll();
+    ui?.backfill?.cancel({ discard: true });
+    ui?.cancelMissingCheckpointBackfill({ discard: true });
+}
+
+function retireTimeline(floor, { saveBranch = true } = {}) {
+    invalidateTimelineWork();
+    const renumbered = trimBranchTimeline(chat, floor);
+    store.discardTimelineFrom(floor);
+    updateInjection('timeline changed');
+    if (renumbered && saveBranch) void getContext().saveChat?.().catch(error => ui?.setStatus('error', `分支楼层重置尚未保存：${error.message}`));
+}
+
 function reconcileMessageSummary(messageIndex) {
     const index = Number(messageIndex);
     if (!Number.isInteger(index) || index < 0) return;
     const previous = observedAssistantEntries.get(index);
     const entry = getAssistantMessages(chat).find(row => row.messageIndex === index);
     if (!entry) {
-        if (previous && !String(chat[index]?.mes ?? '').trim()) store.discardDeletedSummary(previous);
+        if (chat[index]?.is_user) {
+            const changedFloor = store.changedTimelineFloor(chat);
+            if (changedFloor !== null) retireTimeline(changedFloor);
+        }
+        if (previous && !String(chat[index]?.mes ?? '').trim()) {
+            retireTimeline(previous.floor);
+        }
         observedAssistantEntries.delete(index);
         ui?.queueMessageRender(); ui?.queueManagerRender();
         return;
     }
-    const changed = Boolean(previous && previous.contentFingerprint !== entry.contentFingerprint);
-    store.discardChangedSummary(entry, { previouslyDifferent: changed });
-    observedAssistantEntries.set(index, entry);
+    const changed = Boolean(previous && previous.contentFingerprint !== entry.contentFingerprint)
+        || Object.values(store.current().summaries).some(row => row.floor === entry.floor
+            && row.sourceContentFingerprint && row.sourceContentFingerprint !== entry.contentFingerprint);
+    if (changed) retireTimeline(entry.floor);
+    observedAssistantEntries = new Map(getAssistantMessages(chat).map(row => [row.messageIndex, row]));
     ui?.queueMessageRender(); ui?.queueManagerRender();
     if (!settings?.enabled || !settings.autoSummarize || !settings.independentApi) return;
     summarizer.summarizeMessage(entry.messageId, { expectedFingerprint: entry.fingerprint, recoverPending: true, signal: runtimeController.signal })
@@ -441,6 +496,7 @@ function bindEvents() {
         }, 100);
     });
     bindEvent(event_types.CHAT_CHANGED, () => {
+        backgroundTasks?.stopIfOpened();
         diagnostics.clearPending();
         cacheDebugState = {};
         ui?.setCacheDebug(cacheDebugState);
@@ -460,11 +516,16 @@ function bindEvents() {
         }, 50);
     });
     bindEvent(event_types.MESSAGE_DELETED, () => {
+        if (memoryChatId() !== activeChatId) return;
+        if (chat.some(row => row == null)) return;
         const current = getAssistantMessages(chat);
         const ids = new Set(current.map(row => row.messageId));
-        for (const prior of observedAssistantEntries.values())
-            if (!ids.has(prior.messageId)) store.discardDeletedSummary(prior);
-        observedAssistantEntries = new Map(current.map(entry => [entry.messageIndex, entry]));
+        const removed = [...observedAssistantEntries.values()].filter(prior => !ids.has(prior.messageId)
+            || current.some(row => row.messageId === prior.messageId && row.messageIndex !== prior.messageIndex));
+        if (removed.length) {
+            retireTimeline(removed.sort((a, b) => a.floor - b.floor)[0].floor);
+        }
+        observedAssistantEntries = new Map(getAssistantMessages(chat).map(entry => [entry.messageIndex, entry]));
         store.reconcileDeletion(chat);
         schedule(refreshChatState);
     });
@@ -495,6 +556,31 @@ function initialize() {
         store,
         summarizer,
         getChat: () => chat,
+        getBackgroundTasks,
+        trimChatMemory: async keepFloor => {
+            const identity = memoryChatId(), context = getContext();
+            if (isGenerating() || identity !== activeChatId) throw new Error('请等待聊天加载及回复生成完成');
+            if (typeof context.saveChat !== 'function') throw new Error('当前酒馆缺少保存聊天接口，未清理记忆');
+            const latest = Math.max(getAssistantMessages(chat).at(-1)?.floor ?? 0, chatInheritedThrough(chat));
+            if (!Number.isSafeInteger(keepFloor) || keepFloor < 0 || keepFloor > latest) throw new Error(`保留楼层须为0–${latest}的整数`);
+            if (keepFloor > 0 && keepFloor < chatFloorOffset(chat)) throw new Error('当前分支缺少更早正文，请选择保留起点以后的楼层，或填0从现有正文重新开始');
+            if (!keepFloor) {
+                invalidateTimelineWork(); store.clearCurrentChat(chat); updateInjection('current chat cleared');
+            } else retireTimeline(keepFloor + 1, { saveBranch: false });
+            await context.saveChat();
+            const state = await persistence.flush(identity);
+            if (memoryChatId() !== identity) throw new Error('聊天已切换，请重新进入原聊天核对保存状态');
+            if (state.state !== 'confirmed') throw new Error(state.detail || '记忆清理尚未确认保存');
+            observedAssistantEntries = new Map(getAssistantMessages(chat).map(entry => [entry.messageIndex, entry]));
+        },
+        saveChat: async () => {
+            const context = getContext(), identity = memoryChatId();
+            if (identity !== activeChatId || isGenerating()) throw new Error('请等待当前聊天加载及生成完成');
+            if (typeof context.saveChat !== 'function') throw new Error('当前酒馆缺少保存聊天接口，无法保存楼层重置');
+            await context.saveChat();
+            if (memoryChatId() !== identity) throw new Error('保存期间聊天已切换，请重新进入原聊天核对');
+            observedAssistantEntries = new Map(getAssistantMessages(chat).map(entry => [entry.messageIndex, entry]));
+        },
         captureChat: () => {
             if (isGenerating() || memoryChatId() !== activeChatId) throw new Error('请等待当前聊天加载及回复生成完成');
             return captureChatFile(getContext(), store.current());
@@ -585,6 +671,8 @@ export function onHotUnload() {
     timers.clear();
     frames.clear();
     apiClient.abortAll();
+    backgroundTasks?.cancel();
+    backgroundTasks = null;
     summarizer.invalidateContext();
     ui?.destroy();
     diagnostics.reset();

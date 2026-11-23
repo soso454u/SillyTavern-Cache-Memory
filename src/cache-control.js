@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.27.36';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.36';
-import { fnv1a } from './utils.js?v=1.27.16';
-import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
+import { INJECTION_MODES } from './defaults.js?v=1.27.37';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.37';
+import { fnv1a } from './utils.js?v=1.27.37';
+import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.37';
 
 export function effectiveInjectionMode(settings) {
     if ([INJECTION_MODES.ROLLING, INJECTION_MODES.CHECKPOINT_SHORT_HISTORY].includes(settings.injectionMode)) return settings.injectionMode;
@@ -19,7 +19,7 @@ export function shouldRefreshInjection(settings, reason) {
     if (reason === 'summary mode changed') return false;
     if (settings.injectionMode === INJECTION_MODES.ROLLING) return true;
     if (!freezesInjection(settings)) return true;
-    if (['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared'].includes(reason)) return true;
+    if (['manual edit', 'manual reinject', 'settings changed', 'chat changed', 'current chat cleared', 'timeline changed'].includes(reason)) return true;
     const mode = effectiveInjectionMode(settings);
     return (reason === 'new checkpoint' && [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.CHECKPOINT_SHORT_HISTORY].includes(mode))
         || (reason === 'new long memory' && [INJECTION_MODES.CHECKPOINT_BOUNDARY, INJECTION_MODES.CHECKPOINT_SHORT_HISTORY, INJECTION_MODES.LONG_BOUNDARY].includes(mode));

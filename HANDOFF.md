@@ -1,3 +1,19 @@
+# 接续说明（2026-11-23，v1.27.37）
+
+用户要求继续维护并提交推送：桌面／手机固定窗口尺寸只可拖动，修复删楼／roll后旧记忆污染后文，跨角色聊天后台总结并各自保存，无记忆平行聊天，清空后从现有正文第1层重新计数，以ST为主兼容TT；明确只做最小必要验证。后续追问确认保留1–5删除6以后，旧记忆也应清理；进一步要求处理已存在的混入记忆。
+
+MemoryStore.discardTimelineFrom 在明确变化楼层起清理 Summary 后缀及 endFloor 覆盖后续的 CP／Long，记删除 tombstones，早期KEEP从保留摘要重建，手动状态重新建立，丢弃旧注入快照。timeline changed 是所有注入模式的立即刷新边界。index 在 native delete／edit／swipe 及生成结束取消旧任务并执行；删除事件同样检测user删除引起的索引移动。retireTimeline 同时限制平行线继承编号，并保存branch header／Swipe副本，避免旧继承边界继续跳层。refreshChatState 在完整历史加载和服务器核对后检查已知正文／user指纹以及超出时间线的聚合；不猜测缺来源记录。新增「记忆只保留到第N层」修复入口，确认前后核对聊天、记忆digest和完整原文，确认保存后报告；0走清空及重置计层。保留的原文日后可以再总结，已经生成到正文的错误剧情不自动修改。
+
+prepareChatBranch 新 empty 模式仅复制所选前缀正文，createEmptyStore 独立chatId，清除所有branch floor／Swipe旧标记，安全metadata白名单，不继承KEEP／状态／快照。clearCurrentChat(chat)重置编号；UI经context.saveChat保存消息中的编号变化，flush后才报告成功。当前仍有一层char时下一条是2，而不是26。保留原其他分支模式。
+
+新 background-memory.js 为所选角色的一份／多份聊天顺序补全三层，使用独立 Store／Summarizer／Persistence 及原生聊天文件读写；不切换前台、不调用全局模型取消、不发布前台注入。启动时冻结模型设置与凭证namespace，标记内部请求，避免用户切换配置导致旧URL配新Key。每条替换沿用确认保存流程；后台原生保存读最新header保留其他扩展metadata，核对完整正文／integrity及native memory基线，非force写入后读回；权威库可用时CAS提交后镜像到原生文件，最终再确认镜像。目标被打开、停止、原文改变时停止，成功记录保留；失败显示准确错误，不把未补齐报告完成。任务只在页面存活期运行，无自动恢复后台队列，当前只列角色聊天，群聊仍用原前台操作。ST原生无原子CAS，不能声称完全消除跨窗口极短写竞态。
+
+窗口移除主窗和子窗缩放节点／事件／CSS，保留固定设备布局和可见视口防遮挡；标题鼠标／触摸拖动均可，viewport变化重置偏移防标题跑出。功能区增第六tab。
+
+TT依据当前公开 docs/API/Chat.md 与 FrontendHostContract.md：完整索引数组可能有null历史槽。host-chat.hydrateHostChat用公开current.handle().history分页读取，检查分页进度、完整长度、chat identity和每个已加载正文／角色，再只填null槽，不覆盖已有草稿、不偏移绝对索引。读取失败停止，Summarizer拒绝不完整历史。ST正常完整数组不额外请求。
+
+最小验证：79项相关定向Node回归及npm run check、git diff --check通过；合成数据／假模型，未调用真实付费接口或操作私人聊天，未跑全套，未做浏览器预览或原生TT／iOS实机验证。详见本次提交测试。私人目录「临时记忆查看，不准上传仓库」保留且绝不提交。版本和全部客户端模块URL统一1.27.37，Store仍v6。以下旧说明服从本段和用户新要求（尤其历史上“roll只删单层且CP/Long不变”“窗口可缩放”已被本次要求取代）。
+
 # 接续说明（2026-11-20，v1.27.36）
 
 用户要求修复手机窗口底部遮挡，并明确要求最小必要验证。根因是 bindDialogViewport 固定使用 layoutViewport／100lvh 最大高度且不随 visualViewport 改变。手机现在用当前 visualViewport 的尺寸和偏移设置 overlay 与 --cm-dialog-height，resize／scroll 后合帧更新；桌面仍保持原锚点。CSS 保留一个主滚动面与底部24px间距，移除旧键盘高度 padding，子窗通过现有 max-height 限定在新可见范围。此要求取代旧说明中“手机键盘变化也绝不改变窗口几何”的规则。

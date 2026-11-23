@@ -587,7 +587,7 @@ test('upgrade rebuilds the old snapshot once without needing chat bodies', async
     assert.equal(refreshSnapshot(f.store.current(), settings, 'chat changed', f.store.effectiveStore([])).value, full.value);
 });
 
-test('changed assistant text clears only this Summary and replaces it after server confirmation', async () => {
+test('changed assistant text retires dependent suffix before saving its replacement', async () => {
     const f = fixture(), e = getAssistantMessages(f.chat)[0];
     f.store.current().checkpoints.push({ id: 'cp', startFloor: 1, endFloor: 5, content: '不变阶段', status: 'frozen' });
     f.store.current().longMemories.push({ id: 'long', startFloor: 1, endFloor: 5, content: '不变长期', status: 'frozen' });
@@ -599,8 +599,8 @@ test('changed assistant text clears only this Summary and replaces it after serv
     await f.persistence.flush();
     await f.summarizer.summarizeMessage(changed.messageId, { expectedFingerprint: changed.fingerprint, deferAggregates: true });
     assert.equal(Object.values(f.remote.summaries).filter(s => s.floor === 1).length, 1);
-    assert.equal(f.remote.checkpoints[0].content, '不变阶段');
-    assert.equal(f.remote.longMemories[0].content, '不变长期');
+    assert.deepEqual(f.remote.checkpoints, []);
+    assert.deepEqual(f.remote.longMemories, []);
 });
 test('metadata-only change does not clear saved Summary', () => {
     const f = fixture(), prior = getAssistantMessages(f.chat)[0];
@@ -608,11 +608,11 @@ test('metadata-only change does not clear saved Summary', () => {
     assert.equal(getAssistantMessages(f.chat)[0].contentFingerprint, prior.contentFingerprint);
     assert.equal(f.store.discardChangedSummary(getAssistantMessages(f.chat)[0]), false);
 });
-test('deletion retires only selected message Summary', async () => {
+test('deletion retires the selected floor and later model background', async () => {
     const f = fixture(), prior = getAssistantMessages(f.chat)[1];
     f.seed(); f.chat.splice(1, 1);
     assert.equal(f.store.discardDeletedSummary(prior), true);
     await f.persistence.flush();
-    assert.equal(Object.keys(f.remote.summaries).length, 4);
+    assert.equal(Object.keys(f.remote.summaries).length, 1);
     assert.equal(f.remote.summaries[prior.messageId], undefined);
 });

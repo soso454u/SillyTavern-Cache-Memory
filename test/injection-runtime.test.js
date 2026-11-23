@@ -15,9 +15,9 @@ const storage = () => {
 };
 const source = (await readFile(new URL('../index.js', import.meta.url), 'utf8'))
     .replace(/^import[\s\S]*?from ['"][^'"]+['"];\n/gm, '').replaceAll('export function ', 'function ');
-const modules = Object.assign({}, ...await Promise.all(['defaults', 'cache-control', 'utils', 'memory-store', 'summarizer', 'persistence', 'history-handoff', 'chat-file', 'chat-branch']
+const modules = Object.assign({}, ...await Promise.all(['defaults', 'cache-control', 'utils', 'memory-store', 'summarizer', 'persistence', 'history-handoff', 'chat-file', 'chat-branch', 'host-chat']
     .map(name => import(`../src/${name}.js`))));
-async function runtimeFixture(t, { blocked = false, invalid = false, shortHistory = false } = {}) {
+async function runtimeFixture(t, { blocked = false, invalid = false, shortHistory = false, generating = true } = {}) {
     t.mock.method(console, 'info', () => {}); t.mock.method(console, 'warn', () => {});
     const chatId = JSON.stringify(['character', 'synthetic.png', 'synthetic']);
     const chat = Array.from({ length: 5 }, (_, i) => ({ mes: `运行时合成正文${i + 1}`, gen_started: `g${i}` }));
@@ -60,12 +60,12 @@ async function runtimeFixture(t, { blocked = false, invalid = false, shortHistor
         }
     }
     const bindings = { ...modules, chat, chat_metadata: metadata,
-        eventSource: { on: (name, fn) => handlers.set(name, fn), off: name => handlers.delete(name) }, event_types: { GENERATION_STOPPED: 'stopped' },
-        extension_prompt_roles: {}, extension_prompt_types: {}, getCurrentChatId: () => context.chatId, isGenerating: () => true,
+        eventSource: { on: (name, fn) => handlers.set(name, fn), off: name => handlers.delete(name) }, event_types: { GENERATION_STOPPED: 'stopped', MESSAGE_DELETED: 'deleted', MESSAGE_SWIPED: 'swiped' },
+        extension_prompt_roles: {}, extension_prompt_types: {}, getCurrentChatId: () => context.chatId, isGenerating: () => generating,
         saveSettingsDebounced() {}, setExtensionPrompt() {}, extension_settings: { [defaults.MODULE_ID]: settings }, getContext: () => context, promptManager: null,
         SummaryApiClient: Client, ApiCacheAdapterBridge: EmptyClient, CacheMemoryInjectionPublisher: Publisher, MemoryServerClient: Server, CacheMemoryUI: UI,
         window, document, requestAnimationFrame: fn => setTimeout(fn, 0), cancelAnimationFrame: clearTimeout };
-    const runtime = new Function(...Object.keys(bindings), `${source}\nreturn {store, summarizer, persistence, refreshChatState, historyInterceptor, onHotUnload};`)(...Object.values(bindings));
+    const runtime = new Function(...Object.keys(bindings), `${source}\nreturn {store, summarizer, persistence, refreshChatState, historyInterceptor, onHotUnload, ui};`)(...Object.values(bindings));
     t.after(() => runtime.onHotUnload());
     await runtime.refreshChatState({ serverLoaded: true }); await settle();
     runtime.summarizer.retryDelay = async () => {};
@@ -85,6 +85,32 @@ test('actual interceptor waits, saves all layers, then publishes and filters the
     assert.match(f.publications.at(-1), /信使确认明天送信/);
     await f.historyInterceptor(clone(f.chat), 10000, () => assert.fail('complete injection must not abort'), 'normal');
     assert.equal(f.calls.length, 3);
+});
+
+test('native deletion clears the memory suffix, aggregates and published snapshot before a new floor is summarized', async t => {
+    const f = await runtimeFixture(t, { generating: false });
+    await f.historyInterceptor(clone(f.chat), 10000, () => {}, 'normal');
+    assert.equal(f.remote.checkpoints.length, 1); assert.equal(f.remote.longMemories.length, 1);
+    f.chat.splice(2);
+    f.handlers.get('deleted')();
+    assert.deepEqual(Object.values(f.store.current().summaries).map(row => row.floor), [1, 2]);
+    assert.equal(f.store.current().checkpoints.length, 0); assert.equal(f.store.current().longMemories.length, 0);
+    assert.doesNotMatch(f.publications.at(-1), /商定了通信约定|完成通信/);
+    await f.persistence.flush(); await settle();
+    assert.equal(f.remote.checkpoints.length, 0); assert.equal(f.remote.longMemories.length, 0);
+    f.chat.push({ mes: '删除后重写的第三层', gen_started: 'replacement-g3' });
+    await f.summarizer.summarizeMessage(getAssistantMessages(f.chat).at(-1).messageId);
+    assert.deepEqual(Object.values(f.remote.summaries).map(row => row.floor), [1, 2, 3]);
+});
+
+test('the existing-memory repair callback retains a selected prefix and confirms its save', async t => {
+    const f = await runtimeFixture(t, { generating: false });
+    f.context.saveChat = f.context.saveMetadata;
+    await f.historyInterceptor(clone(f.chat), 10000, () => {}, 'normal');
+    await f.ui.callbacks.trimChatMemory(2);
+    assert.deepEqual(Object.values(f.remote.summaries).map(row => row.floor), [1, 2]);
+    assert.deepEqual(f.remote.checkpoints, []); assert.deepEqual(f.remote.longMemories, []);
+    assert.equal(f.chat.length, 5);
 });
 
 test('native stop cancels the paid preflight and aborts the main request without filtering its history', async t => {

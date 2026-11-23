@@ -1,10 +1,10 @@
-import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.36';
-import { chatFileIdentity } from './chat-file.js?v=1.27.36';
-import { chatFloorOffset, chatInheritedThrough, getAssistantMessages } from './utils.js?v=1.27.16';
-import { currentInjectionBlocks } from './injection.js?v=1.27.36';
-import { refreshSnapshot } from './cache-control.js?v=1.27.36';
-import { getOpeningSource } from './opening-source.js?v=1.27.16';
-import { isUsableMemory } from './continuity.js?v=1.27.36';
+import { createEmptyStore, normalizeStore } from './memory-store.js?v=1.27.37';
+import { chatFileIdentity } from './chat-file.js?v=1.27.37';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, resetBranchNumbering } from './utils.js?v=1.27.37';
+import { currentInjectionBlocks } from './injection.js?v=1.27.37';
+import { refreshSnapshot } from './cache-control.js?v=1.27.37';
+import { getOpeningSource } from './opening-source.js?v=1.27.37';
+import { isUsableMemory } from './continuity.js?v=1.27.37';
 
 const clone = value => structuredClone(value);
 function uniqueId() {
@@ -48,26 +48,26 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
         const opening = getOpeningSource(chat)?.message;
         // A generated first reply is a normal floor, not an extra greeting.
         if (sliceStart > 0 && opening && !entries.some(row => row.message === opening)) selected.unshift(opening);
-    } else if (mode === 'through' || mode === 'cutoff') {
+    } else if (mode === 'through' || mode === 'cutoff' || mode === 'empty') {
         endFloor ??= latest;
         if (!Number.isSafeInteger(endFloor) || !entries.some(row => row.floor === endFloor)) throw new Error(`请选择第 ${entries[0].floor}–${latest} 层中仍有正文的楼层`);
         end = endFloor;
         selected = chat.slice(0, entries.find(row => row.floor === end).messageIndex + 1);
     } else throw new Error('请选择有效的平行线保留方式');
     selected = clone(selected);
-    const offset = mode === 'recent' ? start - 1 : chatFloorOffset(chat);
+    const offset = mode === 'empty' ? 0 : mode === 'recent' ? start - 1 : chatFloorOffset(chat);
     const parentInheritedThrough = chatInheritedThrough(chat);
     const trimMemory = mode === 'cutoff' && end < Math.max(latest, parentInheritedThrough);
     // A cutoff rebuilds KEEP from retained sources. Current overrides and
     // lifecycle decisions may have been made after the chosen floor.
-    const sourceMemory = trimMemory ? {
+    const sourceMemory = mode === 'empty' ? { ...createEmptyStore(original.chatId), summaryMode: original.summaryMode } : trimMemory ? {
         ...createEmptyStore(original.chatId), version: 2, summaryMode: original.summaryMode,
         summaries: Object.fromEntries(Object.entries(original.summaries).filter(([, row]) => row.floor <= end)),
         checkpoints: original.checkpoints.filter(row => row.endFloor <= end),
         longMemories: original.longMemories.filter(row => row.endFloor <= end),
     } : original;
     const memory = normalizeStore(clone(sourceMemory), original.chatId);
-    const inheritedThrough = mode === 'cutoff'
+    const inheritedThrough = mode === 'empty' ? 0 : mode === 'cutoff'
         ? Math.max(offset, Math.min(parentInheritedThrough, end))
         : Math.max(offset, parentInheritedThrough, end < latest ? latest : 0);
     if (offset > 0) {
@@ -79,6 +79,7 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
         if (next <= offset) throw new Error(`第 ${next} 层起尚无完整剧情记忆，请先补齐记忆或保留更多正文`);
     }
     const hasOpening = getOpeningSource(chat)?.message === chat[0] && !entries.some(row => row.message === chat[0]);
+    if (mode === 'empty') resetBranchNumbering(selected);
     // Resolve the copied message indexes before enabling the new numbering.
     // The copied raw entries correspond to the selected interval in order.
     selected[0].extra = { ...selected[0].extra, cache_memory_branch: { version: 1, floorOffset: offset, hasOpening } };
@@ -112,7 +113,7 @@ export function prepareChatBranch(rows, { mode = 'through', count, endFloor, nam
     delete memory.injectionSnapshot;
     refreshSnapshot(memory, { ...settings, injectionFloor: end, inheritedThrough }, 'manual reinject');
     const stable = ['note_prompt', 'note_interval', 'note_position', 'note_depth', 'note_role', 'persona'];
-    const metadata = end === latest && !trimMemory ? clone(rows[0].chat_metadata)
+    const metadata = end === latest && !trimMemory && mode !== 'empty' ? clone(rows[0].chat_metadata)
         : Object.fromEntries(stable.filter(key => Object.hasOwn(rows[0].chat_metadata, key)).map(key => [key, clone(rows[0].chat_metadata[key])]));
     delete metadata.main_chat;
     delete metadata.bookmark_link;

@@ -45,6 +45,29 @@ test('extra native JSONL download preserves every message and saved memory witho
     assert.deepEqual(captureChatFile(f.context, f.memory), before);
 });
 
+test('a memory-free parallel chat copies the selected raw prefix with an empty independent timeline', () => {
+    const f = fixture(), before = structuredClone(f.rows);
+    const branch = f.build({ mode: 'empty', endFloor: 1 });
+    const memory = branch.rows[0].chat_metadata.cache_memory, chat = branch.rows.slice(1);
+    for (const section of ['summaries', 'keepRegistry', 'stateOverrides']) assert.deepEqual(memory[section], {});
+    assert.deepEqual(memory.checkpoints, []); assert.deepEqual(memory.longMemories, []);
+    assert.equal(memory.injectionSnapshot.value, '');
+    assert.equal(chatInheritedThrough(chat), 0);
+    chat.push({ mes: '新平行线回复', gen_started: 'new-line' });
+    assert.deepEqual(getAssistantMessages(chat).map(row => row.floor), [1, 2]);
+    assert.doesNotMatch(JSON.stringify(branch.rows), /未来才获得|未来剧情|未来状态/);
+    assert.deepEqual(f.rows, before);
+});
+
+test('a memory-free branch of a recent-only branch renumbers its remaining raw replies from one', () => {
+    const f = fixture(), parent = f.build({ mode: 'recent', count: 3 });
+    const child = prepareChatBranch(parent.rows, { mode: 'empty', endFloor: 11 }, f.settings);
+    assert.deepEqual(getAssistantMessages(child.rows.slice(1)).map(row => row.floor), [1, 2]);
+    assert.equal(chatFloorOffset(child.rows.slice(1)), 0);
+    assert.equal(chatInheritedThrough(child.rows.slice(1)), 0);
+    assert.deepEqual(child.rows[0].chat_metadata.cache_memory.summaries, {});
+});
+
 for (const greeting of [true, false]) test(`recent N keeps original floor numbers, earlier memories and user inputs (greeting=${greeting})`, () => {
     const f = fixture(false, greeting), before = structuredClone(f.rows);
     const branch = f.build({ mode: 'recent', count: 3, name: '平行线A' }), chat = branch.rows.slice(1), memory = branch.rows[0].chat_metadata.cache_memory;
@@ -228,10 +251,10 @@ test('branch dialog defaults to retaining the prefix and creating without switch
             assert.equal(spec.fields.find(field => field.key === 'switch').value, 'stay');
             const mode = spec.fields.find(field => field.key === 'mode');
             assert.equal(mode.value, 'through');
-            assert.deepEqual(mode.options.map(([key]) => key), ['through', 'recent', 'cutoff']);
+            assert.deepEqual(mode.options.map(([key]) => key), ['through', 'recent', 'cutoff', 'empty']);
             const endFloor = spec.fields.find(field => field.key === 'endFloor');
             assert.equal(endFloor.value, 12);
-            assert.deepEqual(endFloor.visibleWhen.value, ['through', 'cutoff']);
+            assert.deepEqual(endFloor.visibleWhen.value, ['through', 'cutoff', 'empty']);
             return { name: '测试分支', mode: 'cutoff', endFloor: '7', switch: 'stay' };
         },
         createChatBranch: async (_rows, value) => { options = value; return { filename: '新聊天', switched: false }; },

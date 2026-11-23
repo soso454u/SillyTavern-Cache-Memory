@@ -98,6 +98,39 @@ export function chatInheritedThrough(chat) {
     return Number.isSafeInteger(floor) && floor > 0 ? floor : 0;
 }
 
+// Clearing memory also clears the branch's inherited timeline, including the
+// copies restored by native Swipe. Preserve only how the opening is classified.
+export function resetBranchNumbering(chat) {
+    const hasOpening = chat?.[0]?.extra?.cache_memory_branch?.hasOpening;
+    for (const message of chat ?? []) {
+        for (const owner of [message, ...(message?.swipe_info ?? [])]) {
+            if (!owner?.extra) continue;
+            delete owner.extra.cache_memory_branch;
+            delete owner.extra.cache_memory_branch_floor;
+        }
+    }
+    if (typeof hasOpening === 'boolean' && chat?.[0]) {
+        const branch = { version: 1, floorOffset: 0, hasOpening };
+        chat[0].extra = { ...chat[0].extra, cache_memory_branch: branch };
+        for (const swipe of chat[0].swipe_info ?? []) {
+            if (swipe) swipe.extra = { ...swipe.extra, cache_memory_branch: { ...branch } };
+        }
+    }
+}
+
+export function trimBranchTimeline(chat, floor) {
+    const branch = chat?.[0]?.extra?.cache_memory_branch;
+    if (!branch || !chatInheritedThrough(chat)) return false;
+    const next = Math.max(chatFloorOffset(chat), Math.min(chatInheritedThrough(chat), floor - 1));
+    if (branch.inheritedThrough === next) return false;
+    const updated = { ...branch, inheritedThrough: next };
+    chat[0].extra.cache_memory_branch = updated;
+    for (const swipe of chat[0].swipe_info ?? []) {
+        if (swipe) swipe.extra = { ...swipe.extra, cache_memory_branch: { ...updated } };
+    }
+    return true;
+}
+
 export function replacePromptVariables(template, values) {
     return Object.entries(values).reduce(
         (text, [key, value]) => text.replaceAll(`{{${key}}}`, String(value ?? '')),

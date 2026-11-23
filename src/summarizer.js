@@ -1,19 +1,19 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.16';
-import { isOutputTruncated } from './api-client.js?v=1.27.36';
-import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.36';
-import { isRejectedSummary } from './response-quality.js?v=1.27.36';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.36';
-import { generationPrompt } from './generation-prompts.js?v=1.27.36';
-import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.16';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.36';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.36';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.36';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.36';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.36';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.36';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.16';
-import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.16';
+import { selectedTableRecords } from './character-tables.js?v=1.27.37';
+import { isOutputTruncated } from './api-client.js?v=1.27.37';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.37';
+import { isRejectedSummary } from './response-quality.js?v=1.27.37';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.37';
+import { generationPrompt } from './generation-prompts.js?v=1.27.37';
+import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.37';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.37';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.37';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.37';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.37';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.37';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.37';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.37';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.37';
+import { getOpeningSource, stageStartLabel } from './opening-source.js?v=1.27.37';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -113,7 +113,11 @@ export class MemorySummarizer {
         this.commitMemory = commitMemory;
         this.apiClient = apiClient;
         this.getSettings = () => memoryGenerationSettings(getSettings(), store.current().summaryMode);
-        this.getChat = getChat;
+        this.getChat = () => {
+            const chat = getChat();
+            if (chat.some(row => row == null)) throw Object.assign(new Error('聊天历史尚未完整加载，请加载历史后重试'), { code: 'SOURCE_CHANGED' });
+            return chat;
+        };
         this.onStatus = onStatus;
         this.onGeneration = onGeneration;
         this.queue = Promise.resolve();

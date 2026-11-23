@@ -1,5 +1,5 @@
-import { fnv1a } from './utils.js?v=1.27.16';
-import { compareRequests, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.17';
+import { fnv1a } from './utils.js?v=1.27.37';
+import { compareRequests, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.37';
 
 export const API_CACHE_TTLS = Object.freeze(['5m', '1h']);
 export const API_CACHE_COMPATIBILITY = Object.freeze({

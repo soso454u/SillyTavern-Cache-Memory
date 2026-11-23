@@ -1,7 +1,7 @@
-import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.16';
-import { playerCorrectionEvidence } from './summary-source.js?v=1.27.36';
-import { fnv1a } from './utils.js?v=1.27.16';
-import { isRejectedSummary } from './response-quality.js?v=1.27.36';
+import { parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.37';
+import { playerCorrectionEvidence } from './summary-source.js?v=1.27.37';
+import { fnv1a } from './utils.js?v=1.27.37';
+import { isRejectedSummary } from './response-quality.js?v=1.27.37';
 
 export const ACTIVE_THREAD_STATUSES = ['published', 'active', 'ready', 'unclaimed'];
 export const isTrackedActive = item => item?.kind === 'thread' ? ACTIVE_THREAD_STATUSES.includes(item.status) : item?.status === 'active';

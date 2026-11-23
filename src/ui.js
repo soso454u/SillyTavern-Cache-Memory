@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.16';
-import { applyUITheme } from './ui-theme.js?v=1.27.16';
-import { stageStartLabel } from './opening-source.js?v=1.27.16';
-import { generationPrompt } from './generation-prompts.js?v=1.27.36';
-import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.36';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.36';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.36';
-import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.36';
-import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.16';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.36';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.16';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.36';
-import { parseFloorSummary } from './summarizer.js?v=1.27.36';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.36';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.37';
+import { applyUITheme } from './ui-theme.js?v=1.27.37';
+import { stageStartLabel } from './opening-source.js?v=1.27.37';
+import { generationPrompt } from './generation-prompts.js?v=1.27.37';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.37';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.37';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.37';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.37';
+import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.37';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.37';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.37';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.37';
+import { parseFloorSummary } from './summarizer.js?v=1.27.37';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.37';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.36';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.36';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.37';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.37';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -442,6 +442,7 @@ function managerPanelTemplate() {
                         <button type="button" class="menu_button" data-reinject>重新注入</button>
                         <button type="button" class="menu_button" data-reparse-summaries>重新解析摘要</button>
                         <button type="button" class="menu_button" data-cleanup-summaries title="清理已确认归属且已有当前摘要的旧 Swipe 和重复记录">清理旧摘要</button>
+                        <button type="button" class="menu_button" data-trim-chat-memory>记忆只保留到第 N 层</button>
                         <button type="button" class="menu_button cache-memory-danger" data-clear-current-chat>清空当前聊天记忆</button>
                     </div>
                     <div class="cache-memory-summary-audit" data-summary-audit hidden></div>
@@ -472,11 +473,21 @@ export function configTemplate() {
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="api"><i class="fa-solid fa-key"></i><span>模型接口</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="injection"><i class="fa-solid fa-syringe"></i><span>记忆注入</span></button>
                     <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="prompts"><i class="fa-solid fa-file-lines"></i><span>提示词</span></button>
+                    <button type="button" class="cache-memory-tab" role="tab" aria-selected="false" data-settings-tab="tools"><i class="fa-solid fa-list-check"></i><span>功能区</span></button>
                 </nav>
                 <div class="cache-memory-task-feedback cache-memory-status" data-cache-status data-state="idle" role="status" aria-live="polite" hidden></div>
                 </div>
                 <div class="cache-memory-config-content is-manager-view">
                     ${managerPanelTemplate()}
+                    <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="tools" hidden>
+                        <h4>其他聊天后台总结</h4>
+                        <p class="cache-memory-help">选择角色与一份或多份聊天，按 Summary → 阶段记忆 → 长期记忆补全缺失项，分别保存回各自聊天。可关闭设置、切换其他卡继续玩；保持酒馆页面打开。使用启动时的独立接口配置，已有记忆不重做。打开正在总结的目标聊天会停止任务。</p>
+                        <label class="cache-memory-field">角色<select data-background-character></select></label>
+                        <button type="button" class="menu_button" data-background-refresh>读取聊天列表</button>
+                        <label class="cache-memory-field">聊天（可多选）<select data-background-chats multiple size="8" aria-label="选择要后台总结的聊天"></select></label>
+                        <div class="cache-memory-actions"><button type="button" class="menu_button" data-background-all>全选聊天</button><button type="button" class="menu_button cache-memory-primary" data-background-start>一键后台总结</button><button type="button" class="menu_button" data-background-stop disabled>停止后台任务</button></div>
+                        <p data-background-status role="status" aria-live="polite">尚未启动后台任务。</p>
+                    </section>
                     <section class="cache-memory-tab-panel" role="tabpanel" data-settings-panel="general" hidden>
                         <div class="cache-memory-section-heading"><div><h4>插件运行</h4></div></div>
                         <div class="cache-memory-switches">
@@ -568,13 +579,12 @@ export function configTemplate() {
                     </section>
                 </div>
             </div>
-            ${['n', 'e', 's', 'w'].map(edge => `<span class="cache-memory-resize-handle" data-resize-edge="${edge}" aria-hidden="true"></span>`).join('')}
             </div>
         </div>`;
 }
 
 export class CacheMemoryUI {
-    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, captureChat, exportChat, createChatBranch, updateInjection, prepareInjection, persistence }) {
+    constructor({ getSettings, updateSettings, persistSettings, apiClient, store, summarizer, getChat, saveChat, trimChatMemory, getBackgroundTasks, captureChat, exportChat, createChatBranch, updateInjection, prepareInjection, persistence }) {
         this.root = resolveUIRoot();
         this.doc = this.root.document;
         this.getSettings = getSettings;
@@ -586,6 +596,9 @@ export class CacheMemoryUI {
         this.store = store;
         this.summarizer = summarizer;
         this.getChat = getChat;
+        this.saveChat = saveChat;
+        this.trimChatMemory = trimChatMemory;
+        this.getBackgroundTasks = getBackgroundTasks;
         this.captureChat = captureChat;
         this.exportChat = exportChat;
         this.createChatBranch = createChatBranch;
@@ -645,7 +658,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.36', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.37', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -714,12 +727,9 @@ export class CacheMemoryUI {
         let drag = null;
         let frame = null;
         let x = 0, y = 0;
-        let width = null, height = null;
         const paint = () => {
             frame = null;
             panel.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-            if (width !== null) panel.style.width = `${width}px`;
-            if (height !== null) panel.style.height = `${height}px`;
         };
         const queuePaint = () => { if (frame === null) frame = root.requestAnimationFrame(paint); };
         const stop = () => {
@@ -738,7 +748,6 @@ export class CacheMemoryUI {
         handle.addEventListener('pointerdown', event => {
             if (event.button !== 0 || event.target.closest('button, input, select, textarea, a')) return;
             const view = viewportSize(root);
-            if (event.pointerType === 'touch' || view.width <= 650) return;
             const rect = panel.getBoundingClientRect();
             drag = { id: event.pointerId, pointerX: event.clientX, pointerY: event.clientY, x, y,
                 minX: view.left - rect.left + x, maxX: view.left + view.width - rect.right + x,
@@ -756,37 +765,15 @@ export class CacheMemoryUI {
             queuePaint();
         }, { signal });
         for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(name, stop, { signal });
-        const limits = () => {
-            const view = viewportSize(root), padding = root.getComputedStyle?.(overlay);
-            return { left: view.left + (parseFloat(padding?.paddingLeft) || 8), right: view.left + view.width - (parseFloat(padding?.paddingRight) || 8),
-                top: view.top + (parseFloat(padding?.paddingTop) || 8), bottom: view.top + view.height - (parseFloat(padding?.paddingBottom) || 8) };
-        };
-        for (const edge of panel.querySelectorAll?.('[data-resize-edge]') ?? []) {
-            edge.addEventListener('pointerdown', event => {
-                if (event.button !== 0) return;
-                stop();
-                drag = { id: event.pointerId, target: edge, edge: edge.dataset.resizeEdge, rect: panel.getBoundingClientRect(),
-                    pointerX: event.clientX, pointerY: event.clientY, x, y, bounds: limits() };
-                edge.setPointerCapture(event.pointerId);
-                panel.style.willChange = 'width, height, transform';
-                event.preventDefault();
-            }, { signal });
-            edge.addEventListener('pointermove', event => {
-                if (drag?.id !== event.pointerId || drag.target !== edge) return;
-                const r = drag.rect, b = drag.bounds, dx = event.clientX - drag.pointerX, dy = event.clientY - drag.pointerY;
-                const minWidth = Math.min(320, b.right - b.left), minHeight = Math.min(240, b.bottom - b.top);
-                let left = r.left, right = r.right, top = r.top, bottom = r.bottom;
-                if (drag.edge === 'w') left = Math.max(b.left, Math.min(right - minWidth, left + dx));
-                if (drag.edge === 'e') right = Math.min(b.right, Math.max(left + minWidth, right + dx));
-                if (drag.edge === 'n') top = Math.max(b.top, Math.min(bottom - minHeight, top + dy));
-                if (drag.edge === 's') bottom = Math.min(b.bottom, Math.max(top + minHeight, bottom + dy));
-                width = right - left; height = bottom - top;
-                x = drag.x + (left + right - r.left - r.right) / 2;
-                y = drag.y + (top + bottom - r.top - r.bottom) / 2;
-                queuePaint();
-            }, { signal });
-            for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) edge.addEventListener(name, stop, { signal });
-        }
+        const viewportChanged = () => reset();
+        root.addEventListener?.('resize', viewportChanged, { signal });
+        root.visualViewport?.addEventListener?.('resize', viewportChanged, { signal });
+        root.visualViewport?.addEventListener?.('scroll', viewportChanged, { signal });
+        signal.addEventListener('abort', () => {
+            root.removeEventListener?.('resize', viewportChanged);
+            root.visualViewport?.removeEventListener?.('resize', viewportChanged);
+            root.visualViewport?.removeEventListener?.('scroll', viewportChanged);
+        }, { once: true });
         signal.addEventListener('abort', stop, { once: true });
         return reset;
     }
@@ -1266,6 +1253,11 @@ export class CacheMemoryUI {
                 this.activateSettingsTab(tab.dataset.settingsTab);
                 return;
             }
+            const backgroundAction = event.target.closest('[data-background-refresh], [data-background-all], [data-background-start], [data-background-stop]');
+            if (backgroundAction) {
+                void this.handleBackgroundAction(backgroundAction).catch(error => this.renderBackgroundState({ status: 'failed', message: error.message }));
+                return;
+            }
             const profileAction = event.target.closest('[data-profile-action]');
             if (profileAction) {
                 this.flushSettingInput();
@@ -1399,6 +1391,57 @@ export class CacheMemoryUI {
         this.resizeTextareas(this.config);
         if (managerActive) this.renderManager();
         if (name === 'api') this.scheduleModelList();
+        if (name === 'tools') this.populateBackgroundCharacters();
+    }
+
+    populateBackgroundCharacters() {
+        const tasks = this.getBackgroundTasks?.(), select = this.config?.querySelector('[data-background-character]');
+        if (!tasks || !select) return;
+        const previous = select.value;
+        select.replaceChildren(...tasks.characters().map(row => {
+            const option = this.element('option', '', row.name); option.value = row.avatar; return option;
+        }));
+        if ([...select.options].some(option => option.value === previous)) select.value = previous;
+        this.renderBackgroundState(tasks.state);
+    }
+
+    renderBackgroundState(state) {
+        const panel = this.config?.querySelector('[data-settings-panel="tools"]');
+        if (!panel) return;
+        panel.querySelector('[data-background-status]').textContent = state.message;
+        const running = state.status === 'running';
+        for (const element of panel.querySelectorAll('button, select')) element.disabled = running;
+        panel.querySelector('[data-background-stop]').disabled = !running;
+    }
+
+    async handleBackgroundAction(button) {
+        const tasks = this.getBackgroundTasks(), panel = button.closest('[data-settings-panel="tools"]');
+        const character = panel.querySelector('[data-background-character]'), chats = panel.querySelector('[data-background-chats]');
+        if (button.hasAttribute('data-background-stop')) { tasks.cancel(); return; }
+        if (tasks.active) throw new Error('后台任务正在运行');
+        if (button.hasAttribute('data-background-refresh')) {
+            const avatar = character.value;
+            const revision = this.backgroundListRevision = (this.backgroundListRevision ?? 0) + 1;
+            button.disabled = true;
+            try {
+                const files = await tasks.listChats(avatar);
+                if (revision !== this.backgroundListRevision || character.value !== avatar || this.destroyed) return;
+                chats.replaceChildren(...files.map(file => {
+                    const option = this.element('option', '', file); option.value = file; return option;
+                }));
+                chats.dataset.avatar = avatar;
+                this.renderBackgroundState({ status: 'idle', message: `已读取 ${files.length} 份聊天，请选择后开始。` });
+            } finally { if (button.isConnected && !tasks.active) button.disabled = false; }
+        } else if (button.hasAttribute('data-background-all')) {
+            for (const option of chats.options) option.selected = true;
+        } else {
+            if (chats.dataset.avatar !== character.value) throw new Error('请先读取所选角色的聊天列表');
+            const files = [...chats.selectedOptions].map(option => option.value);
+            if (!files.length) throw new Error('请至少选择一份聊天');
+            this.renderBackgroundState({ status: 'running', message: '正在核对所选聊天…' });
+            const result = await tasks.start(character.value, files);
+            this.renderBackgroundState(result);
+        }
     }
 
     watchWandMenu() {
@@ -1652,12 +1695,6 @@ export class CacheMemoryUI {
             confirm.type = 'submit';
             actions.append(cancel, confirm);
             form.append(header, content, actions);
-            for (const edge of ['n', 'e', 's', 'w']) {
-                const grip = this.element('span', 'cache-memory-resize-handle');
-                grip.dataset.resizeEdge = edge;
-                grip.setAttribute('aria-hidden', 'true');
-                form.append(grip);
-            }
             const syncFields = () => {
                 for (const field of fields.filter(field => field.visibleWhen)) {
                     const input = form.elements.namedItem(field.key);
@@ -2892,7 +2929,7 @@ export class CacheMemoryUI {
     }
 
     async handleManagerClick(event) {
-        const button = event.target.closest('[data-audit-open], [data-audit-step], [data-audit-select-floor], [data-audit-regenerate], [data-audit-batch], [data-audit-stop], [data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-export-chat], [data-create-branch], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat]');
+        const button = event.target.closest('[data-audit-open], [data-audit-step], [data-audit-select-floor], [data-audit-regenerate], [data-audit-batch], [data-audit-stop], [data-validate-memory], [data-cleanup-summaries], [data-reinject], [data-reparse-summaries], [data-export], [data-export-chat], [data-create-branch], [data-pending-backup], [data-upload-backup], [data-save-memory], [data-read-server], [data-import-merge], [data-clear-current-chat], [data-trim-chat-memory]');
         if (!button) return this.performManagerClick(event);
         if (button.matches('[data-audit-stop]')) {
             if (this.summaryAuditRun?.running) this.summaryAuditRun.stop = true;
@@ -3186,26 +3223,46 @@ export class CacheMemoryUI {
             this.saveInlineEdit(editCard);
             return;
         }
+        if (event.target.closest('[data-trim-chat-memory]')) {
+            const chatId = this.store.current().chatId, digest = memoryContentDigest(this.store.current());
+            const transcript = JSON.stringify(this.getChat());
+            const latest = Math.max(getAssistantMessages(this.getChat()).at(-1)?.floor ?? 0, chatInheritedThrough(this.getChat()));
+            const values = await this.showPluginDialog({ title: '清理已混入的后续记忆', danger: true,
+                message: '例如只保留到第5层：将清理第6层起的摘要、包含后续剧情的阶段／长期记忆及注入快照；早期 KEEP 按保留摘要恢复。聊天正文保留，仍有原文的楼层可以重新总结。填0则清空记忆并从现有正文第1层重新计数。',
+                confirmLabel: '确认清理后续记忆', fields: [{ key: 'keepFloor', label: '记忆保留到第几层', type: 'number', value: latest, min: 0, max: latest }] });
+            if (!values) return;
+            if (this.store.current().chatId !== chatId || memoryContentDigest(this.store.current()) !== digest || JSON.stringify(this.getChat()) !== transcript)
+                throw new Error('选择期间聊天或记忆已变化，请重新选择');
+            await this.trimChatMemory(Number(values.keepFloor));
+            this.renderMessageMemories(); this.renderManager();
+            this.setManagerActionStatus('success', `记忆已清理并确认保存：${Number(values.keepFloor) ? `只保留到第${values.keepFloor}层` : '已清空并重置计层'}。`);
+            return;
+        }
         const clearButton = event.target.closest('[data-clear-current-chat]');
         if (clearButton) {
+            const chatId = this.store.current().chatId;
             const confirmed = await this.showPluginDialog({
                 title: '清空当前聊天记忆',
-                message: '只会清空当前聊天的 Summary / Checkpoint / Long Memory / KEEP，不影响原聊天正文和插件设置。清空后不能撤销。',
+                message: '清空当前聊天的全部记忆，并取消平行线继承楼层编号。现有正文从第1层重新计数；后续总结按实际保留正文继续。清空后不能撤销。',
                 confirmLabel: '确认清空',
                 danger: true,
             });
             if (!confirmed) return;
+            if (this.store.current().chatId !== chatId) throw new Error('聊天已切换，未清空记忆');
             clearButton.disabled = true;
             try {
                 this.backfill?.cancel({ discard: true });
                 this.cancelMissingCheckpointBackfill({ discard: true });
                 this.summarizer.invalidateContext();
                 this.apiClient.abortAll();
-                this.store.clearCurrentChat();
+                this.store.clearCurrentChat(this.getChat());
                 this.backfill?.reset();
                 this.resetManagerTransientState();
                 this.updateInjection('current chat cleared');
-                this.setStatus('success', '当前聊天的 Cache Memory 已清空；历史摘要不会自动重建。');
+                await this.saveChat?.();
+                const saved = await this.persistence?.flush(chatId);
+                if (saved && saved.state !== 'confirmed') throw new Error(saved.detail || '服务器尚未确认保存，请重试上传');
+                this.setStatus('success', '当前聊天记忆已清空，保留正文从第1层重新计数。');
                 this.renderMessageMemories();
                 this.renderManager();
                 this.setManagerActionStatus('success', '当前聊天记忆已清空。需要时可手动“补齐缺失摘要”。');
@@ -3322,16 +3379,17 @@ export class CacheMemoryUI {
             const rows = this.captureChat(), entries = getAssistantMessages(rows.slice(1)), latest = entries.at(-1)?.floor;
             if (!latest) throw new Error('当前聊天没有可选择的正常 char 楼层');
             const values = await this.showPluginDialog({ title: '创建平行线聊天',
-                message: `按正常 char 回复计层，当前原文为第 ${entries[0].floor}–${latest} 层。可以保留全部已保存记忆，也可以把正文和记忆一起截到指定楼层。创建后默认留在原聊天。`,
+                message: `按正常 char 回复计层，当前原文为第 ${entries[0].floor}–${latest} 层。可以保留全部已保存记忆、按楼层截断记忆，或完全不继承记忆。创建后默认留在原聊天。`,
                 confirmLabel: '创建独立聊天', fields: [
                     { key: 'name', label: '新聊天名称', value: '平行线' },
                     { key: 'mode', label: '选择方式', value: 'through', options: [
                         ['through', '从开头保留到第 N 层＋全部记忆'],
                         ['recent', '只带最近 N 层正文＋全部记忆'],
                         ['cutoff', '正文和记忆都保留到第 N 层'],
+                        ['empty', '正文保留到第 N 层，不继承聊天记忆（从1计层）'],
                     ] },
                     { key: 'count', label: `保留多少层正文（1–${entries.length}）`, value: Math.min(3, entries.length), type: 'number', min: 1, max: entries.length, visibleWhen: { key: 'mode', value: 'recent' } },
-                    { key: 'endFloor', label: `截至第几层（${entries[0].floor}–${latest}）`, value: latest, type: 'number', min: entries[0].floor, max: latest, visibleWhen: { key: 'mode', value: ['through', 'cutoff'] } },
+                    { key: 'endFloor', label: `截至第几层（${entries[0].floor}–${latest}）`, value: latest, type: 'number', min: entries[0].floor, max: latest, visibleWhen: { key: 'mode', value: ['through', 'cutoff', 'empty'] } },
                     { key: 'switch', label: '创建后的操作', value: 'stay', options: [['stay', '只创建，暂不切换'], ['open', '创建后立即切换']] },
                 ] });
             if (!values) return;

@@ -325,29 +325,25 @@ test('mobile parent and child dialogs fit the same visible area and restore inde
     assert.equal(vvHandlers.get('resize').size, 0);
 });
 
-test('only edge pointer gestures resize windows; viewport events cannot clamp a manual height', () => {
-    const frames = new Map(); let next = 0, captured = null;
-    const handlers = {}, rootHandlers = {}, viewHandlers = {};
-    const edge = { dataset: { resizeEdge: 's' }, addEventListener(k,f) { handlers[k]=f; },
-        setPointerCapture(id) { captured=id; }, hasPointerCapture:id=>captured===id, releasePointerCapture(){captured=null;} };
-    const handle = { addEventListener(){}, classList:{add(){},remove(){}} };
-    const panel = { style:{removeProperty(k){delete this[k];}}, querySelector:()=>handle, querySelectorAll:()=>[edge],
-        getBoundingClientRect:()=>({width:600,height:600,left:100,right:700,top:100,bottom:700}) };
-    const overlay = { querySelector:()=>panel, classList:{add(){},remove(){}} };
-    const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { controller:new AbortController(), root:{
-        innerWidth:1200,innerHeight:900,visualViewport:{width:1200,height:900,addEventListener(k,f){viewHandlers[k]=f;}},
-        requestAnimationFrame(f){frames.set(++next,f);return next;},cancelAnimationFrame(id){frames.delete(id);},
-        addEventListener(k,f){rootHandlers[k]=f;},getComputedStyle:()=>({paddingTop:'8px',paddingBottom:'8px'}) } });
+for (const pointerType of ['mouse', 'touch']) test(`fixed windows move by title without resizing (${pointerType})`, () => {
+    const frames = []; let captured = null;
+    const handlers = {}, edgeHandlers = {};
+    const edge = { addEventListener(k, fn) { edgeHandlers[k] = fn; } };
+    const handle = { addEventListener(k, fn) { handlers[k] = fn; }, classList: { add() {}, remove() {} },
+        setPointerCapture(id) { captured = id; }, hasPointerCapture: id => captured === id, releasePointerCapture() { captured = null; } };
+    const panel = { style: { width: '320px', height: '600px', removeProperty(k) { delete this[k]; } },
+        querySelector: () => handle, querySelectorAll: () => [edge],
+        getBoundingClientRect: () => ({ left: 30, right: 350, top: 40, bottom: 640, width: 320, height: 600 }) };
+    const overlay = { querySelector: () => panel, classList: { add() {}, remove() {} } };
+    const ui = Object.assign(Object.create(CacheMemoryUI.prototype), { controller: new AbortController(), root: {
+        innerWidth: 390, innerHeight: 700, requestAnimationFrame(fn) { frames.push(fn); return frames.length; }, cancelAnimationFrame() {} } });
     ui.bindDialogDrag(overlay);
-    assert.equal(panel.style.height, undefined);
-    handlers.pointerdown({button:0,pointerId:7,clientX:400,clientY:700,preventDefault(){}});
-    handlers.pointermove({pointerId:7,clientX:400,clientY:500});
-    for(const fn of [...frames.values()]) fn(); frames.clear(); handlers.pointerup();
-    assert.equal(panel.style.height,'400px'); assert.equal(captured,null);
-    ui.root.innerHeight = ui.root.visualViewport.height = 300;
-    rootHandlers.resize?.(); viewHandlers.resize?.();
-    for(const fn of [...frames.values()]) fn(); frames.clear();
-    assert.equal(panel.style.height,'400px');
-    assert.equal(rootHandlers.resize,undefined); assert.equal(viewHandlers.resize,undefined);
-    ui.controller.abort();
+    assert.deepEqual(edgeHandlers, {});
+    handlers.pointerdown({ button: 0, pointerType, pointerId: 7, clientX: 40, clientY: 50, target: { closest: () => null }, preventDefault() {} });
+    handlers.pointermove({ pointerId: 7, clientX: 60, clientY: 70 });
+    frames.shift()(); handlers.pointerup();
+    assert.equal(panel.style.transform, 'translate3d(20px, 20px, 0)');
+    assert.equal(panel.style.width, '320px'); assert.equal(panel.style.height, '600px');
+    assert.equal(captured, null); ui.controller.abort();
+    assert.doesNotMatch(configTemplate(), /data-resize-edge/);
 });
