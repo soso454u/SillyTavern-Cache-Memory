@@ -129,6 +129,9 @@ test('persistent validation errors keep the Rolling cap and report uncovered old
     assert.ok(f.chat.some(row => row.mes === '运行时合成正文2'));
     assert.ok(f.statuses.some(([status, text]) => status === 'warning' && text.includes('下次注入')));
     assert.ok(f.statuses.some(([status, text]) => status === 'warning' && text.includes('只发送最近 3 层 char 正文')));
+    const finalWarning = f.statuses.filter(([status]) => status === 'warning').at(-1)[1];
+    assert.match(finalWarning, /自动补全未完成：[\s\S]*剧情栏为空或只有占位词/);
+    assert.match(finalWarning, /一键补全所有记忆[\s\S]*连接测试与生成日志/);
     assert.equal(f.remote.checkpoints.length, 0); assert.equal(f.remote.longMemories.length, 0);
 });
 
@@ -139,6 +142,16 @@ test('Rolling caps the request while the new chat memory is still loading', asyn
     assert.deepEqual(prompt, f.chat.slice(-3));
     assert.equal(f.calls.length, 0);
     assert.equal(f.publications.length, publications);
+});
+
+test('a preflight exception remains visible in the final Rolling coverage warning', async t => {
+    const f = await runtimeFixture(t), prompt = clone(f.chat);
+    f.summarizer.completeBeforeInjection = async () => { throw new Error('独立接口配置不完整'); };
+    await f.historyInterceptor(prompt, 10000, () => assert.fail('configuration errors preserve the existing Rolling behavior'), 'normal');
+    const finalWarning = f.statuses.filter(([status]) => status === 'warning').at(-1)[1];
+    assert.match(finalWarning, /只发送最近 3 层[\s\S]*自动补全未完成：独立接口配置不完整/);
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(prompt, f.chat.slice(-3));
 });
 
 test('short history applies Summary replacements even with no removed rows or new frozen bytes', async t => {

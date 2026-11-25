@@ -125,3 +125,13 @@ test('a chat containing only an opening can be filled, and a generated first rep
     assert.equal(getSummaryEntries(generated)[0].isOpening, undefined);
     assert.equal(displayFloor(generated, 1), 1);
 });
+
+test('failed completion reports the opening as visible layer one and retains its internal source floor', async () => {
+    const f = fixture(); f.chat.splice(1); f.store.clearCurrentChat(f.chat);
+    f.summarizer.retryDelay = async () => {};
+    f.apiClient.complete = async () => ({ content: '[SUMMARY]\n[Event]\n无' });
+    const result = await f.summarizer.completeBeforeInjection();
+    assert.equal(result.failed, 1); assert.equal(result.remaining, 1);
+    assert.match(result.errors[0], /^Summary 第 1–1 层：/);
+    assert.equal(f.store.getSummaryForEntry(getSummaryEntries(f.chat)[0]).floor, 0);
+});

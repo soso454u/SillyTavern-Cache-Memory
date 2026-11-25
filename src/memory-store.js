@@ -1,9 +1,9 @@
-import { getSummaryEntries } from './opening-source.js?v=1.27.39';
-import { chatFloorOffset, chatInheritedThrough, fnv1a, resetBranchNumbering } from './utils.js?v=1.27.39';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.39';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.39';
-import { isRejectedSummary } from './response-quality.js?v=1.27.39';
-import { summaryUserSource } from './summary-source.js?v=1.27.39';
+import { getSummaryEntries } from './opening-source.js?v=1.27.40';
+import { chatFloorOffset, chatInheritedThrough, fnv1a, resetBranchNumbering } from './utils.js?v=1.27.40';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.40';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.40';
+import { isRejectedSummary } from './response-quality.js?v=1.27.40';
+import { summaryUserSource } from './summary-source.js?v=1.27.40';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {

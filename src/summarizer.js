@@ -1,19 +1,19 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.39';
-import { isOutputTruncated } from './api-client.js?v=1.27.39';
-import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.39';
-import { isRejectedSummary } from './response-quality.js?v=1.27.39';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.39';
-import { generationPrompt } from './generation-prompts.js?v=1.27.39';
-import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.39';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.39';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.39';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.39';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.39';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.39';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.39';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.39';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.39';
-import { getOpeningSource, getSummaryEntries, displayFloor, stageStartLabel } from './opening-source.js?v=1.27.39';
+import { selectedTableRecords } from './character-tables.js?v=1.27.40';
+import { isOutputTruncated } from './api-client.js?v=1.27.40';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.40';
+import { isRejectedSummary } from './response-quality.js?v=1.27.40';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.40';
+import { generationPrompt } from './generation-prompts.js?v=1.27.40';
+import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.40';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.40';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.40';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.40';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.40';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.40';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.40';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.40';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.40';
+import { getOpeningSource, getSummaryEntries, displayFloor, stageStartLabel } from './opening-source.js?v=1.27.40';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -613,6 +613,7 @@ export class MemorySummarizer {
         const plan = this.getMissingMemoryPlan({ onlyLong });
         const result = { total: plan.summaries.length + plan.checkpoints.length + plan.longMemories.length,
             processed: 0, created: 0, skipped: 0, failed: 0, errors: [], currentRange: null, phase: 'Summary' };
+        const rangeLabel = range => `第 ${displayFloor(this.getChat(), range.startFloor)}–${displayFloor(this.getChat(), range.endFloor)} 层`;
         const assertActive = () => {
             if (signal?.aborted) throw Object.assign(new Error('记忆补全已停止'), { code: 'REQUEST_ABORTED' });
             if (chatId !== this.store.current().chatId || revision !== this.contextRevision) throw chatChangedError('记忆补全');
@@ -670,14 +671,14 @@ export class MemorySummarizer {
                                     return this.generateLongMemory(sources, { overwrite: Boolean(existing), signal });
                                 });
                             }
-                            if (!isUsableMemory(record)) throw new Error(`${phase} 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层未能生成`);
+                            if (!isUsableMemory(record)) throw new Error(`${phase} ${rangeLabel(result.currentRange)}未能生成`);
                             await save();
                             result.created++; result.processed++;
                         } catch (error) {
                             assertActive();
                             if (!isRetryableError(error)) throw error;
                             result.failed++; result.processed++;
-                            result.errors.push(`${phase} 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层：${error.message}`);
+                            result.errors.push(`${phase} ${rangeLabel(result.currentRange)}：${error.message}`);
                         }
                         onProgress({ ...result });
                     }
@@ -689,7 +690,7 @@ export class MemorySummarizer {
             return result;
         } catch (error) {
             if (['REQUEST_ABORTED', 'CHAT_CHANGED'].includes(error.code)) throw error;
-            result.failed++; result.errors.push(`${result.phase}${result.currentRange ? ` 第 ${result.currentRange.startFloor}–${result.currentRange.endFloor} 层` : ''}：${error.message}`);
+            result.failed++; result.errors.push(`${result.phase}${result.currentRange ? ` ${rangeLabel(result.currentRange)}` : ''}：${error.message}`);
             onProgress({ ...result });
             return result;
         } finally { this.aggregateDeferrals--; }

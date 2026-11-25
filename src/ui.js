@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.39';
-import { applyUITheme } from './ui-theme.js?v=1.27.39';
-import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.39';
-import { generationPrompt } from './generation-prompts.js?v=1.27.39';
-import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.39';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.39';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.39';
-import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.39';
-import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.39';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.39';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.39';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.39';
-import { parseFloorSummary } from './summarizer.js?v=1.27.39';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.39';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.40';
+import { applyUITheme } from './ui-theme.js?v=1.27.40';
+import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.40';
+import { generationPrompt } from './generation-prompts.js?v=1.27.40';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.40';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.40';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.40';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.40';
+import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.40';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.40';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.40';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.40';
+import { parseFloorSummary } from './summarizer.js?v=1.27.40';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.40';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.39';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.39';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.40';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.40';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -115,7 +115,8 @@ export function summaryHealthDetails(store, assistants) {
         const record = summaryForEntry(store, entry);
         if (record) matched.add(record);
         const health = currentSummaryHealth(record, entry);
-        if (health.code !== 'valid') details.push({ floor: entry.floor, messageId: entry.messageId, reason: health.code, label: health.label, current: true });
+        if (health.code !== 'valid') details.push({ floor: entry.floor, messageId: entry.messageId, isOpening: Boolean(entry.isOpening),
+            reason: health.code, label: health.code === 'missing' ? '尚未生成摘要，可补全' : health.label, current: true });
     }
     for (const [key, record] of Object.entries(summaries)) {
         if (matched.has(record)) continue;
@@ -126,9 +127,10 @@ export function summaryHealthDetails(store, assistants) {
         const reason = related ? 'old-version' : 'source-unloaded';
         const label = reason === 'old-version'
             ? '当前消息的旧版本 / 重复存储记录，未参与整理' : '来源消息当前未加载；摘要保留且不自动判定 orphaned';
-        details.push({ floor: Number(record?.floor) || 0, messageId: id, reason, label, current: false });
+        const floor = record?.floor;
+        details.push({ floor: Number.isSafeInteger(floor) && floor >= 0 ? floor : null, messageId: id, reason, label, current: false });
     }
-    return details.sort((a, b) => a.floor - b.floor || a.messageId.localeCompare(b.messageId));
+    return details.sort((a, b) => (a.floor ?? Infinity) - (b.floor ?? Infinity) || a.messageId.localeCompare(b.messageId));
 }
 
 export function memoryOverviewStats(store, assistants, settings) {
@@ -137,6 +139,9 @@ export function memoryOverviewStats(store, assistants, settings) {
         ...(store && typeof store === 'object' ? store : {}),
     };
     const entries = Array.isArray(assistants) ? assistants : [];
+    const floorOffset = entries.some(entry => entry.isOpening) ? 1 : 0;
+    const shownFloor = floor => floor + floorOffset;
+    const shownRangeStart = floor => floorOffset && floor === 1 ? 1 : shownFloor(floor);
     const checkpointInterval = Math.max(1, Number(settings?.checkpointInterval) || 5);
     const longMemoryInterval = Math.ceil(Math.max(checkpointInterval, Number(settings?.longMemoryInterval) || 50) / checkpointInterval) * checkpointInterval;
     const checkpoints = safeStore.checkpoints.filter(isUsableMemory);
@@ -158,7 +163,7 @@ export function memoryOverviewStats(store, assistants, settings) {
     const checkpointGapsBlockingLong = missingCheckpointRanges.filter(([, end]) => end <= longDueThrough);
     const issues = [];
     if (missingSummaryFloors.length) {
-        issues.push(`Summary 待处理：${missingSummaryFloors.length} 层（${currentIssues.slice(0, 8).map(item => `第${item.floor}层：${item.label}`).join('；')}）。`);
+        issues.push(`Summary 待处理：${missingSummaryFloors.length} 层（${currentIssues.slice(0, 8).map(item => `第${shownFloor(item.floor)}层${item.isOpening ? '（开场白）' : ''}：${item.label}`).join('；')}）。`);
     }
     const aggregateDetails = [];
     for (const [type, ranges, list] of [['Checkpoint', missingCheckpointRanges, safeStore.checkpoints], ['Long Memory', missingLongRanges, safeStore.longMemories]]) {
@@ -167,7 +172,7 @@ export function memoryOverviewStats(store, assistants, settings) {
             aggregateDetails.push({ type, id: item?.id, startFloor: start, endFloor: end, ...memoryHealth(item) });
         }
         const details = aggregateDetails.filter(row => row.type === type);
-        if (details.length) issues.push(`${type} 待处理 ${details.length} 段（${details.slice(0, 8).map(row => `${row.id || '未生成'} 第${row.startFloor}–${row.endFloor}层：${row.label}`).join('；')}）。`);
+        if (details.length) issues.push(`${type} 待处理 ${details.length} 段（${details.slice(0, 8).map(row => `${row.id || '未生成'} 第${shownRangeStart(row.startFloor)}–${shownFloor(row.endFloor)}层：${row.label}`).join('；')}）。`);
     }
     const injectionValue = String(safeStore.injectionSnapshot?.value ?? '');
     const blockCount = (safeStore.injectionSnapshot?.blocks ?? []).filter(block => block.type === 'checkpoint'
@@ -178,7 +183,7 @@ export function memoryOverviewStats(store, assistants, settings) {
         || block.type === 'story' && String(block.id ?? '').startsWith('story:long:')).length;
     const longTextCount = injectionValue.match(/^\[LONG_STORY_[^\]\n]+\]/gm)?.length ?? 0;
     const missingLongExplanation = checkpoints.length && missingLongRanges.length
-        ? `尚缺大总结：${compactRanges(missingLongRanges)}。目前保留相应小总结；可到“长期总结”页生成，需调用模型。` : '';
+        ? `尚缺大总结：${compactRanges(missingLongRanges.map(([start, end]) => [shownRangeStart(start), shownFloor(end)]))}。目前保留相应小总结；可到“长期总结”页生成，需调用模型。` : '';
     const shortHistory = settings?.injectionMode === INJECTION_MODES.CHECKPOINT_SHORT_HISTORY;
     const rolling = settings?.injectionMode === INJECTION_MODES.ROLLING;
     return {
@@ -194,7 +199,7 @@ export function memoryOverviewStats(store, assistants, settings) {
         injectionExplanation: shortHistory
             ? `CP／Long 作为冻结前缀。本次请求用楼层摘要接续尚未覆盖的旧剧情，保留最近 ${settings.recentRawFloors} 层 char 正文。此处只统计冻结部分。`
             : rolling
-            ? `最多发送最近 ${settings.recentRawFloors} 层 char 正文。旧剧情使用大总结／阶段总结和楼层摘要，覆盖有缺口时提示。开场在首段记忆接管前保留。`
+            ? `最多发送最近 ${settings.recentRawFloors} 层 char 正文，开场白也计入此上限。更早剧情由长期总结／阶段总结和楼层摘要接续；缺少摘要时，旧正文仍会按上限省略。`
             : [!checkpoints.length ? (usableSummaries.length < checkpointInterval
             ? `当前仅有 ${usableSummaries.length} 条可用摘要，尚未凑齐 ${checkpointInterval} 层阶段总结；重新注入不会自动生成。`
             : '已有摘要但阶段总结尚未生成，可在概览补齐。')
@@ -204,6 +209,7 @@ export function memoryOverviewStats(store, assistants, settings) {
             : shortHistory ? `最近${settings.recentRawFloors}层 char（缺记忆时额外保留）` : '由 SillyTavern 上下文设置控制',
         storedSummaryRecords: Object.keys(safeStore.summaries).length,
         summaryDetails, aggregateDetails,
+        repairExplanation: currentIssues.length ? '可点击「一键补全所有记忆」，从现有聊天正文生成缺少的摘要，再补齐阶段／长期总结。若补全失败，请在「模型接口」检查独立接口的连接测试，并在「高级生成设置 → 生成日志」查看原因。' : '',
         issues,
     };
 }
@@ -665,7 +671,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.39', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.40', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2192,13 +2198,15 @@ export class CacheMemoryUI {
         const diagnostics = this.manager.querySelector('[data-memory-diagnostics]');
         if (diagnostics) diagnostics.textContent = `已存 ${overview.storedSummaryRecords} 条楼层摘要 · 已注入 ${overview.injectedLongMemories} 份长期、${overview.injectedCheckpoints} 份阶段、${overview.injectedSummaries} 份楼层摘要 · 约 ${overview.estimatedTokens} tokens`;
         if (overview.issues.length && overview.injectionExplanation) health.append(this.element('p', '', overview.injectionExplanation));
+        if (overview.repairExplanation) health.append(this.element('p', '', overview.repairExplanation));
         if (this.showSummaryHealthDetails) {
             const detailSection = this.element('div', 'cache-memory-summary-health-details');
             detailSection.append(this.element('h5', '', '摘要异常明细'));
             if (!overview.summaryDetails.length) detailSection.append(this.element('p', '', '没有发现缺失、失败、过期或孤立摘要。'));
             else {
                 const list = this.element('ul');
-                for (const item of overview.summaryDetails) list.append(this.element('li', '', `第 ${item.floor || '未知'} 层 · ${item.label}`));
+                for (const item of overview.summaryDetails) list.append(this.element('li', '',
+                    `${item.floor === null ? '楼层未定位' : `第 ${this.shownFloor(item.floor)} 层`}${item.isOpening ? ' · 开场白' : ''} · ${item.label}`));
                 detailSection.append(list);
             }
             health.append(detailSection);

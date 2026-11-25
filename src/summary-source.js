@@ -1,5 +1,5 @@
-import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.39';
-import { parseStructuredSummary } from './summary-format.js?v=1.27.39';
+import { fnv1a, isNormalAssistant } from './utils.js?v=1.27.40';
+import { parseStructuredSummary } from './summary-format.js?v=1.27.40';
 
 export const SUMMARY_FILTER_MODES = Object.freeze({
     DEFAULT: 'default',
