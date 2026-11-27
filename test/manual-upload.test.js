@@ -27,7 +27,8 @@ function fixture({ authority = true } = {}) {
                 writes.push(clone(payload));
                 assert.equal(chatId, id);
                 if (payload.baseRevision !== record.revision) throw Object.assign(new Error('revision conflict'), { status: 409, data: { record: clone(record) } });
-                const result = threeWayMerge(payload.baseSnapshot, payload.snapshot, record.store);
+                const result = payload.replaceAll ? { merged: clone(payload.snapshot), conflicts: [] }
+                    : threeWayMerge(payload.baseSnapshot, payload.snapshot, record.store);
                 assert.deepEqual(result.conflicts, []);
                 record = { chatId, revision: record.revision + 1, store: result.merged };
                 record.store.sync.revision = record.revision;
@@ -76,38 +77,42 @@ for (const failure of ['throw', 'readback', 'unavailable']) test(`backup ${failu
     assert.ok(f.p.conflictBundle(f.id).local); assert.ok(f.p.conflictBundle(f.id).remote);
 });
 
-test('a server update between preflight reads stops manual overwrite without retry', async () => {
+test('a manual upload replaces the latest server snapshot even if it changed during preflight', async () => {
     const f = fixture(); let reads = 0;
     f.p.readAuthoritativeStore = async () => {
         if (++reads === 2) { f.record.revision++; f.record.store.summaries[f.entries[0].messageId].event = '另一设备刚更新'; }
         return clone(f.record);
     };
     const status = await f.p.uploadCurrentChat(f.id);
-    assert.equal(status.state, 'conflict'); assert.match(status.detail, /其他设备/);
-    assert.equal(f.writes.length, 0); assert.equal(reads, 2);
-    assert.equal(f.p.conflictBundle(f.id).remote.summaries[f.entries[0].messageId].event, '另一设备刚更新');
-    assert.equal(f.p.uploadBackup(f.id).store.summaries[f.entries[0].messageId].event, '服务器原剧情');
-    await f.p.flush(); assert.equal(f.writes.length, 0);
+    assert.equal(status.state, 'confirmed');
+    assert.equal(f.writes.length, 1); assert.equal(reads, 3);
+    assert.equal(f.record.store.summaries[f.entries[0].messageId].event, '本机当前剧情');
+    assert.equal(f.record.store.summaries[f.entries[1].messageId], undefined);
+    assert.equal(f.p.uploadBackup(f.id).store.summaries[f.entries[0].messageId].event, '另一设备刚更新');
 });
 
-test('CAS rejects a write arriving after the last read, preserves both sides and never auto retries', async () => {
+test('CAS retries a concurrent server update and commits the user-selected full snapshot', async () => {
     const f = fixture(), commit = f.p.commitAuthoritative;
-    f.p.commitAuthoritative = async (id, payload) => { f.record.revision++; f.record.store.summaries[f.entries[0].messageId].event = 'CAS 前新版本'; return commit(id, payload); };
-    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'conflict');
-    assert.equal(f.writes.length, 1); assert.equal(f.record.store.summaries[f.entries[0].messageId].event, 'CAS 前新版本');
-    assert.equal(f.p.conflictBundle(f.id).remote.summaries[f.entries[0].messageId].event, 'CAS 前新版本');
-    f.p.enqueue(f.metadata.cache_memory, 'automatic save'); await f.p.flush(); assert.equal(f.writes.length, 1);
+    let changed = false;
+    f.p.commitAuthoritative = async (id, payload) => {
+        if (!changed) { changed = true; f.record.revision++; f.record.store.summaries[f.entries[0].messageId].event = 'CAS 前新版本'; }
+        return commit(id, payload);
+    };
+    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'confirmed');
+    assert.equal(f.writes.length, 2);
+    assert.equal(f.record.store.summaries[f.entries[0].messageId].event, '本机当前剧情');
+    assert.equal(f.record.store.summaries[f.entries[1].messageId], undefined);
 });
 
-test('readback after another device writes is never reported synchronized', async () => {
+test('a still newer client upload observed during readback becomes the canonical version', async () => {
     const f = fixture(); let reads = 0;
     f.p.readAuthoritativeStore = async () => {
         if (++reads === 3) { f.record.revision++; f.record.store.summaries[f.entries[0].messageId].event = '上传后另一设备更新'; }
         return clone(f.record);
     };
-    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'conflict');
-    assert.equal(f.writes.length, 1); assert.equal(f.statuses.some(status => status.state === 'confirmed'), false);
-    assert.ok(f.p.conflictBundle(f.id).local); assert.ok(f.p.conflictBundle(f.id).remote);
+    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'confirmed');
+    assert.equal(f.writes.length, 1); assert.equal(f.statuses.some(status => status.state === 'confirmed'), true);
+    assert.equal(f.metadata.cache_memory.summaries[f.entries[0].messageId].event, '上传后另一设备更新');
 });
 
 for (const phase of ['read', 'commit']) test(`chat switch during ${phase} never publishes into the new chat`, async () => {
@@ -191,7 +196,7 @@ test('manual UI rejects unloaded chat messages and source edits during upload', 
     }
 });
 
-for (const changed of ['revision', 'content']) test(`preflight detects a server ${changed} change even when the other stays equal`, async () => {
+for (const changed of ['revision', 'content']) test(`manual upload remains canonical after a server ${changed} change during preflight`, async () => {
     const f = fixture(); let reads = 0;
     f.p.readAuthoritativeStore = async () => {
         if (++reads === 2) {
@@ -200,7 +205,8 @@ for (const changed of ['revision', 'content']) test(`preflight detects a server 
         }
         return clone(f.record);
     };
-    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'conflict'); assert.equal(f.writes.length, 0);
+    assert.equal((await f.p.uploadCurrentChat(f.id)).state, 'confirmed'); assert.equal(f.writes.length, 1);
+    assert.equal(f.record.store.summaries[f.entries[0].messageId].event, '本机当前剧情');
 });
 
 test('failed local pending journal prevents server overwrite even when backup storage works', async () => {

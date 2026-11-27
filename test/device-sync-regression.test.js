@@ -37,6 +37,38 @@ for (const authority of [false, true]) test(`idle cached records, server deletio
     assert.equal(f.writes, 0); assert.equal(f.p.pending.size, 0); assert.equal(f.p.conflicts.size, 0);
 });
 
+for (const authority of [false, true]) test(`idle old device adopts the newer server copy on its next check (authority=${authority})`, async () => {
+    const f = fixture(authority);
+    f.metadata.cache_memory.summaries.m1.event = 'old computer';
+    f.p.activate('a', f.metadata.cache_memory);
+    f.remote.summaries.m1.event = 'phone latest';
+    f.remote.summaries.m2 = { messageId: 'm2', floor: 2, event: 'new phone summary', status: 'frozen', frozen: true };
+    const state = await f.p.verify();
+    assert.equal(state.state, 'confirmed');
+    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'phone latest');
+    assert.ok(f.metadata.cache_memory.summaries.m2);
+    assert.equal(f.writes, 0);
+    assert.equal(f.p.conflicts.size, 0);
+});
+
+for (const authority of [false, true]) test(`another client's explicit upload clears a stale pending draft in favor of that exact snapshot (authority=${authority})`, async () => {
+    const f = fixture(authority), resume = f.p.pauseSaves('a');
+    f.metadata.cache_memory.summaries.m1.event = 'old unsent computer edit';
+    await f.p.enqueue(f.metadata.cache_memory, 'offline edit');
+    f.remote.summaries.m1.event = 'phone selected version';
+    f.remote.summaries.m2 = { messageId: 'm2', floor: 2, event: 'phone added layer', status: 'frozen', frozen: true };
+    f.remote.sync.revision++;
+    f.remote.sync.writerId = 'phone-writer';
+    f.remote.sync.writeId = 'phone-writer:manual:123';
+    assert.equal(f.p.pending.has('a'), true);
+    assert.equal(await f.p.adoptExternalManualUpload('a'), true);
+    assert.equal(f.metadata.cache_memory.summaries.m1.event, 'phone selected version');
+    assert.ok(f.metadata.cache_memory.summaries.m2);
+    assert.equal(f.p.pending.size, 0);
+    assert.equal(f.p.conflicts.size, 0);
+    resume({ retryPending: false });
+});
+
 test('unchanged activation cannot enqueue an automatic write even before the first server read', async () => {
     const f = fixture();
     await f.p.enqueue(f.metadata.cache_memory); await f.p.flush();
@@ -67,12 +99,14 @@ test('live windows do not restore, merge or erase each other journals; the ownin
     assert.equal(reload.pending.get('a').snapshot.summaries.m1.event, 'owner unsaved edit');
 });
 
-test('ordinary ST manual preflight detects a competing server edit before saving', async () => {
+test('ordinary ST explicit upload becomes canonical after a competing server edit', async () => {
     const f = fixture(), before = clone(f.remote); let reads = 0;
     f.metadata.cache_memory.summaries.m1.event = 'local choice';
     f.p.readRemoteStore = async () => { if (++reads === 2) f.remote.summaries.m1.event = 'competing edit'; return clone(f.remote); };
-    assert.equal((await f.p.uploadCurrentChat()).state, 'conflict');
-    assert.equal(f.writes, 0); assert.deepEqual(f.p.uploadBackup().store, before);
+    assert.equal((await f.p.uploadCurrentChat()).state, 'confirmed');
+    assert.equal(f.writes, 1); assert.equal(f.remote.summaries.m1.event, 'local choice');
+    assert.notDeepEqual(f.p.uploadBackup().store, before);
+    assert.equal(f.p.uploadBackup().store.summaries.m1.event, 'competing edit');
 });
 
 test('ordinary ST manual readback mismatch retains the local branch and server backup', async () => {

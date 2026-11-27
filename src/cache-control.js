@@ -1,7 +1,7 @@
-import { INJECTION_MODES } from './defaults.js?v=1.27.40';
-import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.40';
-import { fnv1a } from './utils.js?v=1.27.40';
-import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.40';
+import { INJECTION_MODES } from './defaults.js?v=1.27.41';
+import { buildInjection, currentInjectionBlocks, renderInjectionBlocks } from './injection.js?v=1.27.41';
+import { fnv1a } from './utils.js?v=1.27.41';
+import { compareRequests, fingerprint, inspectRequest, requestReport } from '../server-plugin/cache-memory-api-adapter/request-integrity.mjs?v=1.27.41';
 
 export function effectiveInjectionMode(settings) {
     if ([INJECTION_MODES.ROLLING, INJECTION_MODES.CHECKPOINT_SHORT_HISTORY].includes(settings.injectionMode)) return settings.injectionMode;

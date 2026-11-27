@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.40';
-import { applyUITheme } from './ui-theme.js?v=1.27.40';
-import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.40';
-import { generationPrompt } from './generation-prompts.js?v=1.27.40';
-import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.40';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.40';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.40';
-import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.40';
-import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.40';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.40';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.40';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.40';
-import { parseFloorSummary } from './summarizer.js?v=1.27.40';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.40';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.41';
+import { applyUITheme } from './ui-theme.js?v=1.27.41';
+import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.41';
+import { generationPrompt } from './generation-prompts.js?v=1.27.41';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.41';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.41';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.41';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.41';
+import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.41';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.41';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.41';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.41';
+import { parseFloorSummary } from './summarizer.js?v=1.27.41';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.41';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.40';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.40';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.41';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.41';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -671,7 +671,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.40', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.41', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2115,12 +2115,17 @@ export class CacheMemoryUI {
             pending: '待保存', saving: '保存中', confirmed: '已确认保存', failed: '保存失败',
             unknown: '状态未知', conflict: '跨设备冲突',
         };
+        const messages = {
+            pending: '联网后自动同步', saving: '正在同步…', confirmed: '已同步',
+            failed: '暂时无法同步，记忆已保留；联网后会自动重试',
+            unknown: '正在确认同步状态', conflict: '两边都有修改，双方记忆均已保留，请选择处理方式',
+        };
         const box = this.manager.querySelector('[data-memory-save-box]');
         const output = this.manager.querySelector('[data-memory-save-status]');
         if (box) box.dataset.state = status.state;
         if (output) {
-            output.textContent = `${labels[status.state] ?? '状态未知'}${status.detail ? ` · ${status.detail}` : ''}`;
-            output.title = status.at ? `最后更新：${formatDate(status.at)}` : '';
+            output.textContent = `${labels[status.state] ?? '状态未知'} · ${messages[status.state] ?? '请稍后重试'}`;
+            output.title = [status.detail, status.at ? `最后更新：${formatDate(status.at)}` : ''].filter(Boolean).join('\n');
         }
         const upload = this.manager.querySelector('[data-save-memory]');
         if (upload) upload.disabled = Boolean(this.uploadingMemory || this.restoringServerMemory || this.importingMemory);
@@ -3356,7 +3361,9 @@ export class CacheMemoryUI {
                 this.renderManager(); this.renderMessageMemories();
                 this.setManagerActionStatus(status.state === 'confirmed' ? 'success' : 'warning', status.state === 'confirmed'
                     ? '已同步：记忆已上传服务器并读回确认'
-                    : (status.detail || '上传尚未确认：状态未知'));
+                    : (status.state === 'conflict'
+                        ? '另一设备也修改了记忆，双方版本均已保留；请在冲突处理中选择'
+                        : '暂时无法同步，记忆已保留；联网后可自动重试'));
             } finally { this.uploadingMemory = false; this.renderMemorySaveState(); }
             return;
         }

@@ -236,7 +236,9 @@ export async function init(router) {
             if (payload.snapshot.chatId !== chatId) return response.status(400).json({ error: 'chat identity mismatch' });
             if (Number(current?.store?.version || 0) > Number(payload.snapshot.version || 0)) return response.status(409).json({ error: 'schema downgrade refused', record: current });
             if (current?.store && !payload.allowReplacement && unexplainedLoss(current.store, payload.snapshot)) return response.status(409).json({ error: 'memory integrity loss: deletion markers required', record: current });
-            const merged = current?.store ? threeWayMerge(base || current.store, payload.snapshot, current.store) : { merged: clone(payload.snapshot), conflicts: [] };
+            const merged = current?.store && !payload.replaceAll
+                ? threeWayMerge(base || current.store, payload.snapshot, current.store)
+                : { merged: clone(payload.snapshot), conflicts: [] };
             if (merged.conflicts.length) return response.status(409).json({ error: 'record conflicts', conflicts: merged.conflicts, record: current });
             delete merged.merged.recovery;
             merged.merged.sync = { ...merged.merged.sync, revision: currentRevision + 1 };

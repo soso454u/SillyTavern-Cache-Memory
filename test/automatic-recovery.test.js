@@ -214,6 +214,27 @@ test('a repeatedly invalid old floor never blocks the latest summary and is trie
     assert.equal(f.summarizer.getMissingMemoryPlan().summaries.length, 0);
 });
 
+test('a save interrupted by the network is retried on the next automatic update, then fills earlier missing floors', async () => {
+    const f = fixture(3); f.seedSummaries();
+    const middle = getAssistantMessages(f.chat)[1];
+    delete f.store.current().summaries[middle.messageId];
+    const commit = f.summarizer.commitMemory;
+    let failOnce = true;
+    f.summarizer.commitMemory = async (...args) => {
+        if (failOnce) {
+            failOnce = false;
+            throw Object.assign(new Error('Load failed'), { code: 'SAVE_UNCONFIRMED' });
+        }
+        return commit(...args);
+    };
+    await assert.rejects(f.summarizer.summarizeLatest(), { code: 'SAVE_UNCONFIRMED' });
+    assert.equal(f.store.getSummaryForEntry(middle), null);
+    await f.summarizer.summarizeLatest();
+    assert.equal(f.store.getSummaryForEntry(middle).status, 'frozen');
+    assert.deepEqual(f.calls.filter(call => call.kind === 'Summary').map(call => Number(
+        call.request.userContent.match(/^\[SUMMARY_SOURCE\]\n合成正文(\d+)/)?.[1])), [2]);
+});
+
 test('automatic recovery respects installation boundary and disabled automatic generation', async () => {
     const f = fixture(153);
     await f.summarizer.summarizeLatest();

@@ -1,4 +1,4 @@
-import { getSummaryEntries, displayFloor } from './src/opening-source.js?v=1.27.40';
+import { getSummaryEntries, displayFloor } from './src/opening-source.js?v=1.27.41';
 import {
     chat,
     chat_metadata,
@@ -13,23 +13,23 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.40';
-import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.40';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.40';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.40';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.40';
-import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, trimBranchTimeline, resetBranchNumbering } from './src/utils.js?v=1.27.40';
-import { MemoryStore } from './src/memory-store.js?v=1.27.40';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.40';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.40';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.40';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.40';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.40';
-import { chatFileIdentity } from './src/chat-file.js?v=1.27.40';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.40';
-import { memoryContentDigest } from './src/memory-store.js?v=1.27.40';
-import { BackgroundMemoryTasks } from './src/background-memory.js?v=1.27.40';
-import { hydrateHostChat } from './src/host-chat.js?v=1.27.40';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.41';
+import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.41';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.41';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.41';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.41';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, trimBranchTimeline, resetBranchNumbering } from './src/utils.js?v=1.27.41';
+import { MemoryStore } from './src/memory-store.js?v=1.27.41';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.41';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.41';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.41';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.41';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.41';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.41';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.41';
+import { memoryContentDigest } from './src/memory-store.js?v=1.27.41';
+import { BackgroundMemoryTasks } from './src/background-memory.js?v=1.27.41';
+import { hydrateHostChat } from './src/host-chat.js?v=1.27.41';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -640,11 +640,26 @@ function initialize() {
     const checkMemory = async () => {
         if (checkingMemory || document.visibilityState === 'hidden' || !memoryChatId() || memoryChatId() !== activeChatId) return;
         checkingMemory = true;
-        try { await persistence.verify(); }
+        try {
+            const state = await persistence.verify();
+            // A network interruption can leave holes in the current timeline.
+            // Once another window/device has saved successfully, resume the
+            // usual automatic repair without requiring another user turn.
+            if (state?.state === 'confirmed' && !isGenerating()
+                && settings?.enabled && settings.autoSummarize && settings.independentApi
+                && summarizer.inFlight?.size === 0 && summarizer.pendingSummaries?.size === 0
+                && !ui?.backfill?.active && !ui?.isMissingCheckpointBackfillActive?.()
+                && typeof summarizer.getMissingMemoryPlan === 'function'
+                && summarizer.getMissingMemoryPlan().summaries.length) {
+                await summarizer.summarizeLatest?.();
+            }
+        }
         finally { checkingMemory = false; }
     };
     window.addEventListener('focus', checkMemory, { signal: runtimeController.signal });
     document.addEventListener('visibilitychange', checkMemory, { signal: runtimeController.signal });
+    const memorySyncTimer = globalThis.setInterval(checkMemory, 15000);
+    runtimeController.signal.addEventListener('abort', () => globalThis.clearInterval(memorySyncTimer), { once: true });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') persistence.persistPending();
     }, { signal: runtimeController.signal });

@@ -1,7 +1,7 @@
-import { LocalMemoryStorage } from './local-memory-storage.js?v=1.27.40';
-import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.27.40';
-import { retryOperation, waitForRetry } from './retry.js?v=1.27.40';
-import { chatFileIdentity, memoryFromChatFile } from './chat-file.js?v=1.27.40';
+import { LocalMemoryStorage } from './local-memory-storage.js?v=1.27.41';
+import { aggregateVersion, summaryVersion, memoryContentDigest, mergeForCurrentChat, mergeMemoryStoresSafely, normalizeStore } from './memory-store.js?v=1.27.41';
+import { retryOperation, waitForRetry } from './retry.js?v=1.27.41';
+import { chatFileIdentity, memoryFromChatFile } from './chat-file.js?v=1.27.41';
 
 export const MEMORY_SAVE_STATES = Object.freeze({
     PENDING: 'pending',
@@ -439,9 +439,13 @@ export class MemoryPersistenceCoordinator {
         if (!this.journalReady) await this.ready;
         const id = String(chatId ?? '');
         if (this.journalReadError) return loadedValue;
-        if (this.conflicts.has(id)) return this.getMetadata().cache_memory;
+        if (this.conflicts.has(id) && !await this.adoptExternalManualUpload(id)) return this.getMetadata().cache_memory;
         if (!id || !this.readAuthoritativeStore || !this.authoritativeAvailable() || String(this.getChatId() ?? '') !== id) return loadedValue;
-        if (this.pending.has(id)) { await this.flush(id); return String(this.getChatId()) === id ? this.getMetadata().cache_memory : loadedValue; }
+        if (this.pending.has(id)) {
+            const adopted = await this.adoptExternalManualUpload(id, { reportFailure: true });
+            if (adopted === false) await this.flush(id);
+            return String(this.getChatId()) === id ? this.getMetadata().cache_memory : loadedValue;
+        }
         const epoch = this.epoch;
         const readSequence = ++this.readSequence;
         const signal = this.beginRead();
@@ -503,6 +507,36 @@ export class MemoryPersistenceCoordinator {
         return this.setState(chatId, MEMORY_SAVE_STATES.CONFIRMED, '已同步当前聊天记忆');
     }
 
+    async adoptExternalManualUpload(chatId, { reportFailure = false } = {}) {
+        const entry = this.pending.get(chatId);
+        if (!entry) return false;
+        const resume = this.pauseSaves(chatId);
+        try {
+            const authority = Boolean(this.readAuthoritativeStore && this.authoritativeAvailable());
+            const value = await withDeadline(() => authority ? this.readAuthoritativeStore(chatId) : this.readRemoteStore(chatId), this.timeoutMs);
+            if (authority) validateAuthoritativeRecord(value, chatId);
+            const raw = authority ? value?.store : value;
+            const remote = normalizeRemote(clone(authority ? value?.store : value), chatId);
+            if (authority) remote.sync.revision = Number(value?.revision || 0);
+            if (!String(raw?.sync?.writeId ?? '').includes(':manual:') || raw?.sync?.writerId === this.writerId) return false;
+            // An explicit upload from another client is the user's latest
+            // canonical choice. Keep this window's draft as a recoverable local
+            // snapshot, but never merge it back over that choice automatically.
+            try { await this.rememberSnapshot(chatId, entry.snapshot, '另一窗口主动上传前的本机副本'); } catch { /* The canonical server upload still wins if local backup storage is unavailable. */ }
+            if (this.pending.get(chatId) !== entry) return false;
+            this.pending.delete(chatId); this.conflicts.delete(chatId);
+            this.getMetadata().cache_memory = clone(remote);
+            this.baselines.set(chatId, { digest: memoryContentDigest(remote), revision: remote.sync.revision,
+                snapshot: clone(remote), authoritative: authority });
+            await this.persistPending();
+            this.setState(chatId, MEMORY_SAVE_STATES.CONFIRMED, '已采用最近一次主动上传的版本');
+            return true;
+        } catch (error) {
+            if (reportFailure) this.setState(chatId, MEMORY_SAVE_STATES.FAILED, `暂时无法核对服务器版本：${error.message}`);
+            return null;
+        } finally { resume({ retryPending: false }); }
+    }
+
     holdConflict(chatId, local, remote, recordConflicts = []) {
         this.conflicts.set(chatId, { local: clone(local), remote: clone(remote), recordConflicts: clone(recordConflicts) });
         return this.setState(chatId, MEMORY_SAVE_STATES.CONFLICT, '服务器与本机存在无法安全判定的变化；双方副本已保留，未覆盖服务器');
@@ -511,9 +545,13 @@ export class MemoryPersistenceCoordinator {
     async verify(chatId = this.getChatId()) {
         if (!this.journalReady) await this.ready;
         const id = String(chatId ?? '');
-        if (!id || this.conflicts.has(id)) return this.getState(id);
+        if (!id) return this.getState(id);
+        if (this.conflicts.has(id) && !await this.adoptExternalManualUpload(id)) return this.getState(id);
         if (this.readAuthoritativeStore && this.authoritativeAvailable()) return this.sync(id, this.getMetadata().cache_memory).then(() => this.getState(id));
-        if (this.pending.has(id)) return this.flush(id);
+        if (this.pending.has(id)) {
+            const adopted = await this.adoptExternalManualUpload(id, { reportFailure: true });
+            return adopted === false ? this.flush(id) : this.getState(id);
+        }
         if (String(this.getChatId() ?? '') !== id) return this.getState(id);
         const epoch = this.epoch, readSequence = ++this.readSequence;
         const signal = this.beginRead();
@@ -597,8 +635,11 @@ export class MemoryPersistenceCoordinator {
         const id = String(chatId ?? ''), epoch = this.epoch;
         // Loading is not an explicit server-over-local decision. Preserve real
         // pending edits and reconcile them through the normal save queue.
-        if (this.conflicts.has(id)) return this.getState(id);
-        if (this.pending.has(id)) return this.flush(id);
+        if (this.conflicts.has(id) && !await this.adoptExternalManualUpload(id)) return this.getState(id);
+        if (this.pending.has(id)) {
+            const adopted = await this.adoptExternalManualUpload(id, { reportFailure: true });
+            return adopted === false ? this.flush(id) : this.getState(id);
+        }
         const resume = this.pauseSaves(id);
         let migrate = false;
         try {
@@ -810,7 +851,7 @@ export class MemoryPersistenceCoordinator {
             check();
             this.setState(id, MEMORY_SAVE_STATES.SAVING, '正在核对聊天及服务器版本；本次上传以本机为准');
             const authority = Boolean(this.readAuthoritativeStore && this.commitAuthoritative && this.authoritativeAvailable());
-            const record = await withDeadline(() => authority ? this.readAuthoritativeStore(id) : this.readRemoteStore(id), this.timeoutMs);
+            let record = await withDeadline(() => authority ? this.readAuthoritativeStore(id) : this.readRemoteStore(id), this.timeoutMs);
             if (authority) validateAuthoritativeRecord(record, id);
             remote = normalizeRemote(clone(authority ? record.store : record), id);
             if (authority) remote.sync.revision = record.revision;
@@ -821,7 +862,7 @@ export class MemoryPersistenceCoordinator {
                 return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已同步：服务器读回与本机一致');
             }
             if (!await this.persistPending()) throw new Error('本机待保存副本写入失败，未覆盖服务器');
-            const backup = { chatId: id, revision: remote.sync.revision, savedAt: new Date().toISOString(), store: clone(authority ? record.store : record) };
+            let backup = { chatId: id, revision: remote.sync.revision, savedAt: new Date().toISOString(), store: clone(authority ? record.store : record) };
             await this.retainBackup(`${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(id)}`, backup);
             this.backups.set(id, backup);
             check();
@@ -834,31 +875,36 @@ export class MemoryPersistenceCoordinator {
             check();
             if (freshStore.sync.revision !== remote.sync.revision || memoryContentDigest(freshStore) !== memoryContentDigest(remote)) {
                 remote = freshStore;
-                return stop('上传期间服务器已被其他设备修改，已停止覆盖；双方记忆及上传前备份均已保留');
+                if (authority) record = fresh;
+                backup = { chatId: id, revision: remote.sync.revision, savedAt: new Date().toISOString(), store: clone(authority ? record.store : fresh) };
+                await this.retainBackup(`${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(id)}`, backup);
+                this.backups.set(id, backup);
             }
             const desired = normalizeStore(clone(local), id);
-            desired.sync = { revision: remote.sync.revision + 1, writerId: this.writerId, writeId: `${this.writerId}:manual:${Date.now()}`, savedAt: new Date().toISOString() };
-            check();
-            const write = Promise.resolve().then(() => {
-                check();
-                if (authority) return this.commitAuthoritative(id, { snapshot: desired, baseSnapshot: clone(record.store), baseRevision: record.revision, writerId: this.writerId, allowReplacement: true });
-                this.getMetadata().cache_memory = clone(desired);
-                return this.saveMetadata(id);
-            });
-            this.uncertainWrites.set(id, write);
-            const settled = () => { if (this.uncertainWrites.get(id) === write) this.uncertainWrites.delete(id); };
-            write.then(settled, settled);
             let result;
-            try { result = await withDeadline(() => write, this.timeoutMs); }
-            catch (error) {
-                if (error.status === 409) {
-                    if (error.data?.record) {
-                        const changed = validateAuthoritativeRecord(error.data.record, id);
-                        remote = normalizeRemote(clone(changed.store), id); remote.sync.revision = changed.revision;
-                    }
-                    return stop('服务器版本在提交前发生变化，已停止覆盖；双方记忆及上传前备份均已保留');
+            for (let attempt = 0; attempt < 4; attempt++) {
+                desired.sync = { revision: remote.sync.revision + 1, writerId: this.writerId,
+                    writeId: `${this.writerId}:manual:${Date.now()}:${attempt}`, savedAt: new Date().toISOString() };
+                check();
+                const write = Promise.resolve().then(() => {
+                    check();
+                    if (authority) return this.commitAuthoritative(id, { snapshot: desired, baseSnapshot: clone(record.store), baseRevision: record.revision,
+                        writerId: this.writerId, allowReplacement: true, replaceAll: true });
+                    this.getMetadata().cache_memory = clone(desired);
+                    return this.saveMetadata(id);
+                });
+                this.uncertainWrites.set(id, write);
+                const settled = () => { if (this.uncertainWrites.get(id) === write) this.uncertainWrites.delete(id); };
+                write.then(settled, settled);
+                try { result = await withDeadline(() => write, this.timeoutMs); break; }
+                catch (error) {
+                    if (!authority || error.status !== 409 || attempt === 3) throw error;
+                    record = validateAuthoritativeRecord(await withDeadline(() => this.readAuthoritativeStore(id), this.timeoutMs), id);
+                    remote = normalizeRemote(clone(record.store), id); remote.sync.revision = record.revision;
+                    backup = { chatId: id, revision: record.revision, savedAt: new Date().toISOString(), store: clone(record.store) };
+                    await this.retainBackup(`${UPLOAD_BACKUP_PREFIX}${encodeURIComponent(id)}`, backup);
+                    this.backups.set(id, backup);
                 }
-                throw error;
             }
             check();
             const committed = authority ? validateAuthoritativeRecord(result?.record, id) : { revision: desired.sync.revision };
@@ -868,7 +914,16 @@ export class MemoryPersistenceCoordinator {
             remote = normalizeRemote(clone(authority ? readback.store : readback), id);
             if (authority) remote.sync.revision = readback.revision;
             check();
-            if ((!authority && remote.sync.writeId !== desired.sync.writeId) || remote.sync.revision !== committed.revision || memoryContentDigest(remote) !== digest) return stop('上传后服务器读回版本或内容不一致；双方记忆及上传前备份均已保留，未确认同步');
+            if (authority && remote.sync.revision > committed.revision) {
+                await this.rememberSnapshot(id, remote, '本机上传后另一客户端的较新版本');
+                check();
+                this.getMetadata().cache_memory = clone(remote);
+                this.baselines.set(id, { digest: memoryContentDigest(remote), revision: remote.sync.revision,
+                    snapshot: clone(remote), authoritative: true });
+                this.conflicts.delete(id); this.pending.delete(id); await this.persistPending();
+                return this.setState(id, MEMORY_SAVE_STATES.CONFIRMED, '已采用随后上传的最新版本');
+            }
+            if ((!authority && remote.sync.writeId !== desired.sync.writeId) || remote.sync.revision !== committed.revision || memoryContentDigest(remote) !== digest) return stop('上传未能成为服务器最新版本；本机副本已保留，请再上传一次');
             await this.rememberSnapshot(id, remote, '用户明确上传后版本', { allowReduction: true });
             check();
             this.getMetadata().cache_memory = clone(remote);
@@ -1260,8 +1315,12 @@ export class MemoryPersistenceCoordinator {
             if (this.journalReadError) return this.setState(String(chatId), MEMORY_SAVE_STATES.FAILED, `本机待保存日志读取失败：${this.journalReadError.message}`);
         }
         const id = String(chatId ?? ''), epoch = this.epoch, sequence = ++this.readSequence;
-        if (String(this.getChatId()) !== id || this.conflicts.has(id)) return this.getState(id);
-        if (this.pending.has(id)) return this.flush(id);
+        if (String(this.getChatId()) !== id) return this.getState(id);
+        if (this.conflicts.has(id) && !await this.adoptExternalManualUpload(id)) return this.getState(id);
+        if (this.pending.has(id)) {
+            const adopted = await this.adoptExternalManualUpload(id, { reportFailure: true });
+            return adopted === false ? this.flush(id) : this.getState(id);
+        }
         const signal = this.beginRead();
         const initial = memoryContentDigest(this.getMetadata().cache_memory);
         try {
