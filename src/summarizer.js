@@ -1,19 +1,19 @@
-import { selectedTableRecords } from './character-tables.js?v=1.27.41';
-import { isOutputTruncated } from './api-client.js?v=1.27.41';
-import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.41';
-import { isRejectedSummary } from './response-quality.js?v=1.27.41';
-import { memoryGenerationSettings } from './defaults.js?v=1.27.41';
-import { generationPrompt } from './generation-prompts.js?v=1.27.41';
-import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.41';
-import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.41';
-import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.41';
-import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.41';
-import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.41';
-import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.41';
-import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.41';
-import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.41';
-import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.41';
-import { getOpeningSource, getSummaryEntries, displayFloor, stageStartLabel } from './opening-source.js?v=1.27.41';
+import { selectedTableRecords } from './character-tables.js?v=1.27.42';
+import { isOutputTruncated } from './api-client.js?v=1.27.42';
+import { prepareMemoryResponse, summaryRetryInstruction } from './response-cleanup.js?v=1.27.42';
+import { isRejectedSummary } from './response-quality.js?v=1.27.42';
+import { memoryGenerationSettings } from './defaults.js?v=1.27.42';
+import { generationPrompt } from './generation-prompts.js?v=1.27.42';
+import { chatInheritedThrough, getAssistantMessages, messageFingerprint, replacePromptVariables } from './utils.js?v=1.27.42';
+import { collectKeepItems, formatKeepItems, formatLongFacts, hasAggregateContent, isUsableMemory, parseFactUpdates, previousState, projectLongFacts, readSection, resolveKeepItems, summaryText } from './continuity.js?v=1.27.42';
+import { buildStructuredSummary, parseStructuredSummary, stripStructuredSections } from './summary-format.js?v=1.27.42';
+import { extractSummarySource, summaryUserSource, formatSummaryUserSource, timeJumpEvidence, playerCorrectionEvidence } from './summary-source.js?v=1.27.42';
+import { extractStoryMetadata, summaryTurnMetadata, locationFromNarration, storyMetadataRange, summarySourceWithMetadata } from './story-metadata.js?v=1.27.42';
+import { summaryVersion, aggregateVersion } from './memory-store.js?v=1.27.42';
+import { parseStateChanges, parseAggregateStateChanges, checkpointEvidenceText, projectActiveState, deduplicateCheckpoint, activeStateVersion, isContinuityChange, stateId } from './active-state.js?v=1.27.42';
+import { selectNormalChanges, selectNormalFactUpdates } from './normal-memory.js?v=1.27.42';
+import { isRetryableError, retryOperation, waitForRetry } from './retry.js?v=1.27.42';
+import { getOpeningSource, getSummaryEntries, displayFloor, stageStartLabel } from './opening-source.js?v=1.27.42';
 
 function pad(value) {
     return String(value).padStart(3, '0');
@@ -157,8 +157,9 @@ export class MemorySummarizer {
             if (controller.signal.aborted) throw Object.assign(new Error('注入前补全已取消'), { code: 'REQUEST_ABORTED' });
             if (sources() !== expectedSources) throw Object.assign(new Error('补全期间聊天正文已变化，已取消旧注入'), { code: 'SOURCE_CHANGED' });
         };
+        const includeOpening = this.store.current().autoSummarizeOpening !== false;
         const remaining = () => {
-            const plan = this.getMissingMemoryPlan();
+            const plan = this.getMissingMemoryPlan({ includeOpening });
             return plan.summaries.length + plan.checkpoints.length + plan.longMemories.length;
         };
         const recovery = { chatId, revision, controller };
@@ -185,7 +186,7 @@ export class MemorySummarizer {
                 return { skipped: true, busy: true, remaining: remaining() };
             }
             this.onStatus('busy', '正在注入前自动补全缺失记忆…');
-            const result = await this.fillMissingMemories({ signal: controller.signal,
+            const result = await this.fillMissingMemories({ signal: controller.signal, includeOpening,
                 onProgress: progress => {
                     assertActive();
                     this.onStatus('busy', `注入前自动补全 · ${progress.phase} · ${progress.processed}/${progress.total}`);
@@ -329,6 +330,7 @@ export class MemorySummarizer {
     async summarizeAutomaticEntry(entry, options = {}) {
         const settings = this.getSettings();
         if (!settings.enabled || !settings.autoSummarize || !settings.independentApi) return null;
+        if (entry.isOpening && this.store.current().autoSummarizeOpening === false) return null;
         const chatId = this.store.current().chatId, revision = this.contextRevision;
         const assertActive = () => {
             if (chatId !== this.store.current().chatId || revision !== this.contextRevision) throw chatChangedError('自动补齐');
@@ -570,7 +572,7 @@ export class MemorySummarizer {
         return { startFloor, endFloor: startFloor + settings.checkpointInterval - 1 };
     }
 
-    getMissingMemoryPlan({ onlyLong = false } = {}) {
+    getMissingMemoryPlan({ onlyLong = false, includeOpening = true } = {}) {
         const settings = this.getSettings(), store = this.store.current();
         const chat = this.getChat(), assistants = getSummaryEntries(chat);
         const latest = Math.max(assistants.at(-1)?.floor ?? 0, chatInheritedThrough(chat));
@@ -603,14 +605,14 @@ export class MemorySummarizer {
             }
             return { latestFloor, summaries: [], checkpoints: [], longMemories: ready, blockedLongMemories };
         }
-        return { latestFloor, summaries: assistants.filter(entry => this.summaryNeedsUpdate(entry)),
+        return { latestFloor, summaries: assistants.filter(entry => (includeOpening || !entry.isOpening) && this.summaryNeedsUpdate(entry)),
             checkpoints: missingRanges(store.checkpoints, checkpointInterval), longMemories };
     }
 
-    async fillMissingMemories({ signal, onProgress = () => {}, onlyLong = false } = {}) {
+    async fillMissingMemories({ signal, onProgress = () => {}, onlyLong = false, includeOpening = true } = {}) {
         const chatId = this.store.current().chatId, revision = this.contextRevision;
         this.store.syncMessages(this.getChat());
-        const plan = this.getMissingMemoryPlan({ onlyLong });
+        const plan = this.getMissingMemoryPlan({ onlyLong, includeOpening });
         const result = { total: plan.summaries.length + plan.checkpoints.length + plan.longMemories.length,
             processed: 0, created: 0, skipped: 0, failed: 0, errors: [], currentRange: null, phase: 'Summary' };
         const rangeLabel = range => `第 ${displayFloor(this.getChat(), range.startFloor)}–${displayFloor(this.getChat(), range.endFloor)} 层`;

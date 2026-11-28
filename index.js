@@ -1,4 +1,4 @@
-import { getSummaryEntries, displayFloor } from './src/opening-source.js?v=1.27.41';
+import { getSummaryEntries, displayFloor } from './src/opening-source.js?v=1.27.42';
 import {
     chat,
     chat_metadata,
@@ -13,23 +13,23 @@ import {
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { promptManager } from '../../../openai.js';
-import { SummaryApiClient } from './src/api-client.js?v=1.27.41';
-import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.41';
-import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.41';
-import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.41';
-import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.41';
-import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, trimBranchTimeline, resetBranchNumbering } from './src/utils.js?v=1.27.41';
-import { MemoryStore } from './src/memory-store.js?v=1.27.41';
-import { MemorySummarizer } from './src/summarizer.js?v=1.27.41';
-import { CacheMemoryUI } from './src/ui.js?v=1.27.41';
-import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.41';
-import { MemoryServerClient } from './src/memory-server.js?v=1.27.41';
-import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.41';
-import { chatFileIdentity } from './src/chat-file.js?v=1.27.41';
-import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.41';
-import { memoryContentDigest } from './src/memory-store.js?v=1.27.41';
-import { BackgroundMemoryTasks } from './src/background-memory.js?v=1.27.41';
-import { hydrateHostChat } from './src/host-chat.js?v=1.27.41';
+import { SummaryApiClient } from './src/api-client.js?v=1.27.42';
+import { ApiCacheAdapterBridge, describeApiConnection } from './src/api-cache-adapter.js?v=1.27.42';
+import { API_KEY_STORAGE_KEY, INJECTION_KEY, INJECTION_MODES, MODULE_ID, normalizeLoadedSettings, normalizeSettings } from './src/defaults.js?v=1.27.42';
+import { CacheDiagnostics, refreshSnapshot, shouldRefreshInjection } from './src/cache-control.js?v=1.27.42';
+import { CacheMemoryInjectionPublisher } from './src/injection-target.js?v=1.27.42';
+import { chatFloorOffset, chatInheritedThrough, getAssistantMessages, trimBranchTimeline, resetBranchNumbering } from './src/utils.js?v=1.27.42';
+import { MemoryStore } from './src/memory-store.js?v=1.27.42';
+import { MemorySummarizer } from './src/summarizer.js?v=1.27.42';
+import { CacheMemoryUI } from './src/ui.js?v=1.27.42';
+import { MemoryPersistenceCoordinator, readSillyTavernRemoteStore } from './src/persistence.js?v=1.27.42';
+import { MemoryServerClient } from './src/memory-server.js?v=1.27.42';
+import { filterCoveredHistory, promptHistoryFloor } from './src/history-handoff.js?v=1.27.42';
+import { chatFileIdentity } from './src/chat-file.js?v=1.27.42';
+import { captureChatFile, chatFileDownload, prepareChatBranch, saveChatBranch } from './src/chat-branch.js?v=1.27.42';
+import { memoryContentDigest } from './src/memory-store.js?v=1.27.42';
+import { BackgroundMemoryTasks } from './src/background-memory.js?v=1.27.42';
+import { hydrateHostChat } from './src/host-chat.js?v=1.27.42';
 
 const LOG_PREFIX = '[Cache Memory]';
 let settings;
@@ -475,7 +475,8 @@ function reconcileMessageSummary(messageIndex) {
     if (changed) retireTimeline(entry.floor);
     observedAssistantEntries = new Map(getSummaryEntries(chat).map(row => [row.messageIndex, row]));
     ui?.queueMessageRender(); ui?.queueManagerRender();
-    if (!settings?.enabled || !settings.autoSummarize || !settings.independentApi) return;
+    if (!settings?.enabled || !settings.autoSummarize || !settings.independentApi
+        || entry.isOpening && store.current().autoSummarizeOpening === false) return;
     summarizer.summarizeMessage(entry.messageId, { expectedFingerprint: entry.fingerprint, recoverPending: true, signal: runtimeController.signal })
         .catch(error => console.warn(LOG_PREFIX, error.message));
 }

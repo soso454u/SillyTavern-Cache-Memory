@@ -1,4 +1,4 @@
-import { parseStructuredSummary } from './summary-format.js?v=1.27.41';
+import { parseStructuredSummary } from './summary-format.js?v=1.27.42';
 
 const REFUSAL = /^(?:(?:i(?:['’]m| am)\s+sorry|sorry)[,.!]?\s*(?:but\s+)?|as an? (?:ai|large language) model[, ]+)?(?:i|we)\s+(?:cannot|can['’]t|am unable to|are unable to|won['’]t|will not)\s+(?:assist|help|fulfil[l]?|comply|provide|generate|create|process|continue|engage)\b/i;
 const REFUSAL_TARGET = /(?:(?:this|that|your|the) (?:request|prompt)|requested (?:content|text)|content you(?:['’]re| are) (?:asking|requesting)|(?:sexual|explicit|pornographic|violent|illegal|disallowed|unsafe) content|(?:content|safety) polic(?:y|ies)|as an? (?:ai|large language) model)/i;

@@ -15,16 +15,18 @@ function fixture({ opening = true, count = 4 } = {}) {
 class Element {
     constructor(tag, className = '', textContent = '') { Object.assign(this, { tag, className, textContent, dataset: {}, children: [] }); }
     append(...nodes) { this.children.push(...nodes); }
+    setAttribute(name, value) { this[name] = value; }
 }
 const descendants = node => [node, ...node.children.flatMap(descendants)];
-function renderHealth(f) {
+function renderOverview(f) {
     const ui = new CacheMemoryUI({ getChat: () => f.chat, getSettings: () => f.settings, store: { current: () => f.store } });
     ui.element = (...args) => new Element(...args);
     ui.manager = { querySelector: () => null };
     ui.showSummaryHealthDetails = true;
     for (const method of ['backfillPanel', 'aggregationPanel', 'longMemoryControls']) ui[method] = () => new Element('div');
-    return descendants(ui.renderOverview()).find(node => node.className === 'cache-memory-health');
+    return ui.renderOverview();
 }
+function renderHealth(f) { return descendants(renderOverview(f)).find(node => node.className === 'cache-memory-health'); }
 
 test('screenshot: missing opening and replies show consecutive visible floors and a repair action', () => {
     const f = fixture(), before = structuredClone(f.store);
@@ -40,6 +42,32 @@ test('screenshot: missing opening and replies show consecutive visible floors an
     assert.match(stats.injectionExplanation, /缺少摘要时，旧正文仍会按上限省略/);
     assert.match(stats.repairExplanation, /一键补全所有记忆[\s\S]*连接测试[\s\S]*生成日志/);
     assert.deepEqual(f.store, before);
+});
+
+test('disabling opening auto-summaries hides only the opening from overview completion counts', () => {
+    const f = fixture(); f.store.autoSummarizeOpening = false;
+    const stats = memoryOverviewStats(f.store, f.entries, f.settings);
+    assert.deepEqual(stats.summaries, { actual: 0, generated: 0, expected: 4 });
+    assert.doesNotMatch(stats.issues.join('\n'), /开场白/);
+    assert.deepEqual(stats.summaryDetails.map(row => row.floor), [1, 2, 3, 4]);
+    const checkbox = descendants(renderOverview(f)).find(node => node.dataset.openingAutosummary === '');
+    assert.equal(checkbox.checked, false);
+    assert.equal(checkbox.disabled, false);
+});
+
+test('overview opening preference change is saved for this chat and rerenders without altering memory', () => {
+    const f = fixture(); let renders = 0, status = '';
+    const ui = new CacheMemoryUI({ getChat: () => f.chat, getSettings: () => f.settings, store: {
+        current: () => f.store,
+        setAutoSummarizeOpening: value => { f.store.autoSummarizeOpening = value; },
+    } });
+    ui.renderManager = () => { renders++; };
+    ui.setManagerActionStatus = (_state, message) => { status = message; };
+    const target = { checked: false, dataset: { openingAutosummary: '' }, matches: selector => selector === '[data-opening-autosummary]' };
+    ui.handleManagerInput({ type: 'change', target });
+    assert.equal(f.store.autoSummarizeOpening, false);
+    assert.equal(renders, 1);
+    assert.match(status, /不会删除/);
 });
 
 test('a failed opening keeps its actual error while usable saved summaries stay untouched', () => {

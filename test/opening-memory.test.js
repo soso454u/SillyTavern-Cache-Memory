@@ -102,7 +102,7 @@ test('opening gets its own editable Summary displayed as layer one without renum
     assert.equal(displayFloor(f.chat, getAssistantMessages(f.chat)[0].floor), 2);
     assert.equal(sourceFloor(f.chat, 1), opening.floor); assert.equal(sourceFloor(f.chat, 2), 1);
     f.apiClient.complete = async () => ({ content: '[SUMMARY]\n[Title]\n开场约定\n[Event]\n旅人已交出钥匙，约定天亮归还，医师尚不知情。' });
-    const record = await f.summarizer.summarizeMessage(opening.messageId, { deferAggregates: true });
+    const record = await f.summarizer.summarizeMessage(opening.messageId, { deferAggregates: true, overwrite: true });
     assert.equal(record.floor, 0); assert.equal(record.sourceContentFingerprint, opening.contentFingerprint);
     assert.equal(f.store.currentSummaries(f.chat).length, 56);
     for (const [key, value] of Object.entries(original)) assert.deepEqual(f.store.current().summaries[key], value);
@@ -134,4 +134,20 @@ test('failed completion reports the opening as visible layer one and retains its
     assert.equal(result.failed, 1); assert.equal(result.remaining, 1);
     assert.match(result.errors[0], /^Summary 第 1–1 层：/);
     assert.equal(f.store.getSummaryForEntry(getSummaryEntries(f.chat)[0]).floor, 0);
+});
+
+test('disabled opening auto-summary skips automatic completion but keeps manual generation available', async () => {
+    const chat = [{ name: '开场角色', send_date: 'opening', mes: '旅人已交出钥匙。' }], metadata = {};
+    const settings = normalizeSettings(), store = new MemoryStore({ getMetadata: () => metadata, getChatId: () => 'opening-only', saveMetadata() {} });
+    const requests = [], summarizer = new MemorySummarizer({ store, getChat: () => chat, getSettings: () => settings,
+        apiClient: { complete: async request => { requests.push(request); return { content: '[SUMMARY]\n[Event]\n旅人交出钥匙。' }; } } });
+    store.setAutoSummarizeOpening(false);
+    const opening = getSummaryEntries(chat)[0];
+    assert.equal(summarizer.getMissingMemoryPlan({ includeOpening: false }).summaries.length, 0);
+    const automatic = await summarizer.completeBeforeInjection();
+    assert.equal(automatic.skipped, true);
+    assert.equal(requests.length, 0);
+    const record = await summarizer.summarizeMessage(opening.messageId, { deferAggregates: true });
+    assert.equal(record.floor, 0);
+    assert.equal(requests.length, 1);
 });

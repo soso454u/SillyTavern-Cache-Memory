@@ -70,7 +70,7 @@ function threeWayMerge(base, local, remote) {
         }
         materialize(merged, section, output);
     }
-    for (const key of ['chatId', 'version', 'injectionSnapshot', 'summaryMode']) {
+    for (const key of ['chatId', 'version', 'injectionSnapshot', 'summaryMode', 'autoSummarizeOpening']) {
         if (local?.[key] !== undefined && JSON.stringify(stable(local[key])) !== JSON.stringify(stable(base?.[key]))) {
             if (remote?.[key] === undefined || JSON.stringify(stable(remote[key])) === JSON.stringify(stable(base?.[key]))) merged[key] = clone(local[key]);
             else if (JSON.stringify(stable(local[key])) !== JSON.stringify(stable(remote[key]))) conflicts.push({ section: 'root', id: key, remote: clone(remote[key]), local: clone(local[key]), base: clone(base?.[key]) });

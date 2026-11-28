@@ -1,20 +1,20 @@
-import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.41';
-import { applyUITheme } from './ui-theme.js?v=1.27.41';
-import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.41';
-import { generationPrompt } from './generation-prompts.js?v=1.27.41';
-import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.41';
-import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.41';
-import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.41';
-import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.41';
-import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.41';
-import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.41';
-import { buildStructuredSummary } from './summary-format.js?v=1.27.41';
-import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.41';
-import { parseFloorSummary } from './summarizer.js?v=1.27.41';
-import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.41';
+import { CHARACTER_TABLES, normalizeCharacterTables, tableForRecord, characterTablesEnabled } from './character-tables.js?v=1.27.42';
+import { applyUITheme } from './ui-theme.js?v=1.27.42';
+import { stageStartLabel, getSummaryEntries, displayFloor, sourceFloor } from './opening-source.js?v=1.27.42';
+import { generationPrompt } from './generation-prompts.js?v=1.27.42';
+import { bindDialogViewport, lockDialogSize, resolveUIRoot, viewportSize } from './ui-context.js?v=1.27.42';
+import { effectiveInjectionMode, refreshSnapshot } from './cache-control.js?v=1.27.42';
+import { API_PROVIDERS, memoryGenerationSettings, modePromptDefaults, globalPromptText, GENERATION_TRANSPORTS, INJECTION_MODES, PLUGIN_VERSION, THINKING_MODES } from './defaults.js?v=1.27.42';
+import { HistoryBackfill, parseFloorSelection } from './history-backfill.js?v=1.27.42';
+import { chatFloorOffset, chatInheritedThrough, downloadJson, downloadText, formatDate, getAssistantMessages } from './utils.js?v=1.27.42';
+import { collectKeepItems, isUsableMemory, projectLongFacts, readSection } from './continuity.js?v=1.27.42';
+import { buildStructuredSummary } from './summary-format.js?v=1.27.42';
+import { SUMMARY_FILTER_MODES } from './summary-source.js?v=1.27.42';
+import { parseFloorSummary } from './summarizer.js?v=1.27.42';
+import { projectActiveState, isTrackedActive } from './active-state.js?v=1.27.42';
 
-import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.41';
-import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.41';
+import { memoryHealth, summaryForEntry, summaryVersion, currentSummaryHealth, mergeMemoryStores, memoryContentDigest } from './memory-store.js?v=1.27.42';
+import { inspectMemoryImport, prepareMemoryImport } from './memory-import.js?v=1.27.42';
 
 const STYLE_ID = 'cache-memory-parent-style';
 const OWNER_KEY = '__cacheMemoryUIOwner';
@@ -120,6 +120,7 @@ export function summaryHealthDetails(store, assistants) {
     }
     for (const [key, record] of Object.entries(summaries)) {
         if (matched.has(record)) continue;
+        if (store?.autoSummarizeOpening === false && Number(record?.floor) === 0) { matched.add(record); continue; }
         const id = String(record?.messageId || key);
         const related = entries.find(entry => entry.relatedMessageIds?.includes(key)
             || record.sourceMessageKey && record.sourceMessageKey === entry.sourceMessageKey
@@ -138,7 +139,8 @@ export function memoryOverviewStats(store, assistants, settings) {
         summaries: {}, checkpoints: [], longMemories: [], keepRegistry: {},
         ...(store && typeof store === 'object' ? store : {}),
     };
-    const entries = Array.isArray(assistants) ? assistants : [];
+    const entries = (Array.isArray(assistants) ? assistants : [])
+        .filter(entry => !(entry.isOpening && safeStore.autoSummarizeOpening === false));
     const floorOffset = entries.some(entry => entry.isOpening) ? 1 : 0;
     const shownFloor = floor => floor + floorOffset;
     const shownRangeStart = floor => floorOffset && floor === 1 ? 1 : shownFloor(floor);
@@ -671,7 +673,7 @@ export class CacheMemoryUI {
         this.style = this.doc.createElement('link');
         this.style.id = STYLE_ID;
         this.style.rel = 'stylesheet';
-        this.style.href = new URL('../style.css?v=1.27.41', import.meta.url).href;
+        this.style.href = new URL('../style.css?v=1.27.42', import.meta.url).href;
         this.doc.head.append(this.style);
         this.themeQuery = this.root.matchMedia?.('(prefers-color-scheme: dark)');
         const changeTheme = () => this.applyTheme();
@@ -2179,6 +2181,18 @@ export class CacheMemoryUI {
         const assistants = getSummaryEntries(this.getChat());
         const store = this.store.current();
         const overview = memoryOverviewStats(store, assistants, this.getSettings());
+        const openingToggle = this.element('label', 'cache-memory-toggle');
+        const openingCopy = this.element('span');
+        openingCopy.append(this.element('strong', '', '自动生成开场白摘要'));
+        openingCopy.append(this.element('small', '', assistants.some(entry => entry.isOpening)
+            ? '关闭后，开场白只作为原文查看；仍可手动补摘要或重新开启。'
+            : '当前聊天没有独立开场白。'));
+        const openingInput = this.element('input');
+        openingInput.type = 'checkbox'; openingInput.dataset.openingAutosummary = '';
+        openingInput.checked = store.autoSummarizeOpening !== false;
+        openingInput.disabled = !assistants.some(entry => entry.isOpening);
+        openingInput.setAttribute('aria-label', '自动生成开场白摘要');
+        openingToggle.append(openingCopy, openingInput);
         const stats = [
             ['摘要：已生成 / 应有', `${overview.summaries.generated} / ${overview.summaries.expected}`],
             ['阶段记忆：已生成 / 应有', `${overview.checkpoints.actual} / ${overview.checkpoints.expected}`],
@@ -2234,7 +2248,7 @@ export class CacheMemoryUI {
         }
         const tools = this.element('div', 'cache-memory-aggregate-tools');
         tools.append(this.aggregationPanel(), this.longMemoryControls());
-        root.append(grid, this.backfillPanel(), quick);
+        root.append(openingToggle, grid, this.backfillPanel(), quick);
         if (this.showSummaryHealthDetails || this.lastMergeReport) root.append(health);
         root.append(tools);
         return root;
@@ -3683,6 +3697,20 @@ export class CacheMemoryUI {
     }
 
     handleManagerInput(event) {
+        if (event.type === 'change' && event.target.matches('[data-opening-autosummary]')) {
+            const enabled = event.target.checked;
+            this.store.setAutoSummarizeOpening(enabled);
+            this.renderManager();
+            this.setManagerActionStatus('success', enabled ? '已开启此聊天的开场白自动摘要。' : '已关闭此聊天的开场白自动摘要；原文和已有记忆不会删除。');
+            if (enabled && this.summarizer && this.getSettings().enabled && this.getSettings().autoSummarize && this.getSettings().independentApi) {
+                const opening = getSummaryEntries(this.getChat()).find(entry => entry.isOpening);
+                if (opening && this.summarizer.summaryNeedsUpdate(opening)) {
+                    void this.summarizer.summarizeMessage(opening.messageId,
+                        { recoverPending: true, expectedFingerprint: opening.fingerprint }).catch(error => notify('warning', error.message));
+                }
+            }
+            return;
+        }
         if (event.type === 'change' && event.target.matches('[data-role-tables-toggle]')) {
             if (!this.store.current().chatId) return;
             const enabled = event.target.checked;

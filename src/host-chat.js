@@ -1,4 +1,4 @@
-import { chatFileIdentity } from './chat-file.js?v=1.27.41';
+import { chatFileIdentity } from './chat-file.js?v=1.27.42';
 
 // TT can leave null historical slots in the full-index array. Hydrate only
 // those slots through its public backend API; never overwrite a loaded draft.

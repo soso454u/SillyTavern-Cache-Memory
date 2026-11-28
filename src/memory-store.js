@@ -1,9 +1,9 @@
-import { getSummaryEntries } from './opening-source.js?v=1.27.41';
-import { chatFloorOffset, chatInheritedThrough, fnv1a, resetBranchNumbering } from './utils.js?v=1.27.41';
-import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.41';
-import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.41';
-import { isRejectedSummary } from './response-quality.js?v=1.27.41';
-import { summaryUserSource } from './summary-source.js?v=1.27.41';
+import { getSummaryEntries } from './opening-source.js?v=1.27.42';
+import { chatFloorOffset, chatInheritedThrough, fnv1a, resetBranchNumbering } from './utils.js?v=1.27.42';
+import { extractSummaryKeepEntries, hasAggregateContent, isUsableMemory, normalizeKeepText, parseFactUpdates, projectLongFacts, readSection, summaryText } from './continuity.js?v=1.27.42';
+import { projectActiveState, stateId, ACTIVE_THREAD_STATUSES, activeStateVersion } from './active-state.js?v=1.27.42';
+import { isRejectedSummary } from './response-quality.js?v=1.27.42';
+import { summaryUserSource } from './summary-source.js?v=1.27.42';
 
 export const STORE_VERSION = 6;
 export function summaryMatchesEntry(record, entry) {
@@ -36,6 +36,7 @@ export function createEmptyStore(chatId = '') {
         version: STORE_VERSION,
         chatId: String(chatId ?? ''),
         summaryMode: 'normal',
+        autoSummarizeOpening: true,
         summaries: {},
         checkpoints: [],
         longMemories: [],
@@ -73,6 +74,7 @@ export function normalizeStore(value, chatId = '') {
         version: Math.max(STORE_VERSION, Number(store.version) || 0),
         chatId: String(chatId ?? store.chatId ?? ''),
         summaryMode: store.summaryMode === 'advanced' ? 'advanced' : 'normal',
+        autoSummarizeOpening: store.autoSummarizeOpening !== false,
         summaries,
         checkpoints,
         longMemories,
@@ -206,6 +208,14 @@ export class MemoryStore {
         if (store.summaryMode === next) return;
         store.summaryMode = next;
         this.persist('summary mode changed');
+    }
+
+    setAutoSummarizeOpening(enabled) {
+        const store = this.current();
+        const next = enabled !== false;
+        if (store.autoSummarizeOpening === next) return;
+        store.autoSummarizeOpening = next;
+        this.persist('opening summary preference changed');
     }
 
     persistMigration() {
@@ -747,6 +757,7 @@ export class MemoryStore {
         const previous = this.current();
         const cleared = createEmptyStore(chatId);
         cleared.summaryMode = previous.summaryMode;
+        cleared.autoSummarizeOpening = previous.autoSummarizeOpening !== false;
         cleared.tombstones = { ...previous.tombstones };
         for (const [type, ids] of [['Summary', Object.keys(previous.summaries)], ['Checkpoint', previous.checkpoints.map(item => item.id)], ['Long Memory', previous.longMemories.map(item => item.id)], ['KEEP', Object.keys(previous.keepRegistry)], ['stateOverrides', Object.keys(previous.stateOverrides)]]) {
             for (const id of ids) cleared.tombstones[`${type}:${id}`] = { deletedAt: new Date().toISOString() };
@@ -807,6 +818,7 @@ export function memoryContentDigest(value) {
     const store = value && typeof value === 'object' ? value : {};
     const serialized = JSON.stringify(stableClone({
         summaryMode: store.summaryMode === 'advanced' ? 'advanced' : 'normal',
+        autoSummarizeOpening: store.autoSummarizeOpening !== false,
         summaries: store.summaries ?? {},
         checkpoints: [...(store.checkpoints ?? [])].sort((a, b) => String(a.id).localeCompare(String(b.id))),
         longMemories: [...(store.longMemories ?? [])].sort((a, b) => String(a.id).localeCompare(String(b.id))),
@@ -902,6 +914,10 @@ export function mergeMemoryStoresThreeWay(baseValue, localValue, remoteValue, ch
     const remote = normalizeStore(structuredClone(remoteValue), chatId);
     const merged = structuredClone(remote), conflicts = [];
     merged.summaryMode = local.summaryMode !== base.summaryMode ? local.summaryMode : remote.summaryMode;
+    if (local.autoSummarizeOpening === base.autoSummarizeOpening) merged.autoSummarizeOpening = remote.autoSummarizeOpening;
+    else if (remote.autoSummarizeOpening === base.autoSummarizeOpening || local.autoSummarizeOpening === remote.autoSummarizeOpening)
+        merged.autoSummarizeOpening = local.autoSummarizeOpening;
+    else conflicts.push({ type: '设置', id: 'autoSummarizeOpening', current: local.autoSummarizeOpening, incoming: remote.autoSummarizeOpening });
     for (const [section, type] of [['summaries', 'Summary'], ['checkpoints', 'Checkpoint'], ['longMemories', 'Long Memory'],
         ['keepRegistry', 'KEEP'], ['stateOverrides', 'stateOverrides'], ['tombstones', 'tombstones']]) {
         const list = ['checkpoints', 'longMemories'].includes(section);
